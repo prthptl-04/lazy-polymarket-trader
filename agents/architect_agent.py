@@ -14,6 +14,9 @@ Responsibilities:
   or UI-only flows.
 - Maintain robust error handling: exponential backoff on transient failures,
   hard-fail with a clear reason on validation errors. Never swallow exceptions.
+- Position sizing for every strategy goes through finance.kelly.kelly_size_usd
+  with the default half-Kelly multiplier. Do not write inline sizing logic in
+  trading/strategies.py; document any exception (e.g., fixed-size paper smoke).
 - Route every Anthropic call through cache.prompt_cache.cached_create.
 - Never edit product/, verification/, monitoring/, or tests/. If you need
   changes there, emit a request via the orchestrator.

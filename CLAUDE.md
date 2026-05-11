@@ -137,6 +137,24 @@ Rules:
 - Tests may pass `skip_vuln_scan=True` to `should_publish` when they are
   exercising the publisher's other gates and don't need the full scan.
 
-## 11. Memory
+## 11. Position sizing goes through `finance/`
+
+This is a financial product. Sizing decisions are not allowed to be ad hoc.
+
+- Architect: any place in `trading/` that decides how much to bet MUST call
+  `finance.kelly.kelly_size_usd` (or document why it doesn't — e.g., a fixed
+  paper-trading size for canary-market smoke tests). Inline sizing logic is
+  a code smell to flag.
+- Forward Deployment: monitor live P&L via `finance.pnl.compute_pnl` +
+  `finance.risk_metrics.{sharpe_ratio,max_drawdown,value_at_risk,brier_score}`
+  over `MemoryStore.recent_trades`. When `max_drawdown` exceeds
+  `criteria.max_daily_loss_usd / starting_bankroll` (as a fraction), pause
+  live trading via a lesson + tightened `VerifiedOutcomeCriteria`.
+- The Outcome Grader is still the final word. Even a half-Kelly-sized trade
+  must pass `OutcomeGrader.evaluate` before reaching `Executor`.
+- Defaults: **half-Kelly** (`kelly_multiplier=0.5`). Full Kelly is permitted
+  only on a documented opt-in basis per market.
+
+## 12. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

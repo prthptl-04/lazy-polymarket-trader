@@ -50,6 +50,16 @@ COMMON_SKILLS: list[Tool] = [
             "Owned by Forward Deployment; runs deterministically and gates GitHubAgent.publish."
         ),
     ),
+    Tool(
+        name="financial-applications",
+        kind="skill",
+        location=".claude/skills/financial-applications/SKILL.md",
+        purpose=(
+            "Polymarket binary-market financial math: Kelly sizing on YES/NO prices, edge in bps, "
+            "Brier calibration, Sharpe/VaR/max-drawdown over the local trade log. Backed by the "
+            "deterministic `finance/` package — shared utility, no lane."
+        ),
+    ),
 ]
 
 COMMON_TOOLS: list[Tool] = [
@@ -111,6 +121,15 @@ REGISTRY: dict[str, AgentToolset] = {
                 location="trading/execution.py",
                 purpose="Paper-by-default execution path. Live trading is gated on env + funded wallet.",
             ),
+            Tool(
+                name="finance.kelly.kelly_size_usd",
+                kind="python",
+                location="finance/kelly.py",
+                purpose=(
+                    "Position sizing for binary markets. Returns a KellyResult bounded by "
+                    "VerifiedOutcomeCriteria.max_position_usd. Use this BEFORE building a ProposedTrade."
+                ),
+            ),
         ],
     ),
     "forward_deployment": AgentToolset(
@@ -154,6 +173,22 @@ REGISTRY: dict[str, AgentToolset] = {
                     "Run before every publish. agent.run() returns a Report; if blocked_publish=True, "
                     "DO NOT call GitHubAgent.publish — fix the high/critical findings first."
                 ),
+            ),
+            Tool(
+                name="finance.risk_metrics",
+                kind="python",
+                location="finance/risk_metrics.py",
+                purpose=(
+                    "brier_score, max_drawdown, sharpe_ratio, value_at_risk. Compute over "
+                    "memory.trade_log between trading sessions and surface to the Product Agent "
+                    "as gap tickets when thresholds breach."
+                ),
+            ),
+            Tool(
+                name="finance.pnl",
+                kind="python",
+                location="finance/pnl.py",
+                purpose="compute_pnl + equity_curve_from_trades — input for risk_metrics.",
             ),
         ],
     ),
