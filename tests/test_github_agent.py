@@ -116,7 +116,7 @@ def test_blocks_when_gh_missing(tmp_path: Path):
         memory=MemoryStore(db_path=str(tmp_path / "m.db")),
         git_ops=FakeGit(tmp_path, gh_available=False, staged_files=["src/x.py"]),
     )
-    decision = agent.should_publish(tests_passed=True, approved=True)
+    decision = agent.should_publish(tests_passed=True, approved=True, skip_vuln_scan=True)
     assert not decision.should_publish
     assert any("gh CLI not installed" in b for b in decision.blockers)
 
@@ -128,7 +128,7 @@ def test_blocks_when_gh_not_authenticated(tmp_path: Path):
         memory=MemoryStore(db_path=str(tmp_path / "m.db")),
         git_ops=FakeGit(tmp_path, gh_authenticated=False, staged_files=["src/x.py"]),
     )
-    decision = agent.should_publish(tests_passed=True, approved=True)
+    decision = agent.should_publish(tests_passed=True, approved=True, skip_vuln_scan=True)
     assert not decision.should_publish
     assert any("not authenticated" in b for b in decision.blockers)
 
@@ -140,7 +140,7 @@ def test_blocks_when_remote_repo_is_public(tmp_path: Path):
         memory=MemoryStore(db_path=str(tmp_path / "m.db")),
         git_ops=FakeGit(tmp_path, remote_visibility="PUBLIC", staged_files=["src/x.py"]),
     )
-    decision = agent.should_publish(tests_passed=True, approved=True)
+    decision = agent.should_publish(tests_passed=True, approved=True, skip_vuln_scan=True)
     assert not decision.should_publish
     assert any("non-private" in b for b in decision.blockers)
 
@@ -152,7 +152,7 @@ def test_blocks_when_secrets_staged(tmp_path: Path):
         memory=MemoryStore(db_path=str(tmp_path / "m.db")),
         git_ops=FakeGit(tmp_path, staged_files=["src/x.py", ".env"]),
     )
-    decision = agent.should_publish(tests_passed=True, approved=True)
+    decision = agent.should_publish(tests_passed=True, approved=True, skip_vuln_scan=True)
     assert not decision.should_publish
     assert any("secret-like" in b for b in decision.blockers)
 
@@ -177,7 +177,7 @@ def test_passes_when_everything_green_and_approved(tmp_path: Path):
         memory=MemoryStore(db_path=str(tmp_path / "m.db")),
         git_ops=FakeGit(tmp_path, has_remote=False, staged_files=["src/x.py"]),
     )
-    decision = agent.should_publish(tests_passed=True, approved=True)
+    decision = agent.should_publish(tests_passed=True, approved=True, skip_vuln_scan=True)
     assert decision.should_publish, decision.blockers
     assert "tests are green" in decision.reasons
     assert "secret scan clean" in decision.reasons
@@ -189,7 +189,7 @@ def test_publish_runs_full_first_run_sequence(tmp_path: Path):
     fake = FakeGit(tmp_path, has_remote=False, staged_files=["src/x.py"])
     memory = MemoryStore(db_path=str(tmp_path / "m.db"))
     agent = GitHubAgent("prthptl-04/lazy-polymarket-trader", cwd=tmp_path, memory=memory, git_ops=fake)
-    result = agent.publish(tests_passed=True, approved=True, commit_message="initial bring-up")
+    result = agent.publish(tests_passed=True, approved=True, commit_message="initial bring-up", skip_vuln_scan=True)
     assert result.published, result.error
     # gh repo create with --private was called.
     assert any(c[:3] == ["gh", "repo", "create"] and "--private" in c for c in fake.calls)
@@ -202,7 +202,7 @@ def test_subsequent_publish_does_not_recreate_repo(tmp_path: Path):
     fake = FakeGit(tmp_path, has_remote=True, staged_files=["src/x.py"], remote_visibility="PRIVATE")
     memory = MemoryStore(db_path=str(tmp_path / "m.db"))
     agent = GitHubAgent("prthptl-04/lazy-polymarket-trader", cwd=tmp_path, memory=memory, git_ops=fake)
-    result = agent.publish(tests_passed=True, approved=False)  # no approval needed on subsequent
+    result = agent.publish(tests_passed=True, approved=False, skip_vuln_scan=True)  # no approval needed on subsequent
     assert result.published, result.error
     assert not any(c[:3] == ["gh", "repo", "create"] for c in fake.calls)
     assert any(c[:2] == ["git", "push"] for c in fake.calls)

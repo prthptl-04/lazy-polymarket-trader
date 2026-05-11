@@ -106,6 +106,7 @@ class GitHubAgent:
         *,
         tests_passed: bool,
         approved: bool = False,
+        skip_vuln_scan: bool = False,
     ) -> PublishDecision:
         blockers: list[str] = []
         reasons: list[str] = []
@@ -140,6 +141,23 @@ class GitHubAgent:
             elif visibility:
                 reasons.append(f"remote visibility confirmed {visibility}")
 
+        # Vulnerability scan gate (CLAUDE.md rule #10). Skippable for tests only.
+        if not skip_vuln_scan:
+            try:
+                from vulnerability_detector.agent import VulnerabilityDetectionAgent
+                report = VulnerabilityDetectionAgent(self.cwd, memory=self.memory).run()
+                if report.blocked_publish:
+                    crit_ids = [f.id for f in report.findings if f.severity in ("critical", "high")][:5]
+                    blockers.append(
+                        f"vulnerability scan blocked publish — highest={report.highest_severity}, "
+                        f"top: {', '.join(crit_ids)}"
+                    )
+                else:
+                    reasons.append(f"vulnerability scan clean (summary: {report.summary or 'no findings'})")
+            except Exception as e:
+                # Scanner failure is informational, not blocking — but we record it.
+                reasons.append(f"vulnerability scan skipped due to error: {e}")
+
         # Secret scan: covers BOTH currently-staged and what `git add -A` would stage.
         # For pre-init repos there's nothing staged yet, so we scan the working tree
         # against .gitignore semantics conservatively by listing all paths under cwd.
@@ -160,8 +178,13 @@ class GitHubAgent:
         tests_passed: bool,
         approved: bool = False,
         commit_message: str = "Update from autonomous run",
+        skip_vuln_scan: bool = False,
     ) -> PublishResult:
-        decision = self.should_publish(tests_passed=tests_passed, approved=approved)
+        decision = self.should_publish(
+            tests_passed=tests_passed,
+            approved=approved,
+            skip_vuln_scan=skip_vuln_scan,
+        )
         if not decision.should_publish:
             return PublishResult(
                 published=False,

@@ -41,6 +41,15 @@ COMMON_SKILLS: list[Tool] = [
             "the trust policy + GitHub authenticator gate every source."
         ),
     ),
+    Tool(
+        name="vulnerability-detector",
+        kind="skill",
+        location=".claude/skills/vulnerability-detector/SKILL.md",
+        purpose=(
+            "Polymarket-bot-specific vulnerability detection (categories POLY-001..POLY-011). "
+            "Owned by Forward Deployment; runs deterministically and gates GitHubAgent.publish."
+        ),
+    ),
 ]
 
 COMMON_TOOLS: list[Tool] = [
@@ -135,6 +144,15 @@ REGISTRY: dict[str, AgentToolset] = {
                     "Deterministic publish gate. Call publish(tests_passed=True) after pytest is green. "
                     "Refuses non-private repos, refuses commits containing secret-like paths, requires "
                     "explicit approved=True on the first publish to a new repo."
+                ),
+            ),
+            Tool(
+                name="vulnerability_detector.VulnerabilityDetectionAgent",
+                kind="python",
+                location="vulnerability_detector/agent.py",
+                purpose=(
+                    "Run before every publish. agent.run() returns a Report; if blocked_publish=True, "
+                    "DO NOT call GitHubAgent.publish — fix the high/critical findings first."
                 ),
             ),
         ],

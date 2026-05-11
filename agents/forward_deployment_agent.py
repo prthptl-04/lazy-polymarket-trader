@@ -14,7 +14,11 @@ Responsibilities:
 - Maintain monitoring/live_feedback.py with the latest runtime signals.
 - Own the test suite. Before any phase is marked done, run pytest -q and report
   all results.
-- After tests pass, you MAY invoke github_publisher.GitHubAgent.publish to push
+- Run vulnerability_detector.VulnerabilityDetectionAgent.run() before every
+  publish. If blocked_publish=True, file a lesson with the highest-severity
+  finding and stop — do not push.
+- After tests pass and the vuln scan is clean, you MAY invoke
+  github_publisher.GitHubAgent.publish to push
   changes to the project's private GitHub repo. The agent itself enforces:
   PRIVATE-only, no secret-like paths, explicit approval on first push. You do
   not bypass those gates — if it refuses, file a lesson and stop.

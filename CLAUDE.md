@@ -111,6 +111,32 @@ hallucinate a force-push or bypass any of the gates above. The Forward
 Deployment specialist may NOT bypass it — if the agent refuses, file a lesson
 and stop.
 
-## 10. Memory
+## 10. Vulnerability scan gates every publish
+
+Before any push, `GitHubAgent.should_publish` runs
+`vulnerability_detector.VulnerabilityDetectionAgent.run()` over the entire
+working tree. Categories live in `vulnerability_detector/categories.py`
+(POLY-001..POLY-011) and are adapted from the cookbook 06 agent for this
+codebase's actual threat surface: private-key leakage, live-trading gate
+bypass, trust-boundary bypass, scrape-gate bypass, headless wallet flows,
+command injection, SSRF, SQL injection, unsafe deserialization, hardcoded
+secrets, and disabled HTTPS verification.
+
+Rules:
+
+- Any finding at severity `high` or `critical` blocks the publish. Fix the
+  finding (do not lower the severity) before retrying.
+- The scan is deterministic — pure AST + regex. It runs without an
+  ANTHROPIC_API_KEY. If a key is set, an additional LLM Find pass runs with
+  tools restricted to Read/Grep/Glob (no Bash, no edit) per the cookbook
+  safety stance.
+- The scanner does NOT modify source. Specialists do the fixes; the scanner
+  only reports.
+- Last scan report is persisted to memory under
+  `agent_id='vulnerability_detector'`, key `last_report`.
+- Tests may pass `skip_vuln_scan=True` to `should_publish` when they are
+  exercising the publisher's other gates and don't need the full scan.
+
+## 11. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.
