@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+memory/state.db
+memory/*.db-journal
+.DS_Store
+dist/
+build/
+*.egg-info/
+.claude/settings.local.json

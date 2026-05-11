@@ -1,0 +1,338 @@
+"""OrchestrationManager — the agent-of-agents.
+
+Sits above the CMA orchestrator and:
+
+1. Briefs every specialist BEFORE it runs with: available skills/MCPs/tools
+   (from agents/tool_registry.py) + recent lessons (from memory.agent_lessons).
+2. Reminds every specialist to consult memory FIRST so it doesn't repeat past
+   mistakes.
+3. Owns the tool-discovery flow: opens a headed browser-use session to search
+   GitHub for trusted repos relevant to a stated need, records candidates in
+   discovered_tools (status='pending'), and surfaces them for user approval
+   before they're promoted into the tool_registry.
+
+It does NOT execute trades, write trading logic, or edit other agents' files.
+It is purely a coordinator + librarian.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from agents.tool_registry import REGISTRY, AgentToolset, Tool, toolset_for
+from memory.store import MemoryStore
+from web_scraper.authenticator import AuthVerdict, GitHubAuthenticator
+from web_scraper.trust_policy import ScrapeDecision, TrustPolicy
+
+
+MANAGER_SYSTEM_PROMPT = """You are the Orchestration Manager for the Lazy Polymarket Trader.
+
+You stand above the three specialists (product, architect, forward_deployment).
+You do not write trading code, edit verification, or maintain the roadmap. Your
+sole job is to keep the specialists oriented:
+
+- Tell each specialist which skills, MCPs, and Python tools it should be using.
+- Surface lessons from memory so the specialist does not repeat past mistakes.
+- When a capability gap is identified, open a headed browser session to search
+  for a trusted open-source repo that fills the gap, record candidates, and
+  hand them to the user for approval before any install.
+
+Never bypass the verification gate. Never grant a specialist access to tools
+outside its ownership lane. When uncertain, route through the orchestrator.
+"""
+
+
+BRIEFING_TEMPLATE = """\
+## Orchestration Manager Briefing — {agent_name}
+
+Before you think about the task below, do THREE things:
+
+1. **Recall lessons.** The following lessons have been recorded for you (newest first).
+   Skip any approach that contradicts them.
+
+{lessons}
+
+2. **Pick tools deliberately.** You have access to the skills and tools listed
+   below — and only these. If you need something else, emit a `requests` entry
+   asking the Orchestration Manager to discover one. Do not improvise.
+
+### Skills
+
+{skills}
+
+### Tools
+
+{tools}
+
+3. **Scraping is gated.** The `web-scraping` skill is available, but every
+   external scrape, "learn from this repo", or "copy a pattern from that URL"
+   MUST route through `OrchestrationManager.request_scrape(agent_id, target)`.
+
+   The manager enforces a two-layer check on every request:
+     a. **Trust policy** — target's GitHub owner OR domain must be on the
+        allowlist (seed list includes anthropics, browser-use, Polymarket,
+        yfe404, and the official Polymarket / Anthropic docs domains).
+     b. **Authenticator** — for GitHub repos we hit the public REST API and
+        confirm: owner login matches, repo is public, not archived/disabled,
+        has a declared license, and (best-effort) latest commit on the
+        default branch is GPG-verified. For HTTPS URLs we confirm HTTPS,
+        a 200 response, and that the host after redirects matches.
+
+   If either layer fails, you get a rejection — file a lesson and stop.
+   Do NOT try to bypass the gate. Do NOT scrape via raw urllib/requests
+   yourself.
+
+---
+
+If you find yourself about to repeat a rejected approach, stop and flag it as
+a lesson via `memory.record_lesson("{agent_id}", "<lesson>")` before proceeding.
+"""
+
+
+def _render_lessons(lessons: list[dict]) -> str:
+    if not lessons:
+        return "   _(no prior lessons recorded — you are starting fresh)_"
+    return "\n".join(f"   - {row['lesson']}" for row in lessons)
+
+
+def _render_tool_list(items: list[Tool]) -> str:
+    if not items:
+        return "   _(none)_"
+    return "\n".join(f"   - **{t.name}** ({t.kind} @ `{t.location}`) — {t.purpose}" for t in items)
+
+
+@dataclass(frozen=True)
+class Briefing:
+    agent_id: str
+    text: str
+    toolset: AgentToolset
+    lessons: list[dict]
+
+
+@dataclass(frozen=True)
+class ScrapeOutcome:
+    """Result of OrchestrationManager.request_scrape, persisted to scrape_audit."""
+
+    agent_id: str
+    target_raw: str
+    policy_decision: ScrapeDecision
+    auth_verdict: AuthVerdict | None
+    approved: bool
+    reason: str
+    audit_id: int
+
+
+class OrchestrationManager:
+    def __init__(
+        self,
+        memory: MemoryStore,
+        *,
+        trust_policy: TrustPolicy | None = None,
+        authenticator: GitHubAuthenticator | None = None,
+    ) -> None:
+        self.memory = memory
+        self.trust_policy = trust_policy or TrustPolicy()
+        self.authenticator = authenticator or GitHubAuthenticator()
+
+    # ----- Briefing -----
+
+    def brief(self, agent_id: str, agent_display_name: str | None = None) -> Briefing:
+        toolset = toolset_for(agent_id)
+        lessons = self.memory.recent_lessons(agent_id, limit=10)
+        text = BRIEFING_TEMPLATE.format(
+            agent_name=agent_display_name or agent_id,
+            agent_id=agent_id,
+            lessons=_render_lessons(lessons),
+            skills=_render_tool_list(toolset.skills),
+            tools=_render_tool_list(toolset.tools),
+        )
+        return Briefing(agent_id=agent_id, text=text, toolset=toolset, lessons=lessons)
+
+    def wrap_system_prompt(self, agent_id: str, base_prompt: str, agent_display_name: str | None = None) -> str:
+        briefing = self.brief(agent_id, agent_display_name)
+        return briefing.text + "\n\n---\n\n" + base_prompt
+
+    # ----- Lesson capture -----
+
+    def record_lesson(self, agent_id: str, lesson: str, context: dict | None = None) -> int:
+        """Convenience pass-through so callers don't need to import MemoryStore."""
+        return self.memory.record_lesson(agent_id, lesson, context)
+
+    # ----- Trust-gated scraping (web-scraper skill) -----
+
+    def request_scrape(self, agent_id: str, target: str) -> ScrapeOutcome:
+        """Gate every external scrape through trust policy + authenticator.
+
+        Every call — approved or rejected — is recorded in `scrape_audit` for
+        a permanent audit trail. Rejections also create a lesson scoped to the
+        requesting agent so the same untrusted target isn't requested twice.
+        """
+        # Sanity-check the agent_id so we don't audit anonymous calls.
+        if agent_id not in REGISTRY:
+            raise KeyError(f"unknown agent_id {agent_id!r}; known: {list(REGISTRY)}")
+
+        decision = self.trust_policy.classify(target)
+
+        if not decision.allowed:
+            audit_id = self.memory.record_scrape_audit(
+                agent_id=agent_id,
+                target_raw=target,
+                target_kind=decision.target.kind,
+                policy_allowed=False,
+                policy_reason=decision.reason,
+                auth_verified=None,
+                auth_reason=None,
+                auth_details=None,
+            )
+            self.memory.record_lesson(
+                agent_id,
+                f"Trust policy blocked scrape of {target!r}: {decision.reason}",
+                context={"audit_id": audit_id},
+            )
+            return ScrapeOutcome(
+                agent_id=agent_id,
+                target_raw=target,
+                policy_decision=decision,
+                auth_verdict=None,
+                approved=False,
+                reason=decision.reason,
+                audit_id=audit_id,
+            )
+
+        verdict = self.authenticator.verify(decision.target)
+
+        audit_id = self.memory.record_scrape_audit(
+            agent_id=agent_id,
+            target_raw=target,
+            target_kind=decision.target.kind,
+            policy_allowed=True,
+            policy_reason=decision.reason,
+            auth_verified=verdict.verified,
+            auth_reason=verdict.reason,
+            auth_details=verdict.details,
+        )
+
+        if not verdict.verified:
+            self.memory.record_lesson(
+                agent_id,
+                f"Authenticator rejected {target!r}: {verdict.reason}",
+                context={"audit_id": audit_id, "auth_details": verdict.details},
+            )
+            return ScrapeOutcome(
+                agent_id=agent_id,
+                target_raw=target,
+                policy_decision=decision,
+                auth_verdict=verdict,
+                approved=False,
+                reason=verdict.reason,
+                audit_id=audit_id,
+            )
+
+        return ScrapeOutcome(
+            agent_id=agent_id,
+            target_raw=target,
+            policy_decision=decision,
+            auth_verdict=verdict,
+            approved=True,
+            reason="trust policy + authenticator both passed",
+            audit_id=audit_id,
+        )
+
+    def add_trusted_owner(self, owner: str) -> None:
+        self.trust_policy.add_trusted_owner(owner)
+
+    def add_trusted_domain(self, domain: str) -> None:
+        self.trust_policy.add_trusted_domain(domain)
+
+    def recent_scrape_audits(self, limit: int = 20) -> list[dict]:
+        return self.memory.recent_scrape_audits(limit=limit)
+
+    # ----- Tool discovery (headed browser) -----
+
+    def discover_via_browser(
+        self,
+        query: str,
+        *,
+        max_results: int = 5,
+        browser_factory: Callable[[], Any] | None = None,
+    ) -> list[dict]:
+        """Open a headed browser-use session, search GitHub for `query`, record
+        candidate repos as discovered_tools (status='pending'), and return them.
+
+        Per the System Architect Skill, the browser is headed so the user can
+        review what's being navigated to. We do NOT install anything here —
+        approval and install happen out-of-band after the user reviews the
+        recorded candidates.
+
+        `browser_factory` lets tests inject a fake; production callers leave
+        it None and the real headed browser-use session is opened.
+        """
+        candidates = self._collect_candidates(query, max_results, browser_factory)
+        recorded = []
+        for c in candidates:
+            tool_id = self.memory.record_discovered_tool(
+                query=query,
+                name=c["name"],
+                url=c["url"],
+                stars=c.get("stars"),
+                note=c.get("note"),
+            )
+            recorded.append({**c, "id": tool_id, "status": "pending"})
+        return recorded
+
+    def _collect_candidates(
+        self,
+        query: str,
+        max_results: int,
+        browser_factory: Callable[[], Any] | None,
+    ) -> list[dict]:
+        factory = browser_factory or self._default_browser_factory
+        browser = factory()
+        try:
+            # The real implementation drives browser-use to GitHub search and
+            # extracts the top repos. browser-use's API surface varies by
+            # version; the call site below is intentionally narrow so a future
+            # Architect ticket can wire it up without rewriting the manager.
+            results = _github_search_with_browser(browser, query, max_results)
+        finally:
+            close = getattr(browser, "close", None)
+            if callable(close):
+                close()
+        return results
+
+    @staticmethod
+    def _default_browser_factory():
+        # Headed by policy — wallet/sign flows AND tool discovery must be visible.
+        from trading.browser_fallback import open_wallet_connect_session
+        return open_wallet_connect_session()
+
+    # ----- Approval workflow -----
+
+    def pending_tools(self) -> list[dict]:
+        return self.memory.pending_discovered_tools()
+
+    def approve_tool(self, tool_id: int) -> None:
+        self.memory.set_discovered_tool_status(tool_id, "approved")
+
+    def reject_tool(self, tool_id: int) -> None:
+        self.memory.set_discovered_tool_status(tool_id, "rejected")
+
+
+def _github_search_with_browser(browser: Any, query: str, max_results: int) -> list[dict]:
+    """Hook for headed-browser GitHub search.
+
+    Default behavior surfaces a single placeholder candidate so the discovery
+    path is exercised end-to-end without a real browser session. The Architect
+    will replace this body with a real browser-use script in a follow-up
+    ticket — keeping the surface stable means the manager and its tests don't
+    need to change when that happens.
+    """
+    return [
+        {
+            "name": f"[placeholder] github.com search for {query!r}",
+            "url": f"https://github.com/search?q={query.replace(' ', '+')}&type=repositories",
+            "stars": None,
+            "note": "Replace with real browser-use scrape in a future Architect ticket.",
+        }
+    ][:max_results]

@@ -1,0 +1,11 @@
+from agents.product_agent import PRODUCT_AGENT
+from agents.architect_agent import ARCHITECT_AGENT
+from agents.forward_deployment_agent import FORWARD_DEPLOYMENT_AGENT
+
+SPECIALISTS = {
+    PRODUCT_AGENT["id"]: PRODUCT_AGENT,
+    ARCHITECT_AGENT["id"]: ARCHITECT_AGENT,
+    FORWARD_DEPLOYMENT_AGENT["id"]: FORWARD_DEPLOYMENT_AGENT,
+}
+
+__all__ = ["SPECIALISTS", "PRODUCT_AGENT", "ARCHITECT_AGENT", "FORWARD_DEPLOYMENT_AGENT"]
