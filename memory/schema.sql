@@ -57,6 +57,32 @@ CREATE TABLE IF NOT EXISTS scrape_audit (
 CREATE INDEX IF NOT EXISTS idx_scrape_audit_agent ON scrape_audit (agent_id);
 CREATE INDEX IF NOT EXISTS idx_scrape_audit_created ON scrape_audit (created);
 
+-- Chief-of-Staff audit log: every consequential action (plan persisted,
+-- specialist invoked, gate decision recorded) lands here so we have a single
+-- chronological view of what the system did and why.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor     TEXT NOT NULL,        -- "manager" | agent_id | "user"
+    action    TEXT NOT NULL,        -- short verb: "plan_persisted", "scrape_request", "executive_summary"
+    target    TEXT,                 -- subject of the action (plan id, target string, specialist id)
+    details   TEXT,                 -- optional JSON
+    created   REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log (actor);
+
+-- Chief-of-Staff plans: short-form strategic notes the manager keeps.
+-- Unlike memory lessons (rules of thumb), plans are concrete "we will do X by Y".
+CREATE TABLE IF NOT EXISTS strategic_plans (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id   TEXT UNIQUE NOT NULL,
+    title     TEXT NOT NULL,
+    body      TEXT NOT NULL,
+    created   REAL NOT NULL,
+    updated   REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS discovered_tools (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     query      TEXT NOT NULL,

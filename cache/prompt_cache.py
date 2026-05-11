@@ -1,11 +1,27 @@
 from typing import Any
 
 DEFAULT_MODEL = "claude-opus-4-7"
+DEFAULT_SONNET_THINKING_BUDGET = 2000
 
 
 def cached_system_block(text: str) -> dict[str, Any]:
     """Wrap a system prompt so it participates in Anthropic prompt caching."""
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
+
+
+def resolve_thinking_budget(model: str, thinking_budget_tokens: int | None) -> int:
+    """Pick a final thinking budget. Returns 0 to mean 'do not enable thinking'.
+
+    - Explicit positive int → use it.
+    - Explicit 0 → disable.
+    - None (default): enable with DEFAULT_SONNET_THINKING_BUDGET when model
+      is Sonnet; disable otherwise.
+    """
+    if thinking_budget_tokens is not None:
+        return max(0, int(thinking_budget_tokens))
+    if "sonnet" in model.lower():
+        return DEFAULT_SONNET_THINKING_BUDGET
+    return 0
 
 
 def cached_create(
@@ -16,10 +32,14 @@ def cached_create(
     model: str = DEFAULT_MODEL,
     max_tokens: int = 2048,
     tools: list[dict] | None = None,
+    thinking_budget_tokens: int | None = None,
 ) -> Any:
     """Wrapper around client.messages.create that always cache-tags the system prompt.
 
     Per CLAUDE.md rule #2, every Anthropic call must route through this function.
+
+    Extended thinking (cookbook: extended_thinking_with_tool_use) auto-enables
+    when the model is Sonnet; pass thinking_budget_tokens explicitly to override.
     """
     kwargs: dict[str, Any] = {
         "model": model,
@@ -29,6 +49,9 @@ def cached_create(
     }
     if tools:
         kwargs["tools"] = tools
+    budget = resolve_thinking_budget(model, thinking_budget_tokens)
+    if budget > 0:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
     return client.messages.create(**kwargs)
 
 

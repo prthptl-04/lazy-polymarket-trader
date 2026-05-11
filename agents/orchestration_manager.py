@@ -161,6 +161,10 @@ class OrchestrationManager:
 
     # ----- Trust-gated scraping (web-scraper skill) -----
 
+    # Meta-actors (not Claude-driven specialists) that may still request scrapes.
+    # Keep this list tight — anything here writes to the audit log as an actor.
+    META_AGENT_IDS: frozenset[str] = frozenset({"manager", "research", "observability"})
+
     def request_scrape(self, agent_id: str, target: str) -> ScrapeOutcome:
         """Gate every external scrape through trust policy + authenticator.
 
@@ -169,8 +173,10 @@ class OrchestrationManager:
         requesting agent so the same untrusted target isn't requested twice.
         """
         # Sanity-check the agent_id so we don't audit anonymous calls.
-        if agent_id not in REGISTRY:
-            raise KeyError(f"unknown agent_id {agent_id!r}; known: {list(REGISTRY)}")
+        if agent_id not in REGISTRY and agent_id not in self.META_AGENT_IDS:
+            raise KeyError(
+                f"unknown agent_id {agent_id!r}; known: {list(REGISTRY)} + meta {sorted(self.META_AGENT_IDS)}"
+            )
 
         decision = self.trust_policy.classify(target)
 
@@ -247,6 +253,63 @@ class OrchestrationManager:
 
     def recent_scrape_audits(self, limit: int = 20) -> list[dict]:
         return self.memory.recent_scrape_audits(limit=limit)
+
+    # ----- Chief-of-Staff role (cookbook 01 adapted) -----
+
+    def persist_plan(self, plan_id: str, title: str, body: str) -> int:
+        """Save a strategic plan and audit it."""
+        rowid = self.memory.upsert_plan(plan_id, title, body)
+        self.memory.record_audit_event(
+            actor="manager", action="plan_persisted", target=plan_id,
+            details={"title": title, "size": len(body)},
+        )
+        return rowid
+
+    def get_plan(self, plan_id: str) -> dict | None:
+        return self.memory.get_plan(plan_id)
+
+    def list_plans(self) -> list[dict]:
+        return self.memory.list_plans()
+
+    def audit_event(self, actor: str, action: str, target: str | None = None, details: dict | None = None) -> int:
+        """Direct hook for callers who need to record an arbitrary action."""
+        return self.memory.record_audit_event(actor=actor, action=action, target=target, details=details)
+
+    def recent_audit_events(self, limit: int = 50) -> list[dict]:
+        return self.memory.recent_audit_events(limit=limit)
+
+    def executive_summary(
+        self,
+        topic: str,
+        *,
+        specialist_ids: list[str] | None = None,
+        snapshot: dict | None = None,
+    ) -> dict:
+        """Synthesize a high-signal status report. Pure aggregation — no LLM call.
+
+        Returns a structured dict the caller (or a downstream LLM) can render.
+        Audits the event so we have a chronological record of when summaries
+        were produced and by whom.
+        """
+        ids = specialist_ids or list(REGISTRY.keys())
+        toolsets = {aid: REGISTRY[aid] for aid in ids if aid in REGISTRY}
+        result = {
+            "topic": topic,
+            "as_of": __import__("time").time(),
+            "specialists": {
+                aid: {
+                    "tools_count": len(ts.tools),
+                    "lessons": [l["lesson"] for l in self.memory.recent_lessons(aid, limit=5)],
+                }
+                for aid, ts in toolsets.items()
+            },
+            "recent_scrape_audits": self.memory.recent_scrape_audits(limit=5),
+            "recent_plans": [p["plan_id"] for p in self.memory.list_plans()[:5]],
+            "snapshot": snapshot or {},
+        }
+        self.audit_event(actor="manager", action="executive_summary", target=topic,
+                         details={"specialists": ids})
+        return result
 
     # ----- Tool discovery (headed browser) -----
 

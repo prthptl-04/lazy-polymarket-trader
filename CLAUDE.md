@@ -155,6 +155,28 @@ This is a financial product. Sizing decisions are not allowed to be ad hoc.
 - Defaults: **half-Kelly** (`kelly_multiplier=0.5`). Full Kelly is permitted
   only on a documented opt-in basis per market.
 
-## 12. Memory
+## 12. Research, observability, tool eval, extended thinking
+
+Four cookbook patterns are now first-class capabilities in this codebase:
+
+- **Research** — `research_agent.ResearchAgent` is the only sanctioned way to
+  evaluate a new external source. Every candidate target it surfaces routes
+  through `OrchestrationManager.request_scrape`. No raw urllib in any agent.
+- **Chief of Staff** — `OrchestrationManager` now exposes `persist_plan`,
+  `audit_event`, `recent_audit_events`, and `executive_summary`. Use them
+  instead of writing ad-hoc plan files; they are durable across sessions and
+  attached to the audit log.
+- **Observability** — `observability.ObservabilityAgent` is the read-only
+  health probe. Forward Deployment runs it before every publish and on
+  shift change. It never mutates anything.
+- **Tool evaluation** — `tool_evaluation.cases.default_evaluator` is the
+  regression harness for the deterministic helpers in `agents.tool_registry`.
+  Expand cases when a contract changes; do not delete old cases.
+- **Extended thinking** — `cache.prompt_cache.cached_create` accepts
+  `thinking_budget_tokens`. Auto-enabled at 2000 on Sonnet models, off on
+  Opus. Use thinking on planning-heavy paths; do not use on trading-loop
+  latency paths.
+
+## 13. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

@@ -167,6 +167,71 @@ class MemoryStore:
             out.append(row)
         return out
 
+    # ----- Chief-of-Staff audit log -----
+
+    def record_audit_event(
+        self, actor: str, action: str, target: str | None, details: dict | None = None
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO audit_log (actor, action, target, details, created) VALUES (?, ?, ?, ?, ?)",
+            (actor, action, target, json.dumps(details) if details else None, time.time()),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def recent_audit_events(self, limit: int = 50) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, actor, action, target, details, created FROM audit_log "
+            "ORDER BY created DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        cols = ["id", "actor", "action", "target", "details", "created"]
+        out = []
+        for r in rows:
+            row = dict(zip(cols, r))
+            if row["details"]:
+                row["details"] = json.loads(row["details"])
+            out.append(row)
+        return out
+
+    # ----- Chief-of-Staff strategic plans -----
+
+    def upsert_plan(self, plan_id: str, title: str, body: str) -> int:
+        now = time.time()
+        existing = self._conn.execute(
+            "SELECT id, created FROM strategic_plans WHERE plan_id = ?", (plan_id,)
+        ).fetchone()
+        if existing:
+            self._conn.execute(
+                "UPDATE strategic_plans SET title = ?, body = ?, updated = ? WHERE plan_id = ?",
+                (title, body, now, plan_id),
+            )
+            self._conn.commit()
+            return existing[0]
+        cur = self._conn.execute(
+            "INSERT INTO strategic_plans (plan_id, title, body, created, updated) VALUES (?, ?, ?, ?, ?)",
+            (plan_id, title, body, now, now),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_plan(self, plan_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT plan_id, title, body, created, updated FROM strategic_plans WHERE plan_id = ?",
+            (plan_id,),
+        ).fetchone()
+        if not row:
+            return None
+        cols = ["plan_id", "title", "body", "created", "updated"]
+        return dict(zip(cols, row))
+
+    def list_plans(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT plan_id, title, body, created, updated FROM strategic_plans ORDER BY updated DESC"
+        ).fetchall()
+        cols = ["plan_id", "title", "body", "created", "updated"]
+        return [dict(zip(cols, r)) for r in rows]
+
     def set_discovered_tool_status(self, tool_id: int, status: str) -> None:
         if status not in ("pending", "approved", "rejected"):
             raise ValueError(f"invalid status {status!r}")

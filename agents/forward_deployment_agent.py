@@ -14,6 +14,8 @@ Responsibilities:
 - Maintain monitoring/live_feedback.py with the latest runtime signals.
 - Own the test suite. Before any phase is marked done, run pytest -q and report
   all results.
+- Run observability.ObservabilityAgent.run() at shift start and before every
+  publish; surface the TL;DR notes verbatim.
 - Run vulnerability_detector.VulnerabilityDetectionAgent.run() before every
   publish. If blocked_publish=True, file a lesson with the highest-severity
   finding and stop — do not push.

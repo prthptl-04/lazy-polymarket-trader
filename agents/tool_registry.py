@@ -60,6 +60,42 @@ COMMON_SKILLS: list[Tool] = [
             "deterministic `finance/` package — shared utility, no lane."
         ),
     ),
+    Tool(
+        name="research-agent",
+        kind="skill",
+        location=".claude/skills/research-agent/SKILL.md",
+        purpose=(
+            "Cookbook-00 research pattern, trust-gated. Every candidate URL routes through "
+            "OrchestrationManager.request_scrape before becoming a citation. See research_agent.ResearchAgent."
+        ),
+    ),
+    Tool(
+        name="observability",
+        kind="skill",
+        location=".claude/skills/observability/SKILL.md",
+        purpose=(
+            "Read-only health monitoring: gh repo state + pytest summary + LiveFeedback ring. "
+            "See observability.ObservabilityAgent. Owned by Forward Deployment."
+        ),
+    ),
+    Tool(
+        name="tool-evaluation",
+        kind="skill",
+        location=".claude/skills/tool-evaluation/SKILL.md",
+        purpose=(
+            "Exact-match regression harness for deterministic tools registered here. "
+            "See tool_evaluation.ToolEvaluator and tool_evaluation.cases.default_evaluator."
+        ),
+    ),
+    Tool(
+        name="extended-thinking",
+        kind="skill",
+        location=".claude/skills/extended-thinking/SKILL.md",
+        purpose=(
+            "Auto-enable Claude thinking budget on Sonnet models via cache.prompt_cache.cached_create. "
+            "Pass thinking_budget_tokens=N to override; default is 2000 on Sonnet, 0 on Opus."
+        ),
+    ),
 ]
 
 COMMON_TOOLS: list[Tool] = [
@@ -189,6 +225,24 @@ REGISTRY: dict[str, AgentToolset] = {
                 kind="python",
                 location="finance/pnl.py",
                 purpose="compute_pnl + equity_curve_from_trades — input for risk_metrics.",
+            ),
+            Tool(
+                name="observability.ObservabilityAgent",
+                kind="python",
+                location="observability/agent.py",
+                purpose=(
+                    "Composes GitHubHealth + TestHealth + LiveFeedback into a single HealthReport. "
+                    "Read-only. Run before publishes; consult during on-call."
+                ),
+            ),
+            Tool(
+                name="tool_evaluation.cases.default_evaluator",
+                kind="python",
+                location="tool_evaluation/cases.py",
+                purpose=(
+                    "Seed evaluator covering finance.* and observability.* helpers. "
+                    "Call .run() to get an EvaluationReport; expand cases when contracts change."
+                ),
             ),
         ],
     ),
