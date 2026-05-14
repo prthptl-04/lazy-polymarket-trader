@@ -177,6 +177,49 @@ Four cookbook patterns are now first-class capabilities in this codebase:
   Opus. Use thinking on planning-heavy paths; do not use on trading-loop
   latency paths.
 
-## 13. Memory
+## 13. Live trading flip — explicit, gated, recoverable
+
+Real-wallet trading is now wired (`trading/polymarket_client.py` derives L2
+creds from `POLYMARKET_PRIVATE_KEY` and signs orders via py-clob-client).
+The transition from paper to live is intentionally a checklist, not a flag:
+
+1. `.env` populated with `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER_ADDRESS`,
+   `POLYMARKET_SIGNATURE_TYPE=3`.
+2. Deposit wallet funded with USDC on Polygon at the amount you're willing
+   to lose entirely.
+3. `verification/criteria.py` tightened: `max_position_usd` and
+   `max_daily_loss_usd` set to live-appropriate values (start small).
+4. **>50 paper trades** routed through the active strategy under the
+   `Outcome Grader` with `grade_pass=True` (verified via `MemoryStore.recent_trades`).
+5. The user types an explicit live-flip approval in-session (this can be
+   captured by writing a lesson under `agent_id="*"` with the string
+   "live trading approved" — the executor checks for it).
+6. Only then flip `PAPER_TRADING=false` in `.env`.
+
+The `Executor` rechecks all preconditions per call — if any drift back to
+unsafe (env unset, criteria loosened, key removed), it silently downgrades
+to paper for that trade and emits a `wallet_sign_failed` or
+`live_disallowed` feedback event.
+
+## 14. Real-time market data + decision tree on the hot path
+
+The trading loop is structured so that the LLM is NEVER in the per-tick path:
+
+- `live_market.MarketWebSocketClient` streams events from
+  `wss://ws-subscriptions-clob.polymarket.com/ws/market` into
+  `OrderBookCache` (O(1) writes, lock-free).
+- `decision_tree.Predictor` reads from the cache and returns a `Prediction`
+  in single-digit microseconds.
+- `trading.strategies.DecisionTreeStrategy` builds a `ProposedTrade`, sends
+  it to the `Outcome Grader`, and (if approved) the `Executor` which signs
+  and POSTs via py-clob-client.
+- Agents (Architect / Forward Deployment) re-fit the tree off the hot path
+  using `decision_tree.Trainer` over `MemoryStore.recent_trades` and
+  resolved-market outcomes.
+
+End-to-end latency from market event → order POST is bounded by the
+Polygon network, not by our compute.
+
+## 15. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

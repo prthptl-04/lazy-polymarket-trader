@@ -1,13 +1,27 @@
-"""Strategy interfaces. Real strategy logic is out of scope for Phase 0."""
+"""Strategy interfaces and the live decision-tree strategy.
+
+A Strategy reads a snapshot, decides whether to act, sizes via Kelly, and
+emits a `ProposedTrade`. Strategies are the only place in `trading/` that
+get to make a "should we trade?" call — the executor and grader downstream
+only validate.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
 
+from decision_tree.features import extract_features
+from decision_tree.predictor import Predictor
+from finance.kelly import kelly_size_usd
+from live_market.orderbook_cache import OrderBookCache
+from verification.criteria import DEFAULT_CRITERIA, VerifiedOutcomeCriteria
 from verification.outcome_grader import ProposedTrade
 
 
 @dataclass(frozen=True)
 class MarketSnapshot:
+    """Compatibility shim for existing call sites."""
     market_id: str
     yes_price: float
     no_price: float
@@ -20,3 +34,69 @@ class Strategy(Protocol):
     def propose(self, snapshot: MarketSnapshot) -> ProposedTrade | None:
         """Return a proposed trade for this snapshot, or None to skip."""
         ...
+
+
+@dataclass
+class DecisionTreeStrategy:
+    """Live strategy that reads the OrderBookCache, predicts via the tree,
+    and sizes via half-Kelly.
+
+    Hot path is fully deterministic + pure Python; LLM is not in the loop.
+    Agents update the tree off the hot path (Trainer.fit on resolved markets).
+    """
+    name: str
+    cache: OrderBookCache
+    predictor: Predictor
+    bankroll_usd: float
+    criteria: VerifiedOutcomeCriteria = DEFAULT_CRITERIA
+    min_confidence: float = 0.5
+    min_edge_bps: int = 20
+
+    def propose_from_token(self, token_id: str, market_id: str) -> ProposedTrade | None:
+        if not self.cache.has(token_id):
+            return None
+        book = self.cache.get(token_id)
+        features = extract_features(book)
+        if features is None or not features.has_liquidity:
+            return None
+
+        prediction = self.predictor.predict(features)
+        if prediction.confidence < self.min_confidence:
+            return None
+
+        # Edge on the YES side: p_yes - price.
+        price = features.mid_price
+        edge_yes_bps = int(round((prediction.p_yes - price) * 10_000))
+        if abs(edge_yes_bps) < self.min_edge_bps:
+            return None
+
+        side = "YES" if edge_yes_bps > 0 else "NO"
+
+        # Kelly sizing on whichever side has positive edge.
+        if side == "YES":
+            sizing = kelly_size_usd(
+                p=prediction.p_yes, price=price,
+                bankroll_usd=self.bankroll_usd,
+                criteria=self.criteria,
+                kelly_multiplier=0.5,
+            )
+        else:
+            sizing = kelly_size_usd(
+                p=1.0 - prediction.p_yes, price=1.0 - price,
+                bankroll_usd=self.bankroll_usd,
+                criteria=self.criteria,
+                kelly_multiplier=0.5,
+            )
+
+        if sizing.size_usd <= 0:
+            return None
+
+        return ProposedTrade(
+            market_id=market_id,
+            side=side,
+            size_usd=sizing.size_usd,
+            price=price if side == "YES" else (1.0 - price),
+            orderbook_depth_usd=features.depth_yes_usd if side == "YES" else features.depth_no_usd,
+            expected_edge_bps=abs(edge_yes_bps),
+            estimated_slippage_bps=max(1, features.spread_bps // 2),
+        )
