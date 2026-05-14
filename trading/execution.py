@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from memory.store import MemoryStore
+from verification.criteria import LIVE_APPROVAL_LESSON, MIN_PAPER_TRADES_FOR_LIVE
 from verification.outcome_grader import GradeResult, OutcomeGrader, ProposedTrade
 
 
@@ -24,14 +25,42 @@ class ExecutionResult:
     grade: GradeResult
     trade_log_id: Optional[int] = None
     error: Optional[str] = None
+    downgrade_reason: Optional[str] = None  # set when we wanted live but fell back to paper
 
 
-def _live_trading_allowed() -> bool:
+def _env_live_intent() -> bool:
     return (
         os.environ.get("PAPER_TRADING", "true").lower() == "false"
         and bool(os.environ.get("POLYMARKET_PRIVATE_KEY"))
         and bool(os.environ.get("POLYMARKET_FUNDER_ADDRESS"))
     )
+
+
+def _live_preconditions(memory: MemoryStore) -> tuple[bool, str | None]:
+    """Returns (allowed, downgrade_reason). All five conditions must hold:
+
+    1. env intent (PAPER_TRADING=false + wallet vars set)
+    2. >= MIN_PAPER_TRADES_FOR_LIVE graded paper trades on file
+    3. Explicit user approval recorded as a '*' lesson with LIVE_APPROVAL_LESSON
+    """
+    if not _env_live_intent():
+        return False, "env not in live mode (PAPER_TRADING/POLYMARKET_* missing)"
+    paper_count = sum(
+        1 for t in memory.recent_trades(limit=10_000)
+        if t.get("paper") and t.get("grade_pass")
+    )
+    if paper_count < MIN_PAPER_TRADES_FOR_LIVE:
+        return False, f"insufficient paper validation ({paper_count}/{MIN_PAPER_TRADES_FOR_LIVE})"
+    lessons = memory.recent_lessons("*", limit=200)
+    approved = any(LIVE_APPROVAL_LESSON in (l.get("lesson") or "") for l in lessons)
+    if not approved:
+        return False, f"missing explicit user approval lesson: {LIVE_APPROVAL_LESSON!r}"
+    return True, None
+
+
+# Kept for backward compatibility; do NOT use in new code.
+def _live_trading_allowed() -> bool:
+    return _env_live_intent()
 
 
 class Executor:
@@ -55,7 +84,8 @@ class Executor:
             )
             return ExecutionResult(accepted=False, paper=True, grade=grade, trade_log_id=log_id)
 
-        paper = not _live_trading_allowed()
+        live_ok, downgrade_reason = _live_preconditions(self.memory)
+        paper = not live_ok
         error: Optional[str] = None
 
         if not paper:
@@ -65,6 +95,7 @@ class Executor:
             except Exception as e:
                 error = str(e)
                 paper = True  # downgrade on failure; do not silently retry
+                downgrade_reason = f"live submit failed: {e}"
 
         log_id = self.memory.log_trade(
             agent_id=agent_id,
@@ -82,6 +113,7 @@ class Executor:
             grade=grade,
             trade_log_id=log_id,
             error=error,
+            downgrade_reason=downgrade_reason,
         )
 
     @staticmethod

@@ -3,10 +3,11 @@ from verification.outcome_grader import OutcomeGrader, ProposedTrade
 
 
 def _good_trade(**overrides) -> ProposedTrade:
+    # Sized under the $100-smoke default (max_position_usd=10).
     base = dict(
         market_id="m1",
         side="YES",
-        size_usd=50.0,
+        size_usd=5.0,
         price=0.55,
         orderbook_depth_usd=1000.0,
         expected_edge_bps=30,

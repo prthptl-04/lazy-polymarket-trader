@@ -50,7 +50,9 @@ def test_kelly_size_caps_at_max_position():
 
 
 def test_kelly_size_half_kelly_default():
-    result = kelly_size_usd(p=0.60, price=0.50, bankroll_usd=1_000)
+    # Use loose caps so this test exercises the half-Kelly math, not the position cap.
+    loose = VerifiedOutcomeCriteria(max_position_usd=10_000)
+    result = kelly_size_usd(p=0.60, price=0.50, bankroll_usd=1_000, criteria=loose)
     # full Kelly = 0.20, half-Kelly = 0.10 → 100 USD on a 1000 bankroll.
     assert math.isclose(result.size_usd, 100.0, abs_tol=0.01)
 
