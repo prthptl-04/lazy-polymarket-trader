@@ -132,6 +132,29 @@ class PolymarketClient:
             raise RuntimeError("POLYMARKET_PRIVATE_KEY missing — cannot sign live orders.")
         return _with_retry(lambda: self._ensure_signed().post_order(order))
 
+    def cancel_order(self, order_id: str) -> Any:
+        """Cancel a single open order by id. Signed call.
+
+        Per CLAUDE.md rule #1: only `trading/order_manager.py` is allowed to
+        call this directly. Strategies never cancel; they ask the
+        OrderManager to replace.
+        """
+        if not os.environ.get("POLYMARKET_PRIVATE_KEY"):
+            raise RuntimeError("POLYMARKET_PRIVATE_KEY missing — cannot sign cancel.")
+        return _with_retry(lambda: self._ensure_signed().cancel(order_id=order_id))
+
+    def cancel_market(self, market_id: str) -> Any:
+        """Cancel ALL our open orders on a given market. Bulk safety net."""
+        if not os.environ.get("POLYMARKET_PRIVATE_KEY"):
+            raise RuntimeError("POLYMARKET_PRIVATE_KEY missing — cannot sign cancel_market.")
+        return _with_retry(lambda: self._ensure_signed().cancel_market_orders(market=market_id))
+
+    def cancel_all(self) -> Any:
+        """Cancel every open order across every market. Used by the kill-switch."""
+        if not os.environ.get("POLYMARKET_PRIVATE_KEY"):
+            raise RuntimeError("POLYMARKET_PRIVATE_KEY missing — cannot sign cancel_all.")
+        return _with_retry(lambda: self._ensure_signed().cancel_all())
+
     def create_or_derive_api_creds(self):
         """Force the L1→L2 derivation explicitly. Returns the L2 creds."""
         self._ensure_signed()

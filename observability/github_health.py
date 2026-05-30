@@ -35,7 +35,10 @@ class GitHubHealth:
 def fetch_github_health(repo: str, *, runner=None) -> GitHubHealth:
     """`runner(argv) -> CmdResult-like` is injectable for tests."""
     run = runner or _default_runner
-    fields = "visibility,defaultBranchRef,pushedAt,isArchived,isDisabled,openIssuesCount"
+    # `isDisabled` and `openIssuesCount` were removed from the gh CLI schema
+    # over the lifetime of this project. Disabled defaults to False; open-issue
+    # count is filed as a Phase-2 follow-up (use the issues edge object instead).
+    fields = "visibility,defaultBranchRef,pushedAt,isArchived"
     result = run(["gh", "repo", "view", repo, "--json", fields])
 
     notes: list[str] = []

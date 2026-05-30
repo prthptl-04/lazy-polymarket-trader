@@ -267,6 +267,32 @@ unit of work:
 - A new dependency that introduces its own event loop is rejected; all
   async work shares the trading-loop's loop.
 
-## 17. Memory
+## 17. HFT primitives — replace + cashout (Phase-B, 2026-05-29)
+
+Three lifecycle facts about live orders:
+
+1. **Only `trading.order_manager.OrderManager` may call
+   `PolymarketClient.cancel_order` / `cancel_market` / `cancel_all`.**
+   Strategies never cancel directly; they call `OrderManager.replace_async`
+   which runs cancel + place via `asyncio.gather`. Sequential cancel-then-place
+   is forbidden in the trading loop — that's 2× RTT for no benefit.
+2. **Position state is in-memory.** `trading.position_tracker.PositionTracker`
+   is updated only from `live_market.user_channel.UserWebSocketClient` events
+   (single asyncio task). All cashout / strategy reads go through it; no
+   per-tick CLOB REST polling for positions.
+3. **Cashout counter-orders are graded.** `trading.cashout.CashoutEngine`
+   emits `CashoutSignal`s that have already been run through
+   `OutcomeGrader.evaluate`. The OrderManager submits only signals with
+   `grade_passed=True`. There is no fast path around the grader.
+
+User-channel WebSocket creds (apiKey/secret/passphrase) are NEVER logged:
+- `UserSubscriber.__repr__` redacts them.
+- The subscribe payload is sent once and not persisted.
+- No memory table stores creds.
+
+Default cashout threshold: `profit_threshold_bps = 200` (2% of entry).
+Tighten in `CashoutEngine.__init__`; do not loosen below 50.
+
+## 18. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.
