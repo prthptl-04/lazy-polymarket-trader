@@ -15,7 +15,10 @@ class MemoryStore:
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = db_path or os.environ.get("MEMORY_DB_PATH", "./memory/state.db")
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path)
+        # check_same_thread=False: the FastAPI worker thread + the trading-loop
+        # event loop both touch the store. SQLite serializes writes internally;
+        # we never share a transaction across threads, so this is safe.
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.executescript(SCHEMA_PATH.read_text())
         self._conn.commit()
 

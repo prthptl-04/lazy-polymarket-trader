@@ -160,3 +160,57 @@
 - `decision_tree/` (features + trainer + predictor) — 2026-05-13
 - `DecisionTreeStrategy` end-to-end — 2026-05-13
 - `$100`-smoke risk caps + 50-paper-trade gate + explicit approval lesson — 2026-05-13
+
+### Phase A — Foundations (2026-05-29)
+- `code_graph/` (MIT, ours — GitNexus replacement) + dashboard hook
+- Scrapling install + trust-gated `ScraplingFetcher`
+- Async/sync placement rule (CLAUDE.md #16)
+- `/bmad-architect`, `/bmad-developer`, `/bmad-qa-tester` slash commands
+
+### Phase B — HFT primitives (2026-05-29)
+- `PolymarketClient.cancel_order` / `cancel_market` / `cancel_all`
+- `live_market/user_channel.py` — auth'd user-channel WebSocket subscriber
+- `trading/position_tracker.py` — in-memory positions + unrealized P&L
+- `trading/order_manager.py` — submit + cancel + parallel cancel+place
+- `trading/cashout.py` — profit-lock counter-orders, grader-gated
+- CLAUDE.md rule #17 (HFT primitives + cred redaction)
+- Observability schema fix for gh CLI field removal
+
+### Phase C — Autonomy + dashboard (2026-05-30)
+- `DecisionTreeStrategy.submit_or_replace_async` (Amelia)
+- `trading/autonomous_loop.py` — GO/STOP runner with 5 async tasks
+- `dashboard/` — FastAPI + WS hub + single-page UI (htmx + Cytoscape.js)
+- README run instructions + CLAUDE.md rule #18 (autonomy + dashboard policy)
+- 36 new tests; 316/316 green total
+
+### What's open as of 2026-05-30 (move to Done when shipped)
+
+- **Authenticated user-channel WS wiring at the runtime layer** (`status: planned`).
+  We have the subscriber; `dashboard/runtime.build_runtime` doesn't attach a
+  task factory yet. Phase-D work for Amelia.
+- **HTTP/2 keepalive on the CLOB client** (`status: planned`). Today each
+  `post_order` opens a new HTTPS connection; persistent connection would
+  shave the typical 50–150 ms RTT by ~30%.
+- **Dashboard token auth** (`status: idea`). Before the dashboard is reachable
+  beyond 127.0.0.1, add a shared-secret header check.
+- **Watched markets config from `.env`** (`status: idea`). Today watched is
+  edited in `dashboard/__main__.py`; should be sourced from a TOML / env file.
+- **Live P&L from user channel events** (`status: planned`). PositionTracker
+  has the API; dashboard.runtime needs the on_trade wiring.
+- **Daily kill-switch enforcement** (rule #4 declares it; enforcement still
+  on the roadmap).
+- **Strategy A/B in shadow mode** (`status: idea`).
+- **Audit immutability** (hash-chained checkpoints, `status: idea`).
+
+### What to do next (Winston's recommended order)
+
+1. **Wire the user-channel WebSocket in `build_runtime`.** ~1 commit. Without
+   it, PositionTracker stays empty in production and the dashboard's
+   unrealized P&L is always zero. Amelia work; AC: open the user channel
+   once `loop.start()` is called.
+2. **Add HTTP/2 keepalive to PolymarketClient.** ~1 commit. Use `httpx.AsyncClient`
+   with `http2=True`, share the connection across post/cancel calls.
+3. **Watched markets from config.** ~0.5 commit. New `config/watched.toml`,
+   parsed at startup.
+4. **MiroFish-style scenario simulation as second predictor.** A/B against
+   the decision tree. Heavy item; gate behind ≥500 resolved markets.

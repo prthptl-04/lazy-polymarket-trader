@@ -106,6 +106,15 @@ COMMON_SKILLS: list[Tool] = [
             "power the dashboard's force-directed view."
         ),
     ),
+    Tool(
+        name="dashboard",
+        kind="python",
+        location="dashboard/server.py",
+        purpose=(
+            "Read-only FastAPI dashboard + autonomous-loop GO/STOP buttons. "
+            "Single-page UI at 127.0.0.1:8765 by default. Run with `python -m dashboard`."
+        ),
+    ),
 ]
 
 COMMON_TOOLS: list[Tool] = [

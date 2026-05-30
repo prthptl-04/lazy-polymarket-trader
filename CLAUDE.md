@@ -293,6 +293,31 @@ User-channel WebSocket creds (apiKey/secret/passphrase) are NEVER logged:
 Default cashout threshold: `profit_threshold_bps = 200` (2% of entry).
 Tighten in `CashoutEngine.__init__`; do not loosen below 50.
 
-## 18. Memory
+## 18. Autonomy + dashboard (Phase-C, 2026-05-30)
+
+Autonomous trading is opt-in. The dashboard exposes a **GO / STOP** button
+pair that starts and stops `trading.autonomous_loop.AutonomousLoop`. Lifecycle:
+
+- GO calls `loop.start()`. Idempotent; safe to call when already running.
+- STOP calls `loop.stop()`. Idempotent; cancels in-flight loop tasks but
+  **does NOT cancel already-submitted open orders** — those persist until
+  acked/filled/cancelled separately.
+
+Crucially:
+- The GO button does NOT bypass any safety gate. The Outcome Grader still
+  runs per trade. The five-condition live-trading check in
+  `trading.execution.Executor` still applies. Paper-mode is the default;
+  live mode requires .env wallet + 50 graded paper trades + the explicit
+  approval lesson, per rule #13.
+- The dashboard is **read-only** for everything except start/stop. No
+  manual trade buttons. No edit-position UI. If you want to intervene
+  manually, you do it through code, not through a button.
+- Dashboard binds to 127.0.0.1 only (configurable via env). Token auth
+  before exposing externally is a Phase-3 roadmap item.
+
+Run with: `python -m dashboard`. Default port 8765; override via
+`DASHBOARD_PORT`. Open `http://127.0.0.1:8765`.
+
+## 19. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.
