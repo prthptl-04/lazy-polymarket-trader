@@ -96,6 +96,16 @@ COMMON_SKILLS: list[Tool] = [
             "Pass thinking_budget_tokens=N to override; default is 2000 on Sonnet, 0 on Opus."
         ),
     ),
+    Tool(
+        name="code-graph",
+        kind="skill",
+        location=".claude/skills/code-graph/SKILL.md",
+        purpose=(
+            "AST-derived codebase knowledge graph (MIT, ours — GitNexus replacement avoiding "
+            "PolyForm-Noncommercial license issues). Use during architecture reviews and to "
+            "power the dashboard's force-directed view."
+        ),
+    ),
 ]
 
 COMMON_TOOLS: list[Tool] = [
@@ -183,6 +193,25 @@ REGISTRY: dict[str, AgentToolset] = {
                 purpose=(
                     "Position sizing for binary markets. Returns a KellyResult bounded by "
                     "VerifiedOutcomeCriteria.max_position_usd. Use this BEFORE building a ProposedTrade."
+                ),
+            ),
+            Tool(
+                name="live_market.ScraplingFetcher",
+                kind="python",
+                location="live_market/scrapling_fetcher.py",
+                purpose=(
+                    "Trust-gated Scrapling (BSD-3) wrapper. fetch_static for plain HTML/JSON, "
+                    "fetch_dynamic for Cloudflare-protected pages. Every URL passes "
+                    "OrchestrationManager.request_scrape FIRST."
+                ),
+            ),
+            Tool(
+                name="code_graph.build_graph",
+                kind="python",
+                location="code_graph/extractor.py",
+                purpose=(
+                    "AST-derived graph of this codebase. Use when designing module boundaries "
+                    "or surfacing coupling for the architecture review."
                 ),
             ),
         ],

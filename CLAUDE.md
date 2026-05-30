@@ -241,6 +241,32 @@ vendored SKILL.md files cite the original source and are designed to work
 standalone within this codebase's existing rules. If we ever need the full
 framework, that's an explicit roadmap item, not a silent install.
 
-## 16. Memory
+## 16. Async / sync placement (Phase-A architectural directive, 2026-05-29)
+
+Single asyncio event loop per process. No threading. The rule for placing a
+unit of work:
+
+| Class of work | Mode | Why |
+|---|---|---|
+| WebSocket producers (market + user channels) | `async` | I/O-bound, event-driven |
+| `OrderBookCache.apply_event` and any handler called from an async producer | `sync` (called from async) | µs-scale CPU; async overhead would dominate |
+| Feature extraction, predictor, Kelly, grader | `sync` (called from async) | Same — pure CPU, µs-scale |
+| `Executor.execute` → `PolymarketClient.post_order` | `async` (Phase-B) | Network I/O; needs HTTP/2 keepalive |
+| Memory writes (`sqlite3`) | `sync` | SQLite is fast at our scale; async wrapper adds overhead without benefit |
+| Tree retraining | `async` background task (`loop.create_task`) | Long-running; must NOT block trading loop |
+| Observability snapshots, P&L recompute | `async` background task | Periodic, low-priority |
+| Dashboard WebSocket fan-out (Phase C) | `async` | Publish-subscribe |
+| Scrapling fetches | `sync` OR `async` — but never inline with the hot path | Each `fetch` can take seconds |
+| Code-graph extraction (`code_graph.build_graph`) | `sync` (one-shot offline) | Output cached to disk |
+
+**Invariants:**
+- The trading hot path NEVER awaits anything but the explicit network POST
+  in `PolymarketClient.post_order`.
+- Sync chunks called from async coroutines stay inline as long as they're
+  µs-scale. Anything that could exceed 100 µs goes to a thread pool.
+- A new dependency that introduces its own event loop is rejected; all
+  async work shares the trading-loop's loop.
+
+## 17. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

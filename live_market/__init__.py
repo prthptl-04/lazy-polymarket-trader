@@ -4,6 +4,7 @@ from live_market.orderbook_cache import (
     OrderBookCache,
 )
 from live_market.rest_snapshot import seed_from_snapshot
+from live_market.scrapling_fetcher import FetchResult, ScraplingFetcher
 from live_market.websocket_client import (
     MARKET_WS_URL,
     USER_WS_URL,
@@ -13,11 +14,13 @@ from live_market.websocket_client import (
 
 __all__ = [
     "BookLevel",
+    "FetchResult",
     "MARKET_WS_URL",
     "MarketSubscriber",
     "MarketWebSocketClient",
     "OrderBook",
     "OrderBookCache",
+    "ScraplingFetcher",
     "USER_WS_URL",
     "seed_from_snapshot",
 ]
