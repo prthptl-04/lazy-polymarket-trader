@@ -220,6 +220,27 @@ The trading loop is structured so that the LLM is NEVER in the per-tick path:
 End-to-end latency from market event → order POST is bounded by the
 Polygon network, not by our compute.
 
-## 15. Memory
+## 15. BMAD personas — Winston, Amelia, QA
+
+Three BMAD-METHOD personas are vendored as skills under `.claude/skills/`:
+
+- `bmad-architect` (**Winston**) — assigned to Software Architect. Use for
+  design trade-off matrices and architecture reviews. Pairs with the
+  project-native `system-architect` skill (do not delete the native skill;
+  Winston complements it, doesn't replace it).
+- `bmad-developer` (**Amelia**) — assigned to Software Architect. Use for
+  test-first story execution. Stays within one lane per session.
+- `bmad-qa-tester` — assigned to Forward Deployment. Use before every publish
+  for adversarial review (Blind Hunter / Edge Case Hunter / Acceptance
+  Auditor) and for test generation when a contract changes.
+
+These are **persona-only adaptations** of the BMAD `bmm-skills/` workflows
+(MIT, bmad-code-org/BMAD-METHOD). The full BMAD framework's `_bmad/`
+customization infrastructure is NOT installed in this project. The
+vendored SKILL.md files cite the original source and are designed to work
+standalone within this codebase's existing rules. If we ever need the full
+framework, that's an explicit roadmap item, not a silent install.
+
+## 16. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

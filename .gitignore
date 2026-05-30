@@ -10,3 +10,6 @@ dist/
 build/
 *.egg-info/
 .claude/settings.local.json
+
+# BMAD-METHOD full clone — kept locally for reference; we vendor adapted skills only.
+.claude/skills/bmad-method-src/

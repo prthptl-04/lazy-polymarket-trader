@@ -136,7 +136,26 @@ REGISTRY: dict[str, AgentToolset] = {
     ),
     "architect": AgentToolset(
         agent_id="architect",
-        skills=list(COMMON_SKILLS),
+        skills=list(COMMON_SKILLS) + [
+            Tool(
+                name="bmad-architect",
+                kind="skill",
+                location=".claude/skills/bmad-architect/SKILL.md",
+                purpose=(
+                    "Winston persona (adapted from bmad-code-org/BMAD-METHOD, MIT). Use for architecture "
+                    "decisions and trade-off matrices. Pairs with system-architect skill."
+                ),
+            ),
+            Tool(
+                name="bmad-developer",
+                kind="skill",
+                location=".claude/skills/bmad-developer/SKILL.md",
+                purpose=(
+                    "Amelia persona (adapted from BMAD, MIT). Test-first story execution. "
+                    "Use when implementing an approved roadmap item end-to-end."
+                ),
+            ),
+        ],
         tools=[
             *COMMON_TOOLS,
             Tool(
@@ -170,7 +189,18 @@ REGISTRY: dict[str, AgentToolset] = {
     ),
     "forward_deployment": AgentToolset(
         agent_id="forward_deployment",
-        skills=list(COMMON_SKILLS),
+        skills=list(COMMON_SKILLS) + [
+            Tool(
+                name="bmad-qa-tester",
+                kind="skill",
+                location=".claude/skills/bmad-qa-tester/SKILL.md",
+                purpose=(
+                    "Test-skills module (adapted from bmad-code-org/BMAD-METHOD, MIT). "
+                    "Adversarial review (Blind Hunter / Edge Case Hunter / Acceptance Auditor) + "
+                    "test generation. Use before every publish to verify the test set covers the change."
+                ),
+            ),
+        ],
         tools=[
             *COMMON_TOOLS,
             Tool(
