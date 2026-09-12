@@ -10,29 +10,19 @@
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. The grader cannot grade an equity trade
-`verification.outcome_grader.ProposedTrade` constrains `price` to 0–1 and
-`side` to YES/NO. It is a probability instrument and cannot represent
-"buy AAPL at $231.40". CLAUDE.md #3 says every trade is graded, so right now
-nothing directional can legally reach a venue.
-**Not** fixed by loosening the type — the grader's rules genuinely depend on
-price being a probability. Needs either an asset-class-aware path or a second
-grader for directional positions.
-→ *First task of Phase 3.*
-
-### 2. Robinhood MCP tool names are unverified
+### 1. Robinhood MCP tool names are unverified
 Robinhood publishes capabilities but not the tool schema; it is only
 discoverable from an authenticated session. `trading/venues/robinhood.py::TOOL_NAMES`
 is a best-effort map. Run `RobinhoodVenue.verify_tool_map()` on first connect
 and correct it. **The scheduler must refuse to go live while any entry is False.**
 
-### 3. MCP auth is desktop-interactive OAuth
+### 2. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
 account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
 across restarts is unsolved and is the real blocker on unattended autonomy.
 → *Decide the approach before Phase 5.*
 
-### 4. Daily kill-switch is declared but not enforced
+### 3. Daily kill-switch is declared but not enforced
 `verification.criteria.max_daily_loss_usd` has existed since Phase 0 and still
 blocks nothing. Now unblocked — live P&L arrives via the user channel and
 `PositionTracker`.
@@ -124,4 +114,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Session calendar + PDT gate | Phase 1, `c401f7b` |
 | Venue abstraction + router gates | Phase 2, `7a51fa2` |
 | Exit logic (was: fund had none at all) | `31b1684` |
-| Backtester (was: no backtesting existed) | this commit |
+| Backtester (was: no backtesting existed) | `64324d5` |
+| Grader could not grade an equity trade | this commit |
