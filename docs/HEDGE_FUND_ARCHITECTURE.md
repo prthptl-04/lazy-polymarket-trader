@@ -102,10 +102,41 @@ unless the thesis explicitly justifies carrying them.
 
 ## Phases
 
-- **Phase 1 — Foundation.** Session calendar + PDT gate. *(this commit)*
-- **Phase 2 — Venue abstraction.** `VenueAdapter` interface; Robinhood MCP
-  adapter; Polymarket adapter refitted behind it.
+- **Phase 1 — Foundation.** Session calendar + PDT gate. ✅
+- **Phase 2 — Venue abstraction.** ✅ `trading/venues/`: neutral types,
+  `VenueAdapter` protocol, `PaperVenue`, `RobinhoodVenue` (MCP), `VenueRouter`
+  carrying the session + PDT + spread gates. Polymarket refit deferred — it
+  still runs on its own path and is not yet behind the interface.
 - **Phase 3 — Round table.** Seats, protocol, consensus, transcript persistence.
+
+### Open items carried into Phase 3
+
+1. **The grader can't grade an equity trade.**
+   `verification.outcome_grader.ProposedTrade` constrains `price` to 0–1 and
+   `side` to YES/NO — it is a probability instrument. Rule #3 says every trade
+   is graded, so either the grader grows an asset-class-aware path or the fund
+   gets a second grader for directional positions. This is the first thing to
+   settle in Phase 3, because nothing should reach a venue ungraded.
+
+2. **Robinhood MCP tool names are unverified.** Robinhood publishes the
+   capabilities but not the tool schema; it is only discoverable from an
+   authenticated session. `trading/venues/robinhood.py::TOOL_NAMES` is a
+   best-effort map. Run `RobinhoodVenue.verify_tool_map()` on first connect and
+   correct it — the scheduler must refuse to go live while any entry is False.
+
+3. **MCP auth is desktop-interactive.** Robinhood requires browser OAuth on a
+   desktop device, which a 24/7 daemon cannot do headlessly. The session is
+   established interactively and its transport handed to the adapter. How that
+   session is kept alive across restarts is unsolved and blocks true autonomy.
+
+4. **Closes must be sized in quantity, not notional.** A $100 buy at the offer
+   acquires fewer units than a $100 sell at the bid disposes of, so a notional
+   close overshoots and is rejected. Pinned by
+   `test_notional_close_undershoots_once_the_price_moves`.
+
+5. **Round-table convening frequency is undecided.** Five seats deliberating
+   per candidate is the difference between dollars and tens of dollars a day.
+   Per-candidate vs per-session needs a decision before Phase 3 lands.
 - **Phase 4 — UI.** Live conversation view, thesis timeline, kill switch with
   resume.
 - **Phase 5 — Autonomy.** Session-aware scheduler drives the whole loop.
