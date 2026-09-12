@@ -63,11 +63,11 @@ do with them is deliberately left to the caller — a stale thesis built on
 week-old prices should be abandoned, not acted on. The re-run/abandon policy is
 unwritten.
 
-### Dashboard does not yet show the fund loop
-`FundScheduler.status()` exposes session, kill-switch, PDT budget, cycle
-metrics and the last cycle summary — but nothing renders it. The main dashboard
-still reports the Polymarket-era `AutonomousLoop`, and its GO/STOP still drives
-that loop rather than the fund.
+### `python -m dashboard` does not construct a fund
+The dashboard renders and drives a `FundScheduler` when one is attached, but
+`dashboard/__main__.py` still builds only the Polymarket runtime. Wiring the
+fund there needs an Anthropic client, a market-data provider and a watchlist —
+i.e. it is blocked on the data-source decision, not on code.
 
 ### Resumable theses are surfaced but never re-run
 `FundScheduler` reports interrupted thesis ids on GO. The re-run vs abandon
@@ -144,4 +144,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Thesis → order pipeline + candidate builder | `551fec0` |
 | Fund loop + market-data abstraction | `f3815c3` |
 | Round-table monitoring UI | `f3bbe26` |
-| Kill-switch unfed in the live path | this commit |
+| Kill-switch unfed in the live path | `0f30a1b` |
+| Dashboard wiring for the fund engine | this commit |

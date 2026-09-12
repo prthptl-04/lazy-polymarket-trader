@@ -1,0 +1,210 @@
+"""Dashboard wiring for the fund engine.
+
+GO/STOP has to drive the thing that can actually open positions. The tests
+that matter are the ones where a silent failure would be dangerous: STOP not
+reaching the fund, or a tripped kill-switch not surfacing.
+
+Backwards compatibility matters too — the Polymarket runtime and its tests
+predate the fund and must keep working with no scheduler attached.
+"""
+
+from datetime import datetime
+
+import pytest
+from fastapi.testclient import TestClient
+
+from dashboard.runtime import build_runtime
+from dashboard.server import create_app
+from memory.store import MemoryStore
+from trading.autonomous_loop import WatchedMarket
+from trading.fund_scheduler import FundScheduler
+from trading.kill_switch import DailyLossKillSwitch
+from trading.pdt import DayTradeTracker
+from trading.sessions import EASTERN
+from trading.venues.base import AccountSnapshot
+
+
+WEDNESDAY = datetime(2026, 9, 16, 10, 0, tzinfo=EASTERN)
+
+
+class _StubClient:
+    def post_order(self, order): return {"orderID": "x"}
+    def cancel_order(self, order_id): return {"ok": True}
+
+
+class _Venue:
+    def __init__(self, equity=10_000.0):
+        self.snapshot = AccountSnapshot(equity, equity, equity, "fake")
+
+    async def account(self):
+        return self.snapshot
+
+    async def positions(self):
+        return []
+
+
+class _Fund:
+    def __init__(self, kill_switch=None, router=None):
+        self.kill_switch = kill_switch
+        self.router = router
+        self.cycles = 0
+
+    async def run_cycle(self, moment, **kw):
+        from trading.fund import CycleReport
+        self.cycles += 1
+        if self.kill_switch and kw.get("equity_usd") is not None:
+            self.kill_switch.observe_equity(moment, kw["equity_usd"])
+        return CycleReport(moment=moment, session="regular")
+
+    async def resume_unfinished(self):
+        return []
+
+
+def _runtime(tmp_path, *, with_fund=True, kill_switch=None, equity=10_000.0):
+    rt = build_runtime(
+        polymarket_client=_StubClient(),
+        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
+        memory=MemoryStore(db_path=str(tmp_path / "d.db")),
+    )
+    if with_fund:
+        class _Router:
+            pdt = DayTradeTracker(account_equity_usd=5_000.0)
+
+        rt.fund_scheduler = FundScheduler(
+            fund=_Fund(kill_switch=kill_switch, router=_Router()),
+            venue=_Venue(equity),
+            clock=lambda: WEDNESDAY,
+            cycle_interval_seconds=0.01,
+        )
+    return rt
+
+
+# ---------------- /api/fund ----------------
+
+def test_fund_route_reports_not_attached(tmp_path):
+    c = TestClient(create_app(_runtime(tmp_path, with_fund=False)))
+    assert c.get("/api/fund").json() == {"attached": False}
+
+
+def test_fund_route_reports_session_and_budgets(tmp_path):
+    c = TestClient(create_app(_runtime(tmp_path)))
+    body = c.get("/api/fund").json()
+    assert body["attached"] is True
+    assert body["session"] == "regular"
+    assert body["pdt"]["day_trades_remaining"] == 3
+
+
+def test_fund_route_exposes_kill_switch_state(tmp_path):
+    ks = DailyLossKillSwitch(max_daily_loss_usd=500.0)
+    ks.observe_equity(WEDNESDAY, 10_000.0)
+    c = TestClient(create_app(_runtime(tmp_path, kill_switch=ks)))
+
+    body = c.get("/api/fund").json()
+    assert body["kill_switch"]["armed"] is True
+    assert body["kill_switch"]["tripped"] is False
+
+
+def test_fund_route_shows_a_tripped_switch(tmp_path):
+    ks = DailyLossKillSwitch(max_daily_loss_usd=100.0)
+    ks.observe_equity(WEDNESDAY, 10_000.0)
+    ks.observe_equity(WEDNESDAY, 9_000.0)
+    c = TestClient(create_app(_runtime(tmp_path, kill_switch=ks)))
+
+    assert c.get("/api/fund").json()["kill_switch"]["tripped"] is True
+
+
+# ---------------- GO / STOP ----------------
+
+def test_go_starts_the_fund(tmp_path):
+    rt = _runtime(tmp_path)
+    c = TestClient(create_app(rt))
+
+    c.post("/api/start")
+    try:
+        assert rt.fund_scheduler.state == "running"
+    finally:
+        c.post("/api/stop")
+
+
+def test_stop_stops_the_fund(tmp_path):
+    rt = _runtime(tmp_path)
+    c = TestClient(create_app(rt))
+
+    c.post("/api/start")
+    c.post("/api/stop")
+    assert rt.fund_scheduler.state == "stopped"
+
+
+def test_go_works_with_a_fund_but_no_polymarket_strategy(tmp_path):
+    """The fund is a complete engine on its own; a missing legacy strategy
+    must not 412 the whole dashboard."""
+    rt = _runtime(tmp_path)
+    rt.loop.strategy = None
+    c = TestClient(create_app(rt))
+
+    r = c.post("/api/start")
+    try:
+        assert r.status_code == 200
+        assert rt.fund_scheduler.state == "running"
+    finally:
+        c.post("/api/stop")
+
+
+def test_go_still_412s_when_nothing_is_wired(tmp_path):
+    rt = _runtime(tmp_path, with_fund=False)
+    rt.loop.strategy = None
+    c = TestClient(create_app(rt))
+
+    r = c.post("/api/start")
+    assert r.status_code == 412
+
+
+def test_start_is_audited_against_the_fund(tmp_path):
+    rt = _runtime(tmp_path)
+    c = TestClient(create_app(rt))
+    c.post("/api/start")
+    c.post("/api/stop")
+
+    targets = [e["target"] for e in rt.memory.recent_audit_events(limit=10)]
+    assert "fund_scheduler" in targets
+
+
+# ---------------- status precedence ----------------
+
+def test_status_reports_the_fund_state_when_running(tmp_path):
+    rt = _runtime(tmp_path)
+    c = TestClient(create_app(rt))
+
+    c.post("/api/start")
+    try:
+        s = c.get("/api/status").json()
+        assert s["fund_state"] == "running"
+        assert s["state"] == "running"
+        assert s["session"] == "regular"
+    finally:
+        c.post("/api/stop")
+
+
+def test_status_is_unchanged_without_a_fund(tmp_path):
+    c = TestClient(create_app(_runtime(tmp_path, with_fund=False)))
+    s = c.get("/api/status").json()
+    assert "fund_state" not in s
+    assert s["state"] == "stopped"
+
+
+# ---------------- UI ----------------
+
+def test_dashboard_renders_the_fund_panel(tmp_path):
+    c = TestClient(create_app(_runtime(tmp_path)))
+    html = c.get("/").text
+    for el in ("fund-session", "fund-cycles", "fund-pdt",
+               "fund-headroom", "renderFund"):
+        assert el in html
+
+
+def test_ui_warns_on_the_dangerous_states(tmp_path):
+    c = TestClient(create_app(_runtime(tmp_path)))
+    html = c.get("/").text
+    assert "DAILY LOSS LIMIT TRIPPED" in html
+    assert "UNARMED" in html
+    assert "Day-trade budget exhausted" in html

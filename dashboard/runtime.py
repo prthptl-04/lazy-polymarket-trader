@@ -40,11 +40,34 @@ class DashboardRuntime:
     market_feed_stats: FeedStats = field(default_factory=lambda: FeedStats("market"))
     user_feed_stats: FeedStats = field(default_factory=lambda: FeedStats("user"))
     user_feed_attached: bool = False
+    # The hedge-fund engine. Optional so the Polymarket-era runtime and its
+    # tests keep working unchanged while both engines coexist.
+    fund_scheduler: Optional[Any] = None
 
     # ---------- snapshot views (read-only, hot-path safe) ----------
 
     def status(self) -> dict:
-        return self.loop.status()
+        """Loop status, with the fund's state taking precedence when attached.
+
+        The GO/STOP pill must reflect the thing that can open positions. When a
+        fund scheduler is running, its state is the one that matters.
+        """
+        base = self.loop.status()
+        if self.fund_scheduler is None:
+            return base
+        fund = self.fund_scheduler.status()
+        return {
+            **base,
+            "state": fund["state"] if fund["state"] != "stopped" else base["state"],
+            "fund_state": fund["state"],
+            "session": fund["session"],
+        }
+
+    def fund_status(self) -> dict:
+        """Session, kill-switch, PDT budget and cycle metrics."""
+        if self.fund_scheduler is None:
+            return {"attached": False}
+        return {"attached": True, **self.fund_scheduler.status()}
 
     def pnl(self) -> dict:
         unrealized = self.position_tracker.total_unrealized_pnl_usd()

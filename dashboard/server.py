@@ -100,23 +100,44 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
         repo_root = Path(__file__).resolve().parent.parent
         return JSONResponse(content=_json.loads(to_cytoscape_json(build_graph(repo_root))))
 
+    @app.get("/api/fund")
+    def api_fund() -> dict:
+        return runtime.fund_status()
+
     # ---------- control ----------
+    #
+    # GO/STOP drives whichever engines are attached. The Polymarket
+    # AutonomousLoop and the FundScheduler are independent, so a runtime may
+    # carry either, both, or (in tests) neither.
+
     @app.post("/api/start")
     async def api_start() -> dict:
-        if runtime.loop.strategy is None:
-            raise HTTPException(status_code=412, detail="strategy not wired; runtime.loop.strategy is None")
-        await runtime.loop.start()
+        has_fund = runtime.fund_scheduler is not None
+        if runtime.loop.strategy is None and not has_fund:
+            raise HTTPException(
+                status_code=412,
+                detail="nothing to start: no strategy on runtime.loop and no fund scheduler",
+            )
+        if runtime.loop.strategy is not None:
+            await runtime.loop.start()
+        if has_fund:
+            await runtime.fund_scheduler.start()
         runtime.memory.record_audit_event(
-            actor="user", action="loop_start", target="autonomous_loop",
+            actor="user", action="loop_start",
+            target="fund_scheduler" if has_fund else "autonomous_loop",
             details={"watched": [w.market_id for w in runtime.watched]},
         )
         return runtime.status()
 
     @app.post("/api/stop")
     async def api_stop() -> dict:
+        # Stop the fund first: it is the thing that can open new positions.
+        if runtime.fund_scheduler is not None:
+            await runtime.fund_scheduler.stop()
         await runtime.loop.stop()
         runtime.memory.record_audit_event(
-            actor="user", action="loop_stop", target="autonomous_loop",
+            actor="user", action="loop_stop",
+            target="fund_scheduler" if runtime.fund_scheduler else "autonomous_loop",
         )
         return runtime.status()
 
@@ -255,6 +276,17 @@ _INDEX_HTML = r"""<!doctype html>
       </section>
 
       <section class="panel">
+        <h2>Fund</h2>
+        <div class="tile">
+          <div class="stat"><div class="lbl">Session</div><div class="val" id="fund-session">—</div></div>
+          <div class="stat"><div class="lbl">Cycles / Submitted</div><div class="val" id="fund-cycles">0/0</div></div>
+          <div class="stat"><div class="lbl">Day-trades left</div><div class="val" id="fund-pdt">—</div></div>
+          <div class="stat"><div class="lbl">Loss headroom</div><div class="val" id="fund-headroom">—</div></div>
+        </div>
+        <div id="fund-alert" style="margin-top:10px"></div>
+      </section>
+
+      <section class="panel">
         <h2>Feeds</h2>
         <div class="tile">
           <div class="stat"><div class="lbl">Market channel</div><div class="val" id="market-feed">—</div></div>
@@ -351,13 +383,49 @@ function renderFeeds(f) {
   $("feed-errors").textContent = (m.errors||0) + (u.errors||0);
 }
 
+function renderFund(f) {
+  const alert = $("fund-alert");
+  if (!f || !f.attached) {
+    $("fund-session").textContent = "not attached";
+    alert.innerHTML = '';
+    return;
+  }
+  $("fund-session").textContent = f.session || '—';
+  const m = f.metrics || {};
+  $("fund-cycles").textContent = `${m.cycles || 0}/${m.submitted || 0}`;
+  $("fund-pdt").textContent = f.pdt
+    ? (f.pdt.pdt_applies ? `${f.pdt.day_trades_remaining} of 3` : 'n/a (funded)')
+    : '—';
+  $("fund-headroom").textContent = f.kill_switch && f.kill_switch.armed
+    ? `$${Number(f.kill_switch.remaining_usd).toFixed(0)}`
+    : '—';
+
+  // Anything that changes what the fund is permitted to do gets said out loud.
+  const warns = [];
+  if (f.kill_switch && f.kill_switch.tripped) warns.push(
+    'DAILY LOSS LIMIT TRIPPED — no new risk today. Exits remain open.');
+  if (f.kill_switch && f.kill_switch.attached !== false && f.kill_switch.armed === false)
+    warns.push('Kill-switch UNARMED — no equity observed yet this session.');
+  if (f.pdt && f.pdt.pdt_applies && f.pdt.day_trades_remaining === 0) warns.push(
+    'Day-trade budget exhausted — closes opened today are blocked until the window rolls.');
+  if (f.resumable_theses && f.resumable_theses.length) warns.push(
+    `${f.resumable_theses.length} interrupted deliberation(s) from a previous STOP.`);
+  if (m.last_error) warns.push('Last error: ' + m.last_error);
+
+  alert.innerHTML = warns.map(w =>
+    `<div style="background:#9e6a0322;border:1px solid #9e6a03;color:#e3b341;
+      border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12.5px">${w}</div>`
+  ).join('');
+}
+
 async function refreshAll() {
-  const [status, pnl, positions, risk, audit, feeds] = await Promise.all([
+  const [status, pnl, positions, risk, audit, feeds, fund] = await Promise.all([
     fetchJSON('/api/status'), fetchJSON('/api/pnl'), fetchJSON('/api/positions'),
     fetchJSON('/api/risk'), fetchJSON('/api/audit?limit=40'), fetchJSON('/api/feeds'),
+    fetchJSON('/api/fund'),
   ]);
   renderStatus(status); renderPnl(pnl); renderPositions(positions);
-  renderRisk(risk); renderAudit(audit); renderFeeds(feeds);
+  renderRisk(risk); renderAudit(audit); renderFeeds(feeds); renderFund(fund);
 }
 
 document.getElementById("go-btn").addEventListener("click", async () => {
