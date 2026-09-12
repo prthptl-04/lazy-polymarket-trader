@@ -135,6 +135,71 @@ class OrderManager:
     def get(self, local_id: str) -> Optional[TrackedOrder]:
         return self.orders.get(local_id)
 
+    def by_remote_id(self, remote_id: str) -> Optional[TrackedOrder]:
+        for o in self.orders.values():
+            if o.remote_id == remote_id:
+                return o
+        return None
+
+    # ---- user-channel adapters (Phase D) ----
+    #
+    # Called inline from the user-feed async task. Both are deliberately
+    # total: a malformed or unrecognized event returns None rather than
+    # raising, because raising here would tear down the feed supervisor.
+
+    def on_order_event(self, ev: dict) -> Optional[TrackedOrder]:
+        """Adapt a user-channel `order` event into a status update.
+
+        Polymarket reports order lifecycle against the remote id, so an
+        order we never placed (or one placed by a previous process) simply
+        has no local counterpart and is ignored.
+        """
+        remote_id = _event_order_id(ev)
+        if not remote_id:
+            return None
+        tracked = self.by_remote_id(remote_id)
+        if tracked is None:
+            return None
+        status = _REMOTE_STATUS.get(str(ev.get("status", "")).upper())
+        if status is None:
+            return None
+        # Never walk a terminal order back to a live state — a late-arriving
+        # event must not resurrect a cancelled order into `open_orders()`.
+        if tracked.status in ("filled", "cancelled", "rejected"):
+            return tracked
+        tracked.status = status
+        tracked.updated = time.time()
+        return tracked
+
+    def on_trade_event(self, ev: dict) -> Optional[TrackedOrder]:
+        """Adapt a user-channel `trade` event into a fill update.
+
+        Accumulates `filled_size_usd` and flips the order to
+        `partially_filled` / `filled` once the tracked size is covered.
+        """
+        remote_id = _event_order_id(ev)
+        if not remote_id:
+            return None
+        tracked = self.by_remote_id(remote_id)
+        if tracked is None:
+            return None
+        try:
+            size = float(ev["size"])
+        except (KeyError, ValueError, TypeError):
+            return None
+        if size <= 0:
+            return None
+        tracked.filled_size_usd = min(tracked.filled_size_usd + size, tracked.size_usd)
+        # Float accumulation over many partials can land a hair short of the
+        # tracked size; treat within-a-cent as fully filled.
+        tracked.status = (
+            "filled"
+            if tracked.filled_size_usd >= tracked.size_usd - 1e-9
+            else "partially_filled"
+        )
+        tracked.updated = time.time()
+        return tracked
+
     # ---- internals ----
 
     def _track_new(self, trade: Any) -> TrackedOrder:
@@ -166,6 +231,30 @@ def _attr(obj: Any, name: str, default: Any = None) -> Any:
         return obj.get(name, default)
     val = getattr(obj, name, default)
     return val
+
+
+# User-channel order statuses → our OrderStatus vocabulary.
+_REMOTE_STATUS: dict[str, OrderStatus] = {
+    "LIVE": "open",
+    "PLACEMENT": "open",
+    "OPEN": "open",
+    "MATCHED": "filled",
+    "CONFIRMED": "filled",
+    "CANCELED": "cancelled",
+    "CANCELLED": "cancelled",
+    "UNMATCHED": "cancelled",
+    "REJECTED": "rejected",
+}
+
+
+def _event_order_id(ev: Any) -> str | None:
+    if not isinstance(ev, dict):
+        return None
+    for key in ("order_id", "orderID", "id", "taker_order_id"):
+        val = ev.get(key)
+        if val:
+            return str(val)
+    return None
 
 
 def _extract_remote_id(resp: Any) -> str | None:

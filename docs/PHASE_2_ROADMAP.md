@@ -183,11 +183,18 @@
 - README run instructions + CLAUDE.md rule #18 (autonomy + dashboard policy)
 - 36 new tests; 316/316 green total
 
-### What's open as of 2026-05-30 (move to Done when shipped)
+### Phase D — Live feed wiring (2026-09-12)
+- `live_market/feeds.py` — supervised reconnect runners for both channels
+  (capped exponential backoff, cancellable, cred-safe error capture)
+- `OrderManager.on_order_event` / `on_trade_event` / `by_remote_id` — user-channel
+  order lifecycle + fill accumulation, with terminal-state protection
+- `dashboard.runtime.attach_live_feeds` + `build_runtime(attach_feeds=True)` —
+  GO now opens both channels; user channel attaches only when L2 creds derive
+- `/api/feeds` route + dashboard Feeds tile
+- 58 new tests; 374/374 green total
 
-- **Authenticated user-channel WS wiring at the runtime layer** (`status: planned`).
-  We have the subscriber; `dashboard/runtime.build_runtime` doesn't attach a
-  task factory yet. Phase-D work for Amelia.
+### What's open as of 2026-09-12 (move to Done when shipped)
+
 - **HTTP/2 keepalive on the CLOB client** (`status: planned`). Today each
   `post_order` opens a new HTTPS connection; persistent connection would
   shave the typical 50–150 ms RTT by ~30%.
@@ -195,22 +202,22 @@
   beyond 127.0.0.1, add a shared-secret header check.
 - **Watched markets config from `.env`** (`status: idea`). Today watched is
   edited in `dashboard/__main__.py`; should be sourced from a TOML / env file.
-- **Live P&L from user channel events** (`status: planned`). PositionTracker
-  has the API; dashboard.runtime needs the on_trade wiring.
+  Note this is now load-bearing: with `watched` empty, `attach_live_feeds`
+  subscribes to zero tokens, so the feeds connect but carry no data.
 - **Daily kill-switch enforcement** (rule #4 declares it; enforcement still
-  on the roadmap).
+  on the roadmap). Now unblocked — real-time P&L lands via the user channel.
 - **Strategy A/B in shadow mode** (`status: idea`).
 - **Audit immutability** (hash-chained checkpoints, `status: idea`).
 
 ### What to do next (Winston's recommended order)
 
-1. **Wire the user-channel WebSocket in `build_runtime`.** ~1 commit. Without
-   it, PositionTracker stays empty in production and the dashboard's
-   unrealized P&L is always zero. Amelia work; AC: open the user channel
-   once `loop.start()` is called.
-2. **Add HTTP/2 keepalive to PolymarketClient.** ~1 commit. Use `httpx.AsyncClient`
+1. **Watched markets from config.** ~0.5 commit. New `config/watched.toml`,
+   parsed at startup. Promoted to first because Phase D made an empty
+   `watched` list the thing standing between us and a live data flow.
+2. **Daily kill-switch enforcement.** ~1 commit. Now that `PositionTracker`
+   is fed live, `Executor` can block when intraday P&L breaches
+   `criteria.max_daily_loss_usd`.
+3. **Add HTTP/2 keepalive to PolymarketClient.** ~1 commit. Use `httpx.AsyncClient`
    with `http2=True`, share the connection across post/cancel calls.
-3. **Watched markets from config.** ~0.5 commit. New `config/watched.toml`,
-   parsed at startup.
 4. **MiroFish-style scenario simulation as second predictor.** A/B against
    the decision tree. Heavy item; gate behind ≥500 resolved markets.

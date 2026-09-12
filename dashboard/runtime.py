@@ -17,6 +17,7 @@ from typing import Any, Optional
 from dashboard.ws_hub import WebSocketHub
 from finance.pnl import equity_curve_from_trades
 from finance.risk_metrics import max_drawdown, sharpe_ratio
+from live_market.feeds import FeedStats, derive_user_subscriber, run_market_feed, run_user_feed
 from live_market.orderbook_cache import OrderBookCache
 from memory.store import MemoryStore
 from trading.autonomous_loop import AutonomousLoop, WatchedMarket
@@ -36,6 +37,9 @@ class DashboardRuntime:
     memory: MemoryStore
     starting_bankroll_usd: float = 100.0
     watched: list[WatchedMarket] = field(default_factory=list)
+    market_feed_stats: FeedStats = field(default_factory=lambda: FeedStats("market"))
+    user_feed_stats: FeedStats = field(default_factory=lambda: FeedStats("user"))
+    user_feed_attached: bool = False
 
     # ---------- snapshot views (read-only, hot-path safe) ----------
 
@@ -92,6 +96,16 @@ class DashboardRuntime:
     def recent_audit(self, limit: int = 50) -> list[dict]:
         return self.memory.recent_audit_events(limit=limit)
 
+    def feeds(self) -> dict:
+        """Connection health for both WebSocket producers."""
+        return {
+            "market": self.market_feed_stats.snapshot(),
+            "user": {
+                **self.user_feed_stats.snapshot(),
+                "attached": self.user_feed_attached,
+            },
+        }
+
     def risk_metrics(self) -> dict:
         # Build a synthetic equity curve from the local trade log so the
         # dashboard tile is non-empty even before live trades land.
@@ -108,16 +122,80 @@ class DashboardRuntime:
         }
 
 
+def attach_live_feeds(
+    runtime: DashboardRuntime,
+    polymarket_client: Any,
+    *,
+    connect: Any = None,
+    market_url: Optional[str] = None,
+    user_url: Optional[str] = None,
+) -> DashboardRuntime:
+    """Attach the market + user WebSocket task factories to the loop.
+
+    Both factories are lazy — they are *called* by `AutonomousLoop.start()`,
+    so nothing connects until GO is pressed, and STOP cancels them.
+
+    The user feed is attached only when the client can produce L2 creds. With
+    no wallet configured (the paper-mode default) there are no fills to
+    receive, so we leave `user_ws_task_factory` unset rather than starting a
+    task that would fail on every reconnect.
+
+    `connect` is injectable so tests drive both feeds without a socket.
+    """
+    token_ids = [w.token_id for w in runtime.watched]
+    market_ids = sorted({w.market_id for w in runtime.watched})
+
+    def _market_task():
+        return run_market_feed(
+            runtime.cache,
+            token_ids,
+            connect=connect,
+            url=market_url,
+            stats=runtime.market_feed_stats,
+        )
+
+    runtime.loop.market_ws_task_factory = _market_task
+
+    subscriber = derive_user_subscriber(polymarket_client, market_ids)
+    if subscriber is None:
+        runtime.user_feed_attached = False
+        return runtime
+
+    def _on_trade(ev: dict) -> None:
+        # Position first (drives P&L), then the order's fill accounting.
+        runtime.position_tracker.on_trade_event(ev)
+        runtime.order_manager.on_trade_event(ev)
+
+    def _user_task():
+        return run_user_feed(
+            subscriber,
+            on_trade=_on_trade,
+            on_order=runtime.order_manager.on_order_event,
+            connect=connect,
+            url=user_url,
+            stats=runtime.user_feed_stats,
+        )
+
+    runtime.loop.user_ws_task_factory = _user_task
+    runtime.user_feed_attached = True
+    return runtime
+
+
 def build_runtime(
     *,
     polymarket_client: Any,
     watched: list[WatchedMarket],
     memory: Optional[MemoryStore] = None,
     starting_bankroll_usd: float = 100.0,
+    attach_feeds: bool = False,
+    connect: Any = None,
 ) -> DashboardRuntime:
-    """Wire up the full runtime. Markets WS / user WS task factories are
-    expected to be attached afterwards by the caller (so tests can inject
-    fakes; production wires the real WebSocket clients)."""
+    """Wire up the full runtime.
+
+    By default the WS task factories are left unset so tests compose their
+    own; pass `attach_feeds=True` (production, `dashboard/__main__.py`) to
+    have `attach_live_feeds` wire the real market + user channels.
+    """
 
     cache = OrderBookCache()
     tracker = PositionTracker(cache=cache)
@@ -135,7 +213,7 @@ def build_runtime(
     )
     hub = WebSocketHub()
     loop.on_status = hub.publish
-    return DashboardRuntime(
+    runtime = DashboardRuntime(
         cache=cache,
         position_tracker=tracker,
         order_manager=order_manager,
@@ -146,3 +224,6 @@ def build_runtime(
         starting_bankroll_usd=starting_bankroll_usd,
         watched=watched,
     )
+    if attach_feeds:
+        attach_live_feeds(runtime, polymarket_client, connect=connect)
+    return runtime

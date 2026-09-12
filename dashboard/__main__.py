@@ -33,6 +33,7 @@ def main() -> None:
         watched=watched,
         memory=MemoryStore(),
         starting_bankroll_usd=float(os.environ.get("BANKROLL_USD", "100")),
+        attach_feeds=True,
     )
     # Wire a baseline strategy. Replace the empty Tree with the trained one
     # once Trainer.fit has produced something useful.
@@ -42,6 +43,11 @@ def main() -> None:
         predictor=Predictor(Tree()),
         bankroll_usd=runtime.starting_bankroll_usd,
     )
+    if not runtime.user_feed_attached:
+        print(
+            "[dashboard] user-channel feed NOT attached (no L2 creds derivable). "
+            "Positions and live P&L stay empty until a wallet is configured."
+        )
     app = create_app(runtime)
     uvicorn.run(app, host=host, port=port, log_level="info")
 

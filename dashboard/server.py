@@ -71,6 +71,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_risk() -> dict:
         return runtime.risk_metrics()
 
+    @app.get("/api/feeds")
+    def api_feeds() -> dict:
+        return runtime.feeds()
+
     @app.get("/api/code-graph")
     def api_code_graph() -> Any:
         from code_graph import build_graph, to_cytoscape_json
@@ -232,6 +236,16 @@ _INDEX_HTML = r"""<!doctype html>
       </section>
 
       <section class="panel">
+        <h2>Feeds</h2>
+        <div class="tile">
+          <div class="stat"><div class="lbl">Market channel</div><div class="val" id="market-feed">—</div></div>
+          <div class="stat"><div class="lbl">User channel</div><div class="val" id="user-feed">—</div></div>
+          <div class="stat"><div class="lbl">Reconnects (mkt/usr)</div><div class="val" id="feed-reconnects">0/0</div></div>
+          <div class="stat"><div class="lbl">Feed errors</div><div class="val" id="feed-errors">0</div></div>
+        </div>
+      </section>
+
+      <section class="panel">
         <h2>Code graph</h2>
         <div id="cy"></div>
       </section>
@@ -302,13 +316,29 @@ function renderStatus(s) {
   $("orders-count").textContent= s.open_orders || 0;
 }
 
+function feedLabel(f, attached) {
+  if (attached === false) return 'not attached';
+  if (!f.connects) return 'idle';
+  return f.last_error ? 'degraded' : 'live';
+}
+
+function renderFeeds(f) {
+  const m = f.market || {}, u = f.user || {};
+  $("market-feed").textContent = feedLabel(m, true);
+  $("user-feed").textContent   = feedLabel(u, u.attached);
+  // connects beyond the first are reconnects.
+  $("feed-reconnects").textContent =
+    `${Math.max(0, (m.connects||0) - 1)}/${Math.max(0, (u.connects||0) - 1)}`;
+  $("feed-errors").textContent = (m.errors||0) + (u.errors||0);
+}
+
 async function refreshAll() {
-  const [status, pnl, positions, risk, audit] = await Promise.all([
+  const [status, pnl, positions, risk, audit, feeds] = await Promise.all([
     fetchJSON('/api/status'), fetchJSON('/api/pnl'), fetchJSON('/api/positions'),
-    fetchJSON('/api/risk'), fetchJSON('/api/audit?limit=40'),
+    fetchJSON('/api/risk'), fetchJSON('/api/audit?limit=40'), fetchJSON('/api/feeds'),
   ]);
   renderStatus(status); renderPnl(pnl); renderPositions(positions);
-  renderRisk(risk); renderAudit(audit);
+  renderRisk(risk); renderAudit(audit); renderFeeds(feeds);
 }
 
 document.getElementById("go-btn").addEventListener("click", async () => {
