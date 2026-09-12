@@ -64,13 +64,6 @@ re-sizes positions from its own recent results can chase noise.
 A bearish consensus on an unheld name is skipped, not shorted. Shorting needs
 margin and borrow, and Robinhood's agentic surface is unverified for it.
 
-### Resume surfaces interrupted theses but does not re-run them
-`FundLoop.resume_unfinished()` reports interrupted thesis ids. Deciding what to
-do with them is deliberately left to the caller — a stale thesis built on
-week-old prices should be abandoned, not acted on. The re-run/abandon policy is
-unwritten.
-
-
 ### Fresh interrupted theses are surfaced but never re-run
 Stale ones are now abandoned automatically (older than
 `resume_max_age_seconds`, default 1h). Fresh ones are reported on GO but
@@ -149,4 +142,4 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Kill-switch unfed in the live path | `0f30a1b` |
 | Dashboard wiring for the fund engine | `8f1a281` |
 | Fund config + entrypoint wiring + stale-thesis policy | `116b73c` |
-| Seat scoring + confidence calibration | this commit |
+| Seat scoring + confidence calibration | `b48bf6e` |
