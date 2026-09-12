@@ -93,3 +93,22 @@ CREATE TABLE IF NOT EXISTS discovered_tools (
     status     TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected
     created    REAL NOT NULL
 );
+
+-- Round-table deliberations. `status='in_progress'` is what makes the kill
+-- switch resumable: a STOP mid-debate leaves the row, and GO picks it up
+-- rather than restarting the thesis from nothing.
+CREATE TABLE IF NOT EXISTS deliberations (
+    thesis_id   TEXT PRIMARY KEY,
+    symbol      TEXT NOT NULL,
+    asset_class TEXT NOT NULL,
+    status      TEXT NOT NULL,        -- in_progress | complete | abandoned
+    signal      TEXT,                 -- bullish | bearish | neutral
+    confidence  REAL,
+    payload     TEXT NOT NULL,        -- JSON: opinions, consensus, transcript
+    created     REAL NOT NULL,
+    updated     REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_delib_status ON deliberations (status);
+CREATE INDEX IF NOT EXISTS idx_delib_symbol ON deliberations (symbol);
+CREATE INDEX IF NOT EXISTS idx_delib_created ON deliberations (created);

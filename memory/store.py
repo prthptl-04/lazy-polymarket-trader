@@ -197,6 +197,66 @@ class MemoryStore:
             out.append(row)
         return out
 
+    # ----- Round-table deliberations -----
+
+    def save_deliberation(
+        self,
+        thesis_id: str,
+        symbol: str,
+        asset_class: str,
+        status: str,
+        payload: dict,
+        signal: str | None = None,
+        confidence: float | None = None,
+    ) -> None:
+        """Upsert a deliberation. Called once when the table convenes (status
+        'in_progress') and again when it concludes, so a STOP mid-debate leaves
+        a resumable row rather than losing the work."""
+        now = time.time()
+        blob = json.dumps(payload)
+        existing = self._conn.execute(
+            "SELECT created FROM deliberations WHERE thesis_id = ?", (thesis_id,)
+        ).fetchone()
+        if existing:
+            self._conn.execute(
+                "UPDATE deliberations SET status = ?, signal = ?, confidence = ?, "
+                "payload = ?, updated = ? WHERE thesis_id = ?",
+                (status, signal, confidence, blob, now, thesis_id),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO deliberations (thesis_id, symbol, asset_class, status, "
+                "signal, confidence, payload, created, updated) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (thesis_id, symbol, asset_class, status, signal, confidence, blob, now, now),
+            )
+        self._conn.commit()
+
+    def get_deliberation(self, thesis_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT thesis_id, symbol, asset_class, status, signal, confidence, "
+            "payload, created, updated FROM deliberations WHERE thesis_id = ?",
+            (thesis_id,),
+        ).fetchone()
+        return _delib_row(row) if row else None
+
+    def recent_deliberations(self, limit: int = 20, status: str | None = None) -> list[dict]:
+        sql = (
+            "SELECT thesis_id, symbol, asset_class, status, signal, confidence, "
+            "payload, created, updated FROM deliberations "
+        )
+        params: tuple = ()
+        if status:
+            sql += "WHERE status = ? "
+            params = (status,)
+        sql += "ORDER BY created DESC LIMIT ?"
+        rows = self._conn.execute(sql, (*params, limit)).fetchall()
+        return [_delib_row(r) for r in rows]
+
+    def unfinished_deliberations(self) -> list[dict]:
+        """Theses interrupted by a STOP. The loop resumes these on GO."""
+        return self.recent_deliberations(limit=100, status="in_progress")
+
     # ----- Chief-of-Staff strategic plans -----
 
     def upsert_plan(self, plan_id: str, title: str, body: str) -> int:
@@ -243,3 +303,11 @@ class MemoryStore:
 
     def close(self) -> None:
         self._conn.close()
+
+
+def _delib_row(row) -> dict:
+    cols = ["thesis_id", "symbol", "asset_class", "status", "signal",
+            "confidence", "payload", "created", "updated"]
+    out = dict(zip(cols, row))
+    out["payload"] = json.loads(out["payload"]) if out["payload"] else {}
+    return out

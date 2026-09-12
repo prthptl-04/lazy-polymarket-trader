@@ -31,17 +31,15 @@ Kept as venue #3 per the user's decision, but `trading/polymarket_client.py`
 and `live_market/` still run on their own path rather than as a `VenueAdapter`.
 Works today; will drift.
 
-### Round-table seats not yet implemented
-Decided: **independent seats, synthesized debate** (~6–7 LLM calls per
-candidate). Each seat forms its own thesis via its own call; one synthesis call
-writes the transcript and consensus. Seats are **functional**
-(Analyst / Sentiment / Quant / Risk / Devil's Advocate) — the user explicitly
-did *not* choose investor personas.
+### Round table not yet wired to execution
+`roundtable/` produces a `Thesis`, but nothing converts one into a
+`DirectionalTrade` and pushes it through `OutcomeGrader` + `VenueRouter`. The
+candidate-builder (running the `finance/` screens to populate `Candidate`) is
+also unwritten — today a Candidate has to be constructed by hand.
 
-### Transcript persistence + resume
-The kill switch must stop and resume "with no context loss", which means
-deliberation transcripts persist to `MemoryStore` and a GO mid-thesis resumes
-rather than restarts. Schema not designed yet.
+### Resume logic exists in storage but not in the loop
+`MemoryStore.unfinished_deliberations()` returns interrupted theses and the
+round table persists at every stage, but no caller picks them up on GO yet.
 
 ### Dashboard round-table UI
 Phase 4. Live conversation view, thesis timeline, per-seat vote display.
@@ -117,4 +115,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Exit logic (was: fund had none at all) | `31b1684` |
 | Backtester (was: no backtesting existed) | `64324d5` |
 | Grader could not grade an equity trade | `ba157aa` |
-| Daily kill-switch declared but never enforced | this commit |
+| Daily kill-switch declared but never enforced | `ffab32b` |
+| Round-table seats + transcript persistence | this commit |
