@@ -64,9 +64,15 @@ week-old prices should be abandoned, not acted on. The re-run/abandon policy is
 unwritten.
 
 ### Dashboard does not yet show the fund loop
-The round-table view at `/roundtable` is live, but the main dashboard still
-reports the Polymarket-era `AutonomousLoop` (GO/STOP, feeds, orderbook P&L).
-Nothing wires `FundLoop` cycles, the kill-switch tile, or PDT budget into it.
+`FundScheduler.status()` exposes session, kill-switch, PDT budget, cycle
+metrics and the last cycle summary — but nothing renders it. The main dashboard
+still reports the Polymarket-era `AutonomousLoop`, and its GO/STOP still drives
+that loop rather than the fund.
+
+### Resumable theses are surfaced but never re-run
+`FundScheduler` reports interrupted thesis ids on GO. The re-run vs abandon
+policy is unwritten: a thesis built on week-old prices should be abandoned, not
+acted on, and nothing currently decides which.
 
 ### Watched markets still hardcoded
 `dashboard/__main__.py` has `watched: list[WatchedMarket] = []`. With it empty,
@@ -76,12 +82,6 @@ data. Should come from config/env.
 ### HTTP/2 keepalive on the CLOB client
 Each `post_order` opens a new HTTPS connection; persistent connection would cut
 ~30% off a 50–150 ms RTT.
-
-### Kill-switch not yet wired into the live runtime
-`DailyLossKillSwitch` is enforced in `VenueRouter` and the backtester, but
-`dashboard/runtime.py` does not construct one and the autonomous loop does not
-call `observe_equity()` per tick. Until that wiring lands the switch is armed
-only in backtests. **Do not go live before closing this.**
 
 ### Dashboard token auth
 Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
@@ -143,4 +143,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Round-table seats + transcript persistence | `238501f` |
 | Thesis → order pipeline + candidate builder | `551fec0` |
 | Fund loop + market-data abstraction | `f3815c3` |
-| Round-table monitoring UI | this commit |
+| Round-table monitoring UI | `f3bbe26` |
+| Kill-switch unfed in the live path | this commit |

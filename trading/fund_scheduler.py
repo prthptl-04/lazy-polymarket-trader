@@ -1,0 +1,232 @@
+"""GO / STOP driver for the fund loop.
+
+`FundLoop.run_cycle` does one cycle. This decides when cycles happen, and it is
+the component that finally arms the kill-switch in the live path: before every
+cycle it reads the account from the venue and hands the mark to
+`FundLoop.run_cycle`, which observes it before anything is decided.
+
+Until this existed, `DailyLossKillSwitch` was enforced in the router and the
+backtester but nothing fed it in production — a switch that exists but is never
+shown the equity reads as protection you do not have.
+
+Lifecycle mirrors `trading.autonomous_loop.AutonomousLoop` so the dashboard's
+GO/STOP semantics are identical:
+
+    stopped → starting → running → stopping → stopped
+
+Both transitions are idempotent. STOP cancels the cycle task; it does **not**
+cancel orders already resting at the venue — those persist until filled or
+cancelled explicitly, same as rule #18.
+
+A STOP mid-deliberation leaves the thesis `in_progress` in memory rather than
+losing it. `FundLoop.resume_unfinished()` surfaces those on the next GO; what
+to do with them is a policy decision, because a thesis built on week-old prices
+should be abandoned rather than acted on.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Callable, Literal, Optional
+
+from trading.fund import CycleReport, Holding
+from trading.sessions import EASTERN, session_at
+
+logger = logging.getLogger(__name__)
+
+SchedulerState = Literal["stopped", "starting", "running", "stopping"]
+
+DEFAULT_CYCLE_SECONDS = 300.0       # 5 minutes — swing horizon, not HFT
+
+
+@dataclass
+class SchedulerMetrics:
+    started_at: Optional[float] = None
+    cycles: int = 0
+    submitted: int = 0
+    halted: int = 0
+    errors: int = 0
+    last_error: Optional[str] = None
+    last_cycle_at: Optional[float] = None
+
+
+@dataclass
+class FundScheduler:
+    """Runs fund cycles on an interval until stopped."""
+
+    fund: Any                                  # FundLoop
+    venue: Any                                 # VenueAdapter, for account + positions
+    cycle_interval_seconds: float = DEFAULT_CYCLE_SECONDS
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc).astimezone(EASTERN)
+    on_cycle: Optional[Callable[[CycleReport], None]] = None
+    on_status: Optional[Callable[[dict], None]] = None
+
+    state: SchedulerState = "stopped"
+    metrics: SchedulerMetrics = field(default_factory=SchedulerMetrics)
+    last_report: Optional[CycleReport] = None
+    resumable: list[str] = field(default_factory=list)
+
+    _task: Optional[asyncio.Task] = None
+    _stop_event: Optional[asyncio.Event] = None
+
+    # ---------- lifecycle ----------
+
+    async def start(self) -> None:
+        if self.state in ("running", "starting"):
+            return
+        self.state = "starting"
+        self._stop_event = asyncio.Event()
+        self.metrics = SchedulerMetrics(started_at=time.time())
+
+        # Surface work interrupted by the last STOP. Deliberately reported, not
+        # auto-resumed — see the module docstring.
+        try:
+            self.resumable = await self.fund.resume_unfinished()
+        except Exception:
+            logger.exception("failed to read unfinished deliberations")
+            self.resumable = []
+
+        self._task = asyncio.create_task(self._run())
+        self.state = "running"
+        self._publish()
+
+    async def stop(self) -> None:
+        if self.state in ("stopped", "stopping"):
+            return
+        self.state = "stopping"
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._task = None
+        self.state = "stopped"
+        self._publish()
+
+    # ---------- the loop ----------
+
+    async def _run(self) -> None:
+        while not self._should_stop():
+            try:
+                await self.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.metrics.errors += 1
+                self.metrics.last_error = f"{type(e).__name__}: {e}"
+                logger.exception("fund cycle failed")
+            await self._sleep(self.cycle_interval_seconds)
+
+    async def run_once(self) -> CycleReport:
+        """One cycle against live account state. Public so it can be triggered."""
+        moment = self.clock()
+        equity, cash, holdings = await self._read_account()
+
+        report = await self.fund.run_cycle(
+            moment,
+            holdings=holdings,
+            equity_usd=equity,
+            available_cash_usd=cash,
+        )
+
+        self.last_report = report
+        self.metrics.cycles += 1
+        self.metrics.submitted += len(report.submitted)
+        if report.halted_reason:
+            self.metrics.halted += 1
+        if report.errors:
+            self.metrics.errors += len(report.errors)
+            self.metrics.last_error = report.errors[-1]
+        self.metrics.last_cycle_at = time.time()
+
+        if self.on_cycle is not None:
+            try:
+                self.on_cycle(report)
+            except Exception:
+                logger.exception("on_cycle callback failed")
+        self._publish()
+        return report
+
+    # ---------- account ----------
+
+    async def _read_account(self) -> tuple[Optional[float], Optional[float], list[Holding]]:
+        """Equity, cash and positions from the venue.
+
+        Failures degrade to `None` rather than raising: the kill-switch treats
+        an unobserved day as unarmed and says so, which is a better outcome
+        than a crashed scheduler that stops trading silently.
+        """
+        equity = cash = None
+        holdings: list[Holding] = []
+        try:
+            snapshot = await self.venue.account()
+            equity, cash = snapshot.equity_usd, snapshot.buying_power_usd
+        except Exception:
+            logger.exception("could not read account snapshot")
+        try:
+            holdings = [
+                Holding(symbol=p.symbol, asset_class=p.asset_class, quantity=p.quantity)
+                for p in await self.venue.positions()
+            ]
+        except Exception:
+            logger.exception("could not read positions")
+        return equity, cash, holdings
+
+    # ---------- status ----------
+
+    def status(self) -> dict:
+        moment = self.clock()
+        session = session_at(moment)
+        uptime = (
+            time.time() - self.metrics.started_at if self.metrics.started_at else 0.0
+        )
+        kill_switch = getattr(self.fund, "kill_switch", None)
+        pdt = getattr(getattr(self.fund, "router", None), "pdt", None)
+        return {
+            "state": self.state,
+            "session": session.value,
+            "equities_open": session.equities_open,
+            "uptime_seconds": round(uptime, 1),
+            "cycle_interval_seconds": self.cycle_interval_seconds,
+            "resumable_theses": list(self.resumable),
+            "metrics": {
+                "cycles": self.metrics.cycles,
+                "submitted": self.metrics.submitted,
+                "halted": self.metrics.halted,
+                "errors": self.metrics.errors,
+                "last_error": self.metrics.last_error,
+                "last_cycle_at": self.metrics.last_cycle_at,
+            },
+            "kill_switch": kill_switch.status(moment) if kill_switch else None,
+            "pdt": pdt.status(moment) if pdt else None,
+            "last_cycle": self.last_report.summary() if self.last_report else None,
+        }
+
+    # ---------- helpers ----------
+
+    def _publish(self) -> None:
+        if self.on_status is None:
+            return
+        try:
+            self.on_status(self.status())
+        except Exception:
+            logger.exception("on_status callback failed")
+
+    def _should_stop(self) -> bool:
+        return self._stop_event is not None and self._stop_event.is_set()
+
+    async def _sleep(self, seconds: float) -> None:
+        if self._stop_event is None:
+            await asyncio.sleep(seconds)
+            return
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
