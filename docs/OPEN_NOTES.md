@@ -10,11 +10,26 @@
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. Robinhood MCP tool names are unverified
-Robinhood publishes capabilities but not the tool schema; it is only
-discoverable from an authenticated session. `trading/venues/robinhood.py::TOOL_NAMES`
-is a best-effort map. Run `RobinhoodVenue.verify_tool_map()` on first connect
-and correct it. **The scheduler must refuse to go live while any entry is False.**
+### 1. Robinhood MCP tool names are unverified — READY TO RESOLVE
+Server registered and **authenticated** (2026-09-12): `claude mcp list` shows
+robinhood-trading ✓ Connected, project-scoped in `~/.claude.json`.
+
+**Next session's first task** — the tools load at session start, so a session
+begun after authentication will have them:
+
+1. `ToolSearch` for the robinhood tools; list the real names + parameters.
+2. Correct `trading/venues/robinhood.py::TOOL_NAMES` against ground truth.
+3. Answer three questions from the tool surface:
+   - Do crypto endpoints exist? (decides whether the weekend rotation is real)
+   - Are historical bars available? (**if yes, the Massive subscription may be
+     unnecessary — check before the user pays for anything**)
+   - Are fundamentals available? (Altman/Piotroski inputs)
+4. Update `SUPPORTED` and the adapter's payload mapping to match.
+
+**READ-ONLY ONLY.** This is a live brokerage account. Enumerate tools, and call
+only account/positions/quote reads. Do NOT place, modify or cancel any order —
+not as a test, not to verify the integration, not for one share — without the
+user explicitly naming symbol and size.
 
 ### 2. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
