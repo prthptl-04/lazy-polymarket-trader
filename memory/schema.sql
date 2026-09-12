@@ -112,3 +112,20 @@ CREATE TABLE IF NOT EXISTS deliberations (
 CREATE INDEX IF NOT EXISTS idx_delib_status ON deliberations (status);
 CREATE INDEX IF NOT EXISTS idx_delib_symbol ON deliberations (symbol);
 CREATE INDEX IF NOT EXISTS idx_delib_created ON deliberations (created);
+
+-- What actually happened to a thesis. Without this the round table can never
+-- be scored, and the confidence-to-probability shrink in trading/pipeline.py
+-- stays a guess forever.
+CREATE TABLE IF NOT EXISTS thesis_outcomes (
+    thesis_id       TEXT PRIMARY KEY,
+    symbol          TEXT NOT NULL,
+    signal          TEXT,             -- what the committee concluded
+    confidence      REAL,             -- how sure it said it was
+    realized_return REAL,             -- what the position actually did
+    correct         INTEGER,          -- direction matched (1/0)
+    resolved_at     REAL NOT NULL,
+    notes           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcomes_symbol ON thesis_outcomes (symbol);
+CREATE INDEX IF NOT EXISTS idx_outcomes_resolved ON thesis_outcomes (resolved_at);

@@ -257,6 +257,47 @@ class MemoryStore:
         """Theses interrupted by a STOP. The loop resumes these on GO."""
         return self.recent_deliberations(limit=100, status="in_progress")
 
+    # ----- Thesis outcomes (what actually happened) -----
+
+    def record_thesis_outcome(
+        self,
+        thesis_id: str,
+        symbol: str,
+        realized_return: float,
+        *,
+        signal: str | None = None,
+        confidence: float | None = None,
+        correct: bool | None = None,
+        notes: str | None = None,
+    ) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO thesis_outcomes (thesis_id, symbol, signal, "
+            "confidence, realized_return, correct, resolved_at, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                thesis_id, symbol, signal, confidence, realized_return,
+                None if correct is None else int(correct), time.time(), notes,
+            ),
+        )
+        self._conn.commit()
+
+    def get_thesis_outcome(self, thesis_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT thesis_id, symbol, signal, confidence, realized_return, "
+            "correct, resolved_at, notes FROM thesis_outcomes WHERE thesis_id = ?",
+            (thesis_id,),
+        ).fetchone()
+        return _outcome_row(row) if row else None
+
+    def resolved_outcomes(self, limit: int = 500) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT thesis_id, symbol, signal, confidence, realized_return, "
+            "correct, resolved_at, notes FROM thesis_outcomes "
+            "ORDER BY resolved_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [_outcome_row(r) for r in rows]
+
     # ----- Chief-of-Staff strategic plans -----
 
     def upsert_plan(self, plan_id: str, title: str, body: str) -> int:
@@ -310,4 +351,12 @@ def _delib_row(row) -> dict:
             "confidence", "payload", "created", "updated"]
     out = dict(zip(cols, row))
     out["payload"] = json.loads(out["payload"]) if out["payload"] else {}
+    return out
+
+
+def _outcome_row(row) -> dict:
+    cols = ["thesis_id", "symbol", "signal", "confidence", "realized_return",
+            "correct", "resolved_at", "notes"]
+    out = dict(zip(cols, row))
+    out["correct"] = bool(out["correct"]) if out["correct"] is not None else None
     return out

@@ -48,10 +48,17 @@ supplied/recorded data and gets live quotes from any venue. What is missing is
 Altman/Piotroski need fundamentals; without them those screens stay
 NOT AVAILABLE and the Analyst seat is flying on less.
 
-### Confidence calibration is a constant, not a fit
-`CONFIDENCE_SHRINK = 0.5` is a judgement call, not a measurement. Once resolved
-trades exist, `finance.risk_metrics.brier_score` should fit it. Until then
-sizing is deliberately pessimistic rather than accurate.
+### Calibration can now be fitted, but nothing resolves theses yet
+`roundtable/calibration.py` scores seats and fits the confidence shrink, and
+`/api/scorecard` exposes it. What is missing is the trigger: nothing calls
+`MemoryStore.record_thesis_outcome` when a position closes at its stop or
+target. Until that lands the scorecard stays empty and
+`trading.pipeline.CONFIDENCE_SHRINK` remains the pessimistic constant.
+
+### The fitted shrink is not fed back automatically
+`fit_confidence_shrink` returns a number; `ThesisPipeline` still uses the
+constant. Wiring it should be deliberate — an automatic feedback loop that
+re-sizes positions from its own recent results can chase noise.
 
 ### Fund is long-only
 A bearish consensus on an unheld name is skipped, not shorted. Shorting needs
@@ -141,4 +148,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Round-table monitoring UI | `f3bbe26` |
 | Kill-switch unfed in the live path | `0f30a1b` |
 | Dashboard wiring for the fund engine | `8f1a281` |
-| Fund config + entrypoint wiring + stale-thesis policy | this commit |
+| Fund config + entrypoint wiring + stale-thesis policy | `116b73c` |
+| Seat scoring + confidence calibration | this commit |

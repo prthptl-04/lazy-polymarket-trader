@@ -169,6 +169,32 @@ class DashboardRuntime:
             "abstentions": [o["seat_name"] for o in opinions if o.get("failed")],
         }
 
+    def scorecard(self) -> dict:
+        """Per-seat calibration over resolved theses, plus the shrink fit.
+
+        Empty until positions resolve. That is the honest state: a scorecard
+        computed from three trades would look authoritative and mean nothing.
+        """
+        from roundtable.calibration import fit_confidence_shrink, score_seats
+        try:
+            delibs = self.memory.recent_deliberations(limit=500)
+            outcomes = self.memory.resolved_outcomes(limit=500)
+        except Exception:
+            return {"resolved": 0, "committee": None, "seats": [], "fit": None}
+
+        card = score_seats(delibs, {o["thesis_id"]: o for o in outcomes})
+        fit = fit_confidence_shrink(outcomes)
+        return {
+            **card.as_dict(),
+            "fit": {
+                "shrink": fit.shrink,
+                "samples": fit.samples,
+                "realized_hit_rate": fit.realized_hit_rate,
+                "usable": fit.usable,
+                "reason": fit.reason,
+            },
+        }
+
     def feeds(self) -> dict:
         """Connection health for both WebSocket producers."""
         return {

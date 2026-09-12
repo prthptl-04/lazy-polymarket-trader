@@ -5,6 +5,13 @@ Advocate attacks the majority, and a Chair synthesizes. The result is a
 `Thesis` — an input to the trading pipeline, never an override of its gates.
 """
 
+from roundtable.calibration import (
+    Scorecard,
+    SeatScore,
+    ShrinkFit,
+    fit_confidence_shrink,
+    score_seats,
+)
 from roundtable.engine import RoundTable
 from roundtable.seats import (
     ALL_SEATS,
@@ -27,6 +34,11 @@ from roundtable.types import (
 
 __all__ = [
     "ALL_SEATS",
+    "Scorecard",
+    "SeatScore",
+    "ShrinkFit",
+    "fit_confidence_shrink",
+    "score_seats",
     "ANALYST",
     "Candidate",
     "Consensus",

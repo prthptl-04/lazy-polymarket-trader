@@ -100,6 +100,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
         repo_root = Path(__file__).resolve().parent.parent
         return JSONResponse(content=_json.loads(to_cytoscape_json(build_graph(repo_root))))
 
+    @app.get("/api/scorecard")
+    def api_scorecard() -> dict:
+        return runtime.scorecard()
+
     @app.get("/api/fund")
     def api_fund() -> dict:
         return runtime.fund_status()
