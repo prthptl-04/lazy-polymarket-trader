@@ -31,11 +31,19 @@ Kept as venue #3 per the user's decision, but `trading/polymarket_client.py`
 and `live_market/` still run on their own path rather than as a `VenueAdapter`.
 Works today; will drift.
 
-### Round table not yet wired to execution
-`roundtable/` produces a `Thesis`, but nothing converts one into a
-`DirectionalTrade` and pushes it through `OutcomeGrader` + `VenueRouter`. The
-candidate-builder (running the `finance/` screens to populate `Candidate`) is
-also unwritten — today a Candidate has to be constructed by hand.
+### No market-data source feeds the candidate builder
+`build_candidate` takes bars, quotes and financials as arguments. Nothing
+fetches them yet — there is no price-history or fundamentals provider wired.
+This is the last thing standing between the pipeline and an end-to-end run.
+
+### Confidence calibration is a constant, not a fit
+`CONFIDENCE_SHRINK = 0.5` is a judgement call, not a measurement. Once resolved
+trades exist, `finance.risk_metrics.brier_score` should fit it. Until then
+sizing is deliberately pessimistic rather than accurate.
+
+### Fund is long-only
+A bearish consensus on an unheld name is skipped, not shorted. Shorting needs
+margin and borrow, and Robinhood's agentic surface is unverified for it.
 
 ### Resume logic exists in storage but not in the loop
 `MemoryStore.unfinished_deliberations()` returns interrupted theses and the
@@ -116,4 +124,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Backtester (was: no backtesting existed) | `64324d5` |
 | Grader could not grade an equity trade | `ba157aa` |
 | Daily kill-switch declared but never enforced | `ffab32b` |
-| Round-table seats + transcript persistence | this commit |
+| Round-table seats + transcript persistence | `238501f` |
+| Thesis → order pipeline + candidate builder | this commit |
