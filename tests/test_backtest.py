@@ -281,3 +281,54 @@ async def test_context_returns_are_derived_from_closes():
 
     await Backtester(_cfg()).run(_candles([100, 110, 121, 130]), strategy)
     assert captured[0] == pytest.approx([0.1, 0.1])
+
+
+# ---------------- kill-switch in history ----------------
+
+@pytest.mark.asyncio
+async def test_kill_switch_halts_new_risk_after_a_bad_day():
+    """A strategy that keeps buying into a collapse must get cut off."""
+    def strategy(ctx: BarContext):
+        return [OrderRequest(symbol="TEST", side="buy",
+                             asset_class="equity", notional_usd=500.0)]
+
+    # One trading day, price falling hard.
+    day = datetime(2026, 9, 14, 10, 0, tzinfo=EASTERN)
+    ts = [day + timedelta(minutes=30 * i) for i in range(12)]
+    prices = [100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45]
+    candles = _candles(prices, timestamps=ts)
+
+    result = await Backtester(
+        _cfg(starting_cash_usd=10_000.0, max_daily_loss_usd=200.0)
+    ).run(candles, strategy)
+
+    assert result.metrics()["rejected_by_gate"].get("kill_switch", 0) > 0
+
+
+@pytest.mark.asyncio
+async def test_no_kill_switch_when_limit_is_unset():
+    def strategy(ctx: BarContext):
+        return [OrderRequest(symbol="TEST", side="buy",
+                             asset_class="equity", notional_usd=100.0)]
+
+    day = datetime(2026, 9, 14, 10, 0, tzinfo=EASTERN)
+    ts = [day + timedelta(minutes=30 * i) for i in range(8)]
+    candles = _candles([100, 90, 80, 70, 60, 50, 40, 30], timestamps=ts)
+
+    result = await Backtester(_cfg(starting_cash_usd=10_000.0)).run(candles, strategy)
+    assert "kill_switch" not in result.metrics()["rejected_by_gate"]
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_does_not_fire_on_a_calm_day():
+    def strategy(ctx: BarContext):
+        if ctx.index == 0:
+            return [OrderRequest(symbol="TEST", side="buy",
+                                 asset_class="equity", notional_usd=100.0)]
+        return None
+
+    result = await Backtester(
+        _cfg(starting_cash_usd=10_000.0, max_daily_loss_usd=500.0)
+    ).run(_candles([100, 101, 102, 101, 103]), strategy)
+
+    assert "kill_switch" not in result.metrics()["rejected_by_gate"]

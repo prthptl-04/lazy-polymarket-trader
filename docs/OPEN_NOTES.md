@@ -22,11 +22,6 @@ account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
 across restarts is unsolved and is the real blocker on unattended autonomy.
 → *Decide the approach before Phase 5.*
 
-### 3. Daily kill-switch is declared but not enforced
-`verification.criteria.max_daily_loss_usd` has existed since Phase 0 and still
-blocks nothing. Now unblocked — live P&L arrives via the user channel and
-`PositionTracker`.
-
 ---
 
 ## 🟡 Deferred — decided, not yet built
@@ -59,6 +54,12 @@ data. Should come from config/env.
 ### HTTP/2 keepalive on the CLOB client
 Each `post_order` opens a new HTTPS connection; persistent connection would cut
 ~30% off a 50–150 ms RTT.
+
+### Kill-switch not yet wired into the live runtime
+`DailyLossKillSwitch` is enforced in `VenueRouter` and the backtester, but
+`dashboard/runtime.py` does not construct one and the autonomous loop does not
+call `observe_equity()` per tick. Until that wiring lands the switch is armed
+only in backtests. **Do not go live before closing this.**
 
 ### Dashboard token auth
 Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
@@ -115,4 +116,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Venue abstraction + router gates | Phase 2, `7a51fa2` |
 | Exit logic (was: fund had none at all) | `31b1684` |
 | Backtester (was: no backtesting existed) | `64324d5` |
-| Grader could not grade an equity trade | this commit |
+| Grader could not grade an equity trade | `ba157aa` |
+| Daily kill-switch declared but never enforced | this commit |

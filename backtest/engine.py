@@ -39,6 +39,7 @@ from finance.risk_metrics import (
     sharpe_ratio,
     value_at_risk,
 )
+from trading.kill_switch import DailyLossKillSwitch
 from trading.pdt import DayTradeTracker
 from trading.sessions import session_at
 from trading.venues.base import AssetClass, OrderRequest
@@ -113,6 +114,9 @@ class BacktestConfig:
     commission_per_order_usd: float = 0.0
     warmup_bars: int = 20
     account_equity_for_pdt_usd: Optional[float] = None
+    # 0 or None disables the daily kill-switch for this run. Leave it on to see
+    # how often a strategy would have been halted for the day in real trading.
+    max_daily_loss_usd: Optional[float] = None
 
 
 @dataclass
@@ -178,7 +182,14 @@ class Backtester:
             else config.starting_cash_usd
         )
         self.pdt = DayTradeTracker(account_equity_usd=equity_for_pdt)
-        self.router = VenueRouter(adapters=[self.venue], pdt=self.pdt)
+        self.kill_switch = (
+            DailyLossKillSwitch(max_daily_loss_usd=config.max_daily_loss_usd)
+            if config.max_daily_loss_usd
+            else None
+        )
+        self.router = VenueRouter(
+            adapters=[self.venue], pdt=self.pdt, kill_switch=self.kill_switch
+        )
 
     async def run(self, candles: Sequence[Candle], strategy: Strategy) -> BacktestResult:
         cfg = self.config
@@ -196,9 +207,13 @@ class Backtester:
                 await self._submit(order, candle.timestamp, result)
             pending = []
 
-            # 2. Mark the book at this bar's close.
+            # 2. Mark the book at this bar's close, then show the mark to the
+            #    kill-switch. Order matters: the switch must see the drawdown
+            #    before the strategy is allowed to add risk on top of it.
             self._quote(cfg.symbol, candle.close)
             equity = (await self.venue.account()).equity_usd
+            if self.kill_switch is not None:
+                self.kill_switch.observe_equity(candle.timestamp, equity)
             result.equity_curve.append(equity)
             result.timestamps.append(candle.timestamp)
 

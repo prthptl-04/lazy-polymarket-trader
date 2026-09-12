@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from trading.kill_switch import DailyLossKillSwitch
 from trading.pdt import DayTradeTracker
 from trading.sessions import Session, session_at
 from trading.venues.base import (
@@ -51,6 +52,7 @@ class VenueRouter:
 
     adapters: list[VenueAdapter] = field(default_factory=list)
     pdt: Optional[DayTradeTracker] = None
+    kill_switch: Optional[DailyLossKillSwitch] = None
     max_extended_hours_spread_bps: int = MAX_EXTENDED_HOURS_SPREAD_BPS
     # Venue preference per asset class; first supporting adapter wins otherwise.
     preferences: dict[str, str] = field(default_factory=dict)
@@ -87,6 +89,17 @@ class VenueRouter:
                 allowed=False, gate="venue",
                 reason=f"no registered venue supports {request.asset_class!r}",
             )
+
+        # Daily loss limit comes first: once the fund is done for the day it is
+        # done, regardless of how good the next setup looks. Closing orders
+        # pass through — the switch must never trap us in a losing position.
+        if self.kill_switch is not None:
+            verdict = self.kill_switch.evaluate(moment, is_closing=request.is_close)
+            if not verdict.allowed:
+                return RouteDecision(
+                    allowed=False, gate="kill_switch", venue_name=adapter.name,
+                    reason=verdict.reason,
+                )
 
         session = session_at(moment)
 
@@ -187,4 +200,5 @@ class VenueRouter:
             "extended_hours": session.is_extended_hours,
             "venues": [a.name for a in self.adapters],
             "pdt": self.pdt.status(moment) if self.pdt else None,
+            "kill_switch": self.kill_switch.status(moment) if self.kill_switch else None,
         }

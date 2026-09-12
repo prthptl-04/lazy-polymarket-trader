@@ -299,3 +299,64 @@ def test_status_on_a_weekend():
     s = router.status(SATURDAY)
     assert s["session"] == "crypto_only"
     assert s["equities_open"] is False
+
+
+# ---------------- kill-switch gate ----------------
+
+@pytest.mark.asyncio
+async def test_kill_switch_blocks_new_risk_at_the_router():
+    from trading.kill_switch import DailyLossKillSwitch
+
+    ks = DailyLossKillSwitch(max_daily_loss_usd=100.0)
+    router, venue = _router()
+    router.kill_switch = ks
+
+    ks.observe_equity(WEDNESDAY, 50_000.0)
+    ks.observe_equity(WEDNESDAY, 49_800.0)      # -200, trips
+
+    ack = await router.place(_buy(), WEDNESDAY)
+    assert not ack.accepted
+    assert "[kill_switch]" in ack.error
+    assert venue.order_calls == 0                # never reached the venue
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_still_permits_exits():
+    from trading.kill_switch import DailyLossKillSwitch
+
+    ks = DailyLossKillSwitch(max_daily_loss_usd=100.0)
+    router, venue = _router()
+
+    # Open a position BEFORE the switch trips.
+    await router.place(_buy(), WEDNESDAY)
+    router.kill_switch = ks
+    ks.observe_equity(WEDNESDAY, 50_000.0)
+    ks.observe_equity(WEDNESDAY, 49_000.0)
+
+    ack = await router.place(_sell(), WEDNESDAY)
+    assert ack.accepted, ack.error
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_allows_trading_within_budget():
+    from trading.kill_switch import DailyLossKillSwitch
+
+    ks = DailyLossKillSwitch(max_daily_loss_usd=1_000.0)
+    router, _ = _router()
+    router.kill_switch = ks
+    ks.observe_equity(WEDNESDAY, 50_000.0)
+    ks.observe_equity(WEDNESDAY, 49_900.0)
+
+    assert (await router.place(_buy(), WEDNESDAY)).accepted
+
+
+def test_status_includes_kill_switch():
+    from trading.kill_switch import DailyLossKillSwitch
+
+    router, _ = _router()
+    router.kill_switch = DailyLossKillSwitch(max_daily_loss_usd=100.0)
+    router.kill_switch.observe_equity(WEDNESDAY, 10_000.0)
+
+    s = router.status(WEDNESDAY)
+    assert s["kill_switch"]["armed"] is True
+    assert s["kill_switch"]["limit_usd"] == 100.0
