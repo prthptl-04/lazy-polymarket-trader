@@ -17,13 +17,24 @@ It is purely a coordinator + librarian.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from agents.tool_registry import REGISTRY, AgentToolset, Tool, toolset_for
 from memory.store import MemoryStore
 from web_scraper.authenticator import AuthVerdict, GitHubAuthenticator
-from web_scraper.trust_policy import ScrapeDecision, TrustPolicy
+from web_scraper.trust_policy import (
+    ScrapeDecision,
+    ScrapeTarget,
+    TrustPolicy,
+    classify_target,
+)
+
+
+def _target_key(target: ScrapeTarget) -> str:
+    """Canonical owner/repo key for override lookups (case-insensitive)."""
+    return f"{(target.owner or '').lower()}/{(target.repo or '').lower()}"
 
 
 MANAGER_SYSTEM_PROMPT = """You are the Orchestration Manager for the Lazy Polymarket Trader.
@@ -134,6 +145,7 @@ class OrchestrationManager:
         self.memory = memory
         self.trust_policy = trust_policy or TrustPolicy()
         self.authenticator = authenticator or GitHubAuthenticator()
+        self._load_persisted_trust()
 
     # ----- Briefing -----
 
@@ -219,6 +231,20 @@ class OrchestrationManager:
             auth_details=verdict.details,
         )
 
+        if not verdict.verified and self._has_license_override(decision.target, verdict):
+            note = self.memory.get(
+                self.TRUST_STATE_AGENT, self.LICENSE_OVERRIDE_KEY, {}
+            ).get(_target_key(decision.target), {}).get("reason", "")
+            return ScrapeOutcome(
+                agent_id=agent_id,
+                target_raw=target,
+                policy_decision=decision,
+                auth_verdict=verdict,
+                approved=True,
+                reason=f"approved via explicit user license override ({note})",
+                audit_id=audit_id,
+            )
+
         if not verdict.verified:
             self.memory.record_lesson(
                 agent_id,
@@ -245,11 +271,95 @@ class OrchestrationManager:
             audit_id=audit_id,
         )
 
+    # Trust-allowlist extensions are user-approved actions (CLAUDE.md #8), so
+    # they must survive the process that approved them — otherwise every new
+    # session silently reverts to the seed list and re-prompts the user.
+    # Only the *additions* are persisted; the seed list stays in code so it
+    # can be audited in the diff rather than in the database.
+    TRUST_STATE_AGENT = "orchestration_manager"
+    TRUST_OWNERS_KEY = "trusted_github_owners"
+    TRUST_DOMAINS_KEY = "trusted_domains"
+    LICENSE_OVERRIDE_KEY = "license_overrides"
+
+    # ----- Explicit license override (user-only action) -----
+    #
+    # A missing license is a *legal* signal, not a security one. The user may
+    # decide the legal risk is acceptable for a given repo — e.g. internal use
+    # with no redistribution. That decision is theirs, so this exists.
+    #
+    # It is deliberately narrow. It waives ONLY "no declared license", and only
+    # for one exact owner/repo. The other authenticator failures — private,
+    # archived, disabled, owner mismatch, unreachable — are supply-chain
+    # signals that no amount of "we trust them" makes safe, so they are never
+    # waivable here. Broadening this to a global flag would silently weaken the
+    # gate for every future target; that is why it is per-target.
+
+    def approve_unlicensed_target(self, target: str, reason: str) -> dict:
+        """Record an explicit user decision to accept an unlicensed repo.
+
+        Returns the stored override record. Persisted + audited, so the
+        decision is attributable later rather than looking like a gate bug.
+        """
+        decision_target = classify_target(target)
+        if decision_target.kind != "github_repo":
+            raise ValueError("license overrides apply to github repos only")
+        if not reason or not reason.strip():
+            raise ValueError("an override must carry a stated reason")
+
+        key = _target_key(decision_target)
+        record = {
+            "owner": decision_target.owner,
+            "repo": decision_target.repo,
+            "reason": reason.strip(),
+            "granted": time.time(),
+        }
+        overrides = self.memory.get(self.TRUST_STATE_AGENT, self.LICENSE_OVERRIDE_KEY, {}) or {}
+        overrides[key] = record
+        self.memory.put(self.TRUST_STATE_AGENT, self.LICENSE_OVERRIDE_KEY, overrides)
+        self.memory.record_audit_event(
+            self.TRUST_STATE_AGENT, "license_override_granted", key, record,
+        )
+        self.memory.record_lesson(
+            "*",
+            f"License override granted for {key}: {reason.strip()}. "
+            "Unlicensed upstream — internal use only, do not redistribute.",
+        )
+        return record
+
+    def license_overrides(self) -> dict:
+        return self.memory.get(self.TRUST_STATE_AGENT, self.LICENSE_OVERRIDE_KEY, {}) or {}
+
+    def _has_license_override(self, target: ScrapeTarget, verdict: AuthVerdict) -> bool:
+        # Only ever waives the missing-license verdict, nothing else.
+        if verdict.reason != "repo has no declared license":
+            return False
+        return _target_key(target) in self.license_overrides()
+
+    def _load_persisted_trust(self) -> None:
+        for owner in self.memory.get(self.TRUST_STATE_AGENT, self.TRUST_OWNERS_KEY, []) or []:
+            self.trust_policy.add_trusted_owner(owner)
+        for domain in self.memory.get(self.TRUST_STATE_AGENT, self.TRUST_DOMAINS_KEY, []) or []:
+            self.trust_policy.add_trusted_domain(domain)
+
+    def _persist_trust_addition(self, key: str, value: str) -> None:
+        stored = self.memory.get(self.TRUST_STATE_AGENT, key, []) or []
+        if value not in stored:
+            self.memory.put(self.TRUST_STATE_AGENT, key, [*stored, value])
+
     def add_trusted_owner(self, owner: str) -> None:
         self.trust_policy.add_trusted_owner(owner)
+        self._persist_trust_addition(self.TRUST_OWNERS_KEY, owner)
+        self.memory.record_audit_event(
+            self.TRUST_STATE_AGENT, "trust_owner_added", owner,
+        )
 
     def add_trusted_domain(self, domain: str) -> None:
-        self.trust_policy.add_trusted_domain(domain)
+        normalized = domain.lower()
+        self.trust_policy.add_trusted_domain(normalized)
+        self._persist_trust_addition(self.TRUST_DOMAINS_KEY, normalized)
+        self.memory.record_audit_event(
+            self.TRUST_STATE_AGENT, "trust_domain_added", normalized,
+        )
 
     def recent_scrape_audits(self, limit: int = 20) -> list[dict]:
         return self.memory.recent_scrape_audits(limit=limit)
