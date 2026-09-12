@@ -190,3 +190,21 @@ def test_scanner_handles_syntax_error_files_gracefully(tmp_path: Path):
     # Should not raise; broken file is skipped, ok.py still scanned.
     findings = _scan(tmp_path)
     assert any(f.category == "POLY-006" for f in findings)
+
+
+def test_vendor_clones_are_not_scanned(tmp_path):
+    """Upstream `<name>-src/` clones are gitignored and never published, so
+    their findings are somebody else's code, not ours."""
+    _write(tmp_path, "ours.py", "x = 1\n")
+    _write(tmp_path, ".claude/skills/agents-cli-src/evil.py", "exec('danger')\n")
+
+    findings = StaticScanner(tmp_path).scan()
+    assert not any("-src" in f.file for f in findings)
+
+
+def test_vendor_clone_exclusion_does_not_hide_our_own_code(tmp_path):
+    """The suffix rule must not become a blanket amnesty."""
+    _write(tmp_path, "mine.py", "exec('danger')\n")
+
+    findings = StaticScanner(tmp_path).scan()
+    assert any(f.file == "mine.py" for f in findings)

@@ -20,6 +20,9 @@ build/
 # Agent-Reach full clone — we vendor .claude/skills/agent-reach/ only.
 .claude/skills/agent-reach-src/
 
+# agents-cli full clone (google/agents-cli, Apache-2.0) — reference only.
+.claude/skills/agents-cli-src/
+
 # andrej-karpathy-skills clone — UNLICENSED upstream, vendored under an
 # explicit internal-use-only override. The clone must never be committed or
 # published; only our adapted .claude/skills/karpathy-guidelines/ is tracked.
