@@ -96,6 +96,56 @@ class DashboardRuntime:
     def recent_audit(self, limit: int = 50) -> list[dict]:
         return self.memory.recent_audit_events(limit=limit)
 
+    # ---------- round table ----------
+
+    def deliberations(self, limit: int = 25) -> list[dict]:
+        """Index view: one row per debate, newest first."""
+        try:
+            rows = self.memory.recent_deliberations(limit=limit)
+        except Exception:
+            return []
+        return [
+            {
+                "thesis_id": r["thesis_id"],
+                "symbol": r["symbol"],
+                "asset_class": r["asset_class"],
+                "status": r["status"],
+                "signal": r["signal"],
+                "confidence": r["confidence"],
+                "created": r["created"],
+                "tally": (r.get("payload") or {}).get("tally", {}),
+                "seats": len((r.get("payload") or {}).get("opinions", [])),
+            }
+            for r in rows
+        ]
+
+    def deliberation(self, thesis_id: str) -> Optional[dict]:
+        """Full debate: every seat's position plus the chair's transcript."""
+        try:
+            row = self.memory.get_deliberation(thesis_id)
+        except Exception:
+            return None
+        if row is None:
+            return None
+        payload = row.get("payload") or {}
+        consensus = payload.get("consensus") or {}
+        opinions = payload.get("opinions", [])
+        return {
+            "thesis_id": row["thesis_id"],
+            "symbol": row["symbol"],
+            "asset_class": row["asset_class"],
+            "status": row["status"],
+            "created": row["created"],
+            "updated": row["updated"],
+            "opinions": opinions,
+            "consensus": consensus,
+            "tally": payload.get("tally", {}),
+            # Unanimity is a caution flag, so the UI needs it as data, not as a
+            # thing the reader has to notice by counting badges.
+            "unanimous": _is_unanimous(payload.get("tally", {})),
+            "abstentions": [o["seat_name"] for o in opinions if o.get("failed")],
+        }
+
     def feeds(self) -> dict:
         """Connection health for both WebSocket producers."""
         return {
@@ -227,3 +277,13 @@ def build_runtime(
     if attach_feeds:
         attach_live_feeds(runtime, polymarket_client, connect=connect)
     return runtime
+
+
+def _is_unanimous(tally: dict) -> bool:
+    """True when every responding seat landed on the same signal.
+
+    Surfaced deliberately: in a five-seat LLM panel, agreement usually means
+    the seats shared a framing rather than that the trade is safe.
+    """
+    nonzero = [n for n in tally.values() if n]
+    return len(nonzero) == 1 and sum(nonzero) > 1

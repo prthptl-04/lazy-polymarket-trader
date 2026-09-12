@@ -40,7 +40,11 @@ supplied/recorded data and gets live quotes from any venue. What is missing is
     unofficial Yahoo scraper that breaks periodically.
   - Robinhood MCP — already connected, but its data surface is unverified
     (blocker #1) and may not expose fundamentals at all.
-  - A paid API (Polygon, Alpha Vantage) — reliable, keyed, costs money.
+  - A paid API — evaluated 2026-09-12. **Recommended: Massive**, free tier
+    (EOD bars, 5 req/min) + $29/mo fundamentals add-on, composed with Robinhood
+    MCP for real-time quotes. Unusual Whales was rejected: it has NO historical
+    OHLCV bars, which breaks ATR, the exit plan, and every gate downstream —
+    and $125/mo is ~6% of a sub-$25k account annually.
 Altman/Piotroski need fundamentals; without them those screens stay
 NOT AVAILABLE and the Analyst seat is flying on less.
 
@@ -59,8 +63,10 @@ do with them is deliberately left to the caller — a stale thesis built on
 week-old prices should be abandoned, not acted on. The re-run/abandon policy is
 unwritten.
 
-### Dashboard round-table UI
-Phase 4. Live conversation view, thesis timeline, per-seat vote display.
+### Dashboard does not yet show the fund loop
+The round-table view at `/roundtable` is live, but the main dashboard still
+reports the Polymarket-era `AutonomousLoop` (GO/STOP, feeds, orderbook P&L).
+Nothing wires `FundLoop` cycles, the kill-switch tile, or PDT budget into it.
 
 ### Watched markets still hardcoded
 `dashboard/__main__.py` has `watched: list[WatchedMarket] = []`. With it empty,
@@ -136,4 +142,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Daily kill-switch declared but never enforced | `ffab32b` |
 | Round-table seats + transcript persistence | `238501f` |
 | Thesis → order pipeline + candidate builder | `551fec0` |
-| Fund loop + market-data abstraction | this commit |
+| Fund loop + market-data abstraction | `f3815c3` |
+| Round-table monitoring UI | this commit |

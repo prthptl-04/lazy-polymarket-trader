@@ -75,6 +75,24 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_feeds() -> dict:
         return runtime.feeds()
 
+    # ---------- round table ----------
+
+    @app.get("/roundtable", response_class=HTMLResponse)
+    def roundtable_page() -> str:
+        from dashboard.roundtable_view import ROUNDTABLE_HTML
+        return ROUNDTABLE_HTML
+
+    @app.get("/api/deliberations")
+    def api_deliberations(limit: int = 25) -> list[dict]:
+        return runtime.deliberations(limit=max(1, min(200, limit)))
+
+    @app.get("/api/deliberations/{thesis_id}")
+    def api_deliberation(thesis_id: str) -> Any:
+        found = runtime.deliberation(thesis_id)
+        if found is None:
+            return JSONResponse(status_code=404, content={"error": "no such deliberation"})
+        return found
+
     @app.get("/api/code-graph")
     def api_code_graph() -> Any:
         from code_graph import build_graph, to_cytoscape_json
@@ -185,6 +203,7 @@ _INDEX_HTML = r"""<!doctype html>
     <h1>Lazy Polymarket Trader · dashboard</h1>
     <div class="right">
       <span id="state-pill" class="pill stopped">stopped</span>
+      <a href="/roundtable" style="color:#58a6ff;text-decoration:none;margin-right:14px">Round Table &rarr;</a>
       <button id="go-btn" class="go">GO</button>
       <button id="stop-btn" class="stop" disabled>STOP</button>
     </div>
