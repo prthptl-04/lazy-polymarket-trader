@@ -35,11 +35,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
 from trading.candidate_builder import build_candidate
+from trading.fund_config import is_thesis_stale
 from trading.sessions import Session, session_at, should_flatten_crypto
 from trading.venues.base import OrderRequest
 
@@ -97,6 +99,7 @@ class FundLoop:
     memory: Any = None
     lookback_bars: int = 60
     max_candidates_per_cycle: int = 5
+    resume_max_age_seconds: float = 3600.0
     on_cycle: Any = None
 
     # ---------- one cycle ----------
@@ -306,18 +309,49 @@ class FundLoop:
 
     # ---------- resume ----------
 
-    async def resume_unfinished(self) -> list[str]:
-        """Report theses interrupted by a STOP.
+    async def resume_unfinished(self, *, now: Optional[float] = None) -> list[str]:
+        """Return interrupted theses that are still fresh enough to act on.
 
-        The deliberations survive in `MemoryStore`; this surfaces them so a GO
-        can pick up rather than silently restarting work already paid for.
-        Re-running them is the caller's decision, since a stale thesis on
-        week-old prices should be abandoned rather than acted on.
+        A deliberation reasons about prices at a moment in time, so resuming
+        one built on yesterday's tape would apply a stale conclusion to a
+        market that has moved. Anything older than `resume_max_age_seconds` is
+        marked `abandoned` in memory rather than surfaced — otherwise every GO
+        would report the same weeks-old ghosts forever.
+
+        Fresh theses are reported, not auto-run. Deciding to re-run is the
+        caller's call.
         """
         if self.memory is None:
             return []
+        current = now if now is not None else time.time()
+        fresh: list[str] = []
         try:
-            return [d["thesis_id"] for d in self.memory.unfinished_deliberations()]
+            rows = self.memory.unfinished_deliberations()
         except Exception:
             logger.exception("failed to read unfinished deliberations")
             return []
+
+        for row in rows:
+            if is_thesis_stale(
+                row.get("created"),
+                max_age_seconds=self.resume_max_age_seconds,
+                now=current,
+            ):
+                self._abandon(row)
+            else:
+                fresh.append(row["thesis_id"])
+        return fresh
+
+    def _abandon(self, row: dict) -> None:
+        try:
+            self.memory.save_deliberation(
+                thesis_id=row["thesis_id"],
+                symbol=row["symbol"],
+                asset_class=row["asset_class"],
+                status="abandoned",
+                payload=row.get("payload") or {},
+                signal=row.get("signal"),
+                confidence=row.get("confidence"),
+            )
+        except Exception:
+            logger.exception("failed to abandon stale thesis %s", row.get("thesis_id"))

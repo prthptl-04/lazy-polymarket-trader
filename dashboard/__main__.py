@@ -12,8 +12,10 @@ import os
 
 import uvicorn
 
+from dashboard.fund_wiring import build_fund
 from dashboard.runtime import build_runtime
 from dashboard.server import create_app
+from trading.fund_config import load_config
 from decision_tree.predictor import Predictor
 from decision_tree.tree import Tree
 from memory.store import MemoryStore
@@ -48,6 +50,28 @@ def main() -> None:
             "[dashboard] user-channel feed NOT attached (no L2 creds derivable). "
             "Positions and live P&L stay empty until a wallet is configured."
         )
+
+    # Attach the hedge-fund engine if it can be built. Returns None when the
+    # watchlist is empty or no Anthropic key is set, in which case the
+    # dashboard still runs and reports the fund as not attached.
+    config = load_config()
+    runtime.fund_scheduler = build_fund(config=config, memory=runtime.memory)
+    if runtime.fund_scheduler is None:
+        print(
+            "[dashboard] fund NOT attached — "
+            + ("; ".join(config.warnings) or "see config/fund.toml and ANTHROPIC_API_KEY")
+        )
+    else:
+        print(
+            f"[dashboard] fund attached: "
+            f"{len(config.equity_watchlist)} equities, "
+            f"{len(config.crypto_watchlist)} crypto, "
+            f"${config.bankroll_usd:,.0f} bankroll, "
+            f"${config.max_daily_loss_usd:,.0f} daily loss cap"
+        )
+        for warning in config.warnings:
+            print(f"[dashboard]   warning: {warning}")
+
     app = create_app(runtime)
     uvicorn.run(app, host=host, port=port, log_level="info")
 

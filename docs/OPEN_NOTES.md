@@ -63,21 +63,16 @@ do with them is deliberately left to the caller — a stale thesis built on
 week-old prices should be abandoned, not acted on. The re-run/abandon policy is
 unwritten.
 
-### `python -m dashboard` does not construct a fund
-The dashboard renders and drives a `FundScheduler` when one is attached, but
-`dashboard/__main__.py` still builds only the Polymarket runtime. Wiring the
-fund there needs an Anthropic client, a market-data provider and a watchlist —
-i.e. it is blocked on the data-source decision, not on code.
 
-### Resumable theses are surfaced but never re-run
-`FundScheduler` reports interrupted thesis ids on GO. The re-run vs abandon
-policy is unwritten: a thesis built on week-old prices should be abandoned, not
-acted on, and nothing currently decides which.
+### Fresh interrupted theses are surfaced but never re-run
+Stale ones are now abandoned automatically (older than
+`resume_max_age_seconds`, default 1h). Fresh ones are reported on GO but
+nothing re-runs them — that remains a deliberate caller decision.
 
-### Watched markets still hardcoded
-`dashboard/__main__.py` has `watched: list[WatchedMarket] = []`. With it empty,
-`attach_live_feeds` subscribes to zero tokens — feeds connect and carry no
-data. Should come from config/env.
+### Polymarket watchlist still hardcoded
+The FUND watchlist now lives in `config/fund.toml`. The Polymarket-era
+`watched: list[WatchedMarket] = []` in `dashboard/__main__.py` is still a
+literal; with it empty, `attach_live_feeds` subscribes to zero tokens.
 
 ### HTTP/2 keepalive on the CLOB client
 Each `post_order` opens a new HTTPS connection; persistent connection would cut
@@ -145,4 +140,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Fund loop + market-data abstraction | `f3815c3` |
 | Round-table monitoring UI | `f3bbe26` |
 | Kill-switch unfed in the live path | `0f30a1b` |
-| Dashboard wiring for the fund engine | this commit |
+| Dashboard wiring for the fund engine | `8f1a281` |
+| Fund config + entrypoint wiring + stale-thesis policy | this commit |
