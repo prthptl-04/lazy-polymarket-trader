@@ -80,6 +80,55 @@ def sharpe_ratio(
     return (mean / std) * math.sqrt(periods_per_year)
 
 
+def conditional_value_at_risk(returns: Sequence[float], *, alpha: float = 0.05) -> float:
+    """Expected Shortfall — the average loss *given* we are in the worst alpha tail.
+
+    VaR says "we lose at least X on the worst 5% of days". It says nothing about
+    how much worse than X things get, so two books with identical VaR can have
+    very different ruin risk. CVaR answers that by averaging the whole tail, and
+    it is what the fund sizes against (see finance.sizing).
+
+    Rockafellar & Uryasev (2000). Returned as a non-negative loss magnitude;
+    0.0 on empty input. CVaR >= VaR always.
+    """
+    if not (0.0 < alpha < 1.0):
+        raise ValueError(f"alpha must be in (0, 1) (got {alpha!r})")
+    if not returns:
+        return 0.0
+    sorted_r = sorted(returns)
+    # At least one observation in the tail, else CVaR is undefined for small n.
+    n_tail = max(1, int(alpha * len(sorted_r)))
+    tail = sorted_r[:n_tail]
+    return max(0.0, -(sum(tail) / len(tail)))
+
+
+def amihud_illiquidity(
+    returns: Sequence[float],
+    dollar_volumes: Sequence[float],
+) -> float:
+    """Amihud (2002) ILLIQ — average |return| per dollar traded.
+
+    The intuition: in a liquid name, a million dollars of flow barely moves the
+    price; in an illiquid one it moves it a lot. Higher ILLIQ means our own
+    order is more likely to move the market against us, which is exactly the
+    risk in premarket and in small caps.
+
+    Scaled by 1e6 so values land in a readable range rather than 1e-9. Days with
+    zero volume are skipped rather than treated as infinitely illiquid, because
+    a halted or untraded day says nothing about liquidity.
+    """
+    if len(returns) != len(dollar_volumes):
+        raise ValueError("returns and dollar_volumes must be the same length")
+    ratios = [
+        abs(r) / v
+        for r, v in zip(returns, dollar_volumes)
+        if v and v > 0
+    ]
+    if not ratios:
+        return 0.0
+    return (sum(ratios) / len(ratios)) * 1_000_000
+
+
 def value_at_risk(returns: Sequence[float], *, alpha: float = 0.05) -> float:
     """Historical VaR. One-tailed loss at confidence (1 - alpha).
 
