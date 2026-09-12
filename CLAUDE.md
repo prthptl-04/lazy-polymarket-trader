@@ -318,6 +318,54 @@ Crucially:
 Run with: `python -m dashboard`. Default port 8765; override via
 `DASHBOARD_PORT`. Open `http://127.0.0.1:8765`.
 
-## 19. Memory
+## 19. License overrides are explicit, per-repo, and internal-use only (2026-09-12)
+
+Rule #8's authenticator requires a declared license. The user has decided that
+for this project — own use, not a sold service — a missing upstream license is
+an acceptable risk. The mechanism is deliberately narrow:
+
+```python
+OrchestrationManager.approve_unlicensed_target(target, reason)
+```
+
+- **Per-repo.** One exact `owner/repo`. It does not generalize to the owner.
+- **Waives one thing.** Only `"repo has no declared license"`. Archived,
+  private, disabled, owner-mismatch and unreachable are *supply-chain*
+  signals, not legal ones — never waivable, because "we trust them" does not
+  make a hijacked or abandoned repo safe.
+- **Persisted + audited.** Stored in `agent_state`, written to `audit_log`,
+  and recorded as a lesson, so the decision is attributable later rather than
+  looking like a gate bug.
+- **Requires a stated reason.** No silent overrides.
+
+Do NOT replace this with a global "skip license check" flag.
+
+Overridden content is **internal use only**. Its vendored SKILL.md must carry
+`license: UNLICENSED — internal use only, do not redistribute`, its upstream
+clone stays gitignored, and it must never enter a distributed artifact or the
+public GitHub mirror. The override covers local use, not publication.
+
+## 20. Agent Reach sits behind the scrape gate (2026-09-12)
+
+`Panniantong/Agent-Reach` (MIT) gives read access to ~15 external platforms.
+Its upstream SKILL.md instructs agents to call `agent-reach`, `curl`,
+`gh search`, and `mcporter` **directly** — inside this codebase that is a
+scrape-gate bypass (rule #8, category POLY-004). That instruction is void here.
+
+- All access goes through `research_agent.agent_reach.AgentReachFetcher`,
+  which routes every target through `OrchestrationManager.request_scrape`
+  before any subprocess starts. No specialist invokes the CLI directly.
+- `install` / `update` / `uninstall` are refused by the wrapper.
+  `agent-reach install --env=auto` pulls ~12 unvetted third-party CLIs that
+  never passed the trust gate. Install backends by hand, after review.
+- **Never on the hot path** (#14, #16). Each call is a seconds-scale
+  subprocess. Research and offline analysis only.
+- Platform session cookies live in Agent Reach's own config outside this repo.
+  Never read, echo, or persist them (#5, #17). The wrapper truncates stderr to
+  200 chars because backend errors can echo cookie-bearing URLs.
+- Scraped sentiment is research input, not a signal. Anything reaching a trade
+  still passes `OutcomeGrader.evaluate`.
+
+## 21. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

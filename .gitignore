@@ -13,3 +13,14 @@ build/
 
 # BMAD-METHOD full clone — kept locally for reference; we vendor adapted skills only.
 .claude/skills/bmad-method-src/
+
+# ponytail full clone — same pattern; we vendor .claude/skills/ponytail/ only.
+.claude/skills/ponytail-src/
+
+# Agent-Reach full clone — we vendor .claude/skills/agent-reach/ only.
+.claude/skills/agent-reach-src/
+
+# andrej-karpathy-skills clone — UNLICENSED upstream, vendored under an
+# explicit internal-use-only override. The clone must never be committed or
+# published; only our adapted .claude/skills/karpathy-guidelines/ is tracked.
+.claude/skills/karpathy-src/
