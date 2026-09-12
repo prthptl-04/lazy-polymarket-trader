@@ -31,10 +31,18 @@ Kept as venue #3 per the user's decision, but `trading/polymarket_client.py`
 and `live_market/` still run on their own path rather than as a `VenueAdapter`.
 Works today; will drift.
 
-### No market-data source feeds the candidate builder
-`build_candidate` takes bars, quotes and financials as arguments. Nothing
-fetches them yet — there is no price-history or fundamentals provider wired.
-This is the last thing standing between the pipeline and an end-to-end run.
+### No LIVE market-data source — DECISION NEEDED
+`MarketDataProvider` exists with two dependency-free implementations
+(`StaticProvider`, `VenueQuoteProvider`), so the fund runs end-to-end on
+supplied/recorded data and gets live quotes from any venue. What is missing is
+**historical bars and fundamentals from a live source**. Options:
+  - yfinance — free, no key, gives both; pulls pandas+numpy (~100MB) and is an
+    unofficial Yahoo scraper that breaks periodically.
+  - Robinhood MCP — already connected, but its data surface is unverified
+    (blocker #1) and may not expose fundamentals at all.
+  - A paid API (Polygon, Alpha Vantage) — reliable, keyed, costs money.
+Altman/Piotroski need fundamentals; without them those screens stay
+NOT AVAILABLE and the Analyst seat is flying on less.
 
 ### Confidence calibration is a constant, not a fit
 `CONFIDENCE_SHRINK = 0.5` is a judgement call, not a measurement. Once resolved
@@ -45,9 +53,11 @@ sizing is deliberately pessimistic rather than accurate.
 A bearish consensus on an unheld name is skipped, not shorted. Shorting needs
 margin and borrow, and Robinhood's agentic surface is unverified for it.
 
-### Resume logic exists in storage but not in the loop
-`MemoryStore.unfinished_deliberations()` returns interrupted theses and the
-round table persists at every stage, but no caller picks them up on GO yet.
+### Resume surfaces interrupted theses but does not re-run them
+`FundLoop.resume_unfinished()` reports interrupted thesis ids. Deciding what to
+do with them is deliberately left to the caller — a stale thesis built on
+week-old prices should be abandoned, not acted on. The re-run/abandon policy is
+unwritten.
 
 ### Dashboard round-table UI
 Phase 4. Live conversation view, thesis timeline, per-seat vote display.
@@ -125,4 +135,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Grader could not grade an equity trade | `ba157aa` |
 | Daily kill-switch declared but never enforced | `ffab32b` |
 | Round-table seats + transcript persistence | `238501f` |
-| Thesis → order pipeline + candidate builder | this commit |
+| Thesis → order pipeline + candidate builder | `551fec0` |
+| Fund loop + market-data abstraction | this commit |
