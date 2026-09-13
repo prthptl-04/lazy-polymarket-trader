@@ -48,7 +48,7 @@ FAILOVER_AT_REMAINING = 0.15
 # After a 429 with no usable reset header, assume this long.
 DEFAULT_COOLDOWN_SECONDS = 300.0
 
-DEFAULT_GEMINI_MODEL = "gemini-3-pro"
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 
 
 @dataclass

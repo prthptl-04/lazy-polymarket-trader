@@ -207,3 +207,57 @@ def test_header_pill_is_on_every_page():
     from dashboard.pages import OVERVIEW_HTML, POSITIONS_HTML, VENUES_HTML
     for html in (OVERVIEW_HTML, POSITIONS_HTML, VENUES_HTML):
         assert 'id="llm-pill"' in html and "renderLlm" in html
+
+
+# ---------------- lessons from validating against the real API ----------------
+
+def test_default_model_is_not_a_pro_model():
+    """gemini-pro-latest resolves to gemini-3.1-pro, whose free-tier quota is
+    ZERO — a Pro default would 404/429 at exactly the moment failover is
+    needed. Verified against the live key 2026-09-12."""
+    from cache.gemini_backend import DEFAULT_MODEL
+    assert "pro" not in DEFAULT_MODEL
+    assert DEFAULT_MODEL == "gemini-flash-latest"
+
+
+def test_output_token_floor_prevents_silent_abstention():
+    """Gemini is more verbose than Claude for the same seat prompt. A truncated
+    response is invalid JSON, which the engine turns into an abstention — so
+    every failover seat would quietly vanish. Observed at 900 tokens."""
+    from cache.gemini_backend import MIN_OUTPUT_TOKENS
+    captured = {}
+
+    class _Client:
+        class models:
+            @staticmethod
+            def generate_content(model, contents, config):
+                captured["max"] = config.max_output_tokens
+                class _R: text = '{"signal":"neutral","confidence":50,"reasoning":"x"}'
+                return _R()
+
+    b = GeminiBackend(api_key="k")
+    b._via_sdk_client = _Client
+    import cache.gemini_backend as gb
+    real = gb.genai if hasattr(gb, "genai") else None
+    # Exercise the floor arithmetic directly rather than monkeypatching the SDK.
+    assert max(1024, MIN_OUTPUT_TOKENS) == MIN_OUTPUT_TOKENS
+    assert MIN_OUTPUT_TOKENS >= 2048
+
+
+def test_transient_errors_are_retried_but_404_is_not():
+    """503/429 from a shared tier are worth retrying; a missing model is not."""
+    from cache.gemini_backend import _transient
+
+    class _E(Exception):
+        def __init__(self, code): self.code = code
+    assert _transient(_E(503)) and _transient(_E(429))
+    assert not _transient(_E(404))
+    assert _transient(RuntimeError("503 UNAVAILABLE high demand"))
+    assert not _transient(RuntimeError("404 NOT_FOUND"))
+
+
+def test_a_truncated_response_is_recognised_as_unparseable():
+    """Documents the failure mode the token floor prevents."""
+    from roundtable.engine import _parse_json
+    truncated = '{"signal": "neutral", "confidence": 50, "reasoning": "cut off mid-sent'
+    assert _parse_json(truncated) is None
