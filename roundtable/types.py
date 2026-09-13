@@ -51,6 +51,7 @@ class Candidate:
     sentiment_notes: tuple[str, ...] = ()
     technical_notes: tuple[str, ...] = ()
     portfolio_notes: tuple[str, ...] = ()
+    corroboration_notes: tuple[str, ...] = ()
 
     @property
     def r_multiple(self) -> Optional[float]:
@@ -85,6 +86,7 @@ class Candidate:
             ("SENTIMENT", self.sentiment_notes),
             ("TECHNICALS", self.technical_notes),
             ("PORTFOLIO", self.portfolio_notes),
+            ("CORROBORATION", self.corroboration_notes),
         ):
             if notes:
                 lines.append(f"\n{header}:")
@@ -184,7 +186,7 @@ class Thesis:
     def has_dissent(self) -> bool:
         """True when the seats did not all agree.
 
-        Unanimity in a five-seat LLM panel is a warning sign, not a green
+        Unanimity in a six-seat LLM panel is a warning sign, not a green
         light — it usually means the seats saw the same framing rather than
         that the trade is safe.
         """

@@ -13,9 +13,12 @@ from roundtable.calibration import (
     score_seats,
 )
 from roundtable.engine import RoundTable
+from roundtable.corroboration import CorroborationReport, compare
+from roundtable.corroborator import Corroborator
 from roundtable.seats import (
     ALL_SEATS,
     ANALYST,
+    CORROBORATOR,
     DEVILS_ADVOCATE,
     QUANT,
     RISK,
@@ -34,6 +37,10 @@ from roundtable.types import (
 
 __all__ = [
     "ALL_SEATS",
+    "CORROBORATOR",
+    "CorroborationReport",
+    "Corroborator",
+    "compare",
     "Scorecard",
     "SeatScore",
     "ShrinkFit",

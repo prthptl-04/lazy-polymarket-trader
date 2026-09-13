@@ -2,14 +2,14 @@
 
 Three stages per candidate:
 
-  1. Round 1 — Analyst, Sentiment, Quant, Risk run **in parallel**, each seeing
+  1. Round 1 — Analyst, Sentiment, Quant, Risk, Corroborator run **in parallel**, each
      only the candidate. Parallel is not just for speed: it is what makes their
      independence real, since no seat can anchor on another's conclusion.
   2. Round 2 — the Devil's Advocate sees round 1 and must attack the majority.
   3. Chair — one synthesis call produces the transcript and the consensus.
 
-Six LLM calls per candidate. The alternative designs and why not:
-- One call role-playing all five seats is ~6x cheaper and produces a convincing
+Seven LLM calls per candidate. The alternative designs and why not:
+- One call role-playing all six seats is ~6x cheaper and produces a convincing
   transcript with zero independent judgement — every voice carries one model's
   biases, so the dissent is decorative.
 - Every seat speaking in every round is richer and ~3x the cost, and most of

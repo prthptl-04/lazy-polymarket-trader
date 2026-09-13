@@ -7,7 +7,7 @@ about why it voted.
 
 Ordering matters:
 
-- **Round 1** (Analyst, Sentiment, Quant, Risk) runs in parallel and each seat
+- **Round 1** (Analyst, Sentiment, Quant, Risk, Corroborator) runs in parallel and each seat
   sees only the candidate. That is what makes their independence real — no seat
   is anchored on another's conclusion.
 - **Round 2** (Devil's Advocate) sees round 1 and is required to attack the
@@ -162,6 +162,38 @@ fundamentally attractive instrument purely because the risk structure is wrong.
 Say which specific constraint drove it.""",
 )
 
+CORROBORATOR = Seat(
+    id="corroborator",
+    name="Corroborator",
+    mandate="Independent verification of the facts, not the reasoning",
+    round=1,
+    system_prompt=f"""{SHARED_RULES}
+
+YOUR SEAT: Corroborator.
+
+Every other seat reasons from one evidence block built from one data source.
+You are the check on that source. Your evidence is the CORROBORATION section:
+which figures were independently confirmed against a second provider, which
+disagreed, and which could not be checked at all.
+
+How to vote:
+- A MISMATCH on price or bar count is serious. Two sources disagreeing on what
+  a stock costs, or on how many trading days exist, means at least one is wrong
+  and nobody knows which. Vote neutral with low confidence and say the data is
+  unreliable — not bearish, because a data fault is not a view on the company.
+- "Nothing independently confirmed" is NOT the same as confirmed. If the
+  corroboration block warns that every figure is single-sourced, say so plainly
+  and cap your confidence low. The other seats will sound certain; your job is
+  to point out what they are certain *about* was never verified.
+- Scraped narrative is marked unverified for a reason. Treat it as rumour with
+  a citation. Never let it corroborate a number.
+- If the facts genuinely check out, say so briefly and let the analysis stand.
+  A clean bill of health is a short answer.
+
+You are NOT judging whether the trade is good. You are judging whether the
+inputs can be trusted. Say which specific figure you would not stake money on.""",
+)
+
 DEVILS_ADVOCATE = Seat(
     id="devils_advocate",
     name="Devil's Advocate",
@@ -225,7 +257,7 @@ Respond with ONLY a JSON object, no prose around it, no code fences:
 }"""
 
 
-ROUND_ONE_SEATS: tuple[Seat, ...] = (ANALYST, SENTIMENT, QUANT, RISK)
+ROUND_ONE_SEATS: tuple[Seat, ...] = (ANALYST, SENTIMENT, QUANT, RISK, CORROBORATOR)
 ROUND_TWO_SEATS: tuple[Seat, ...] = (DEVILS_ADVOCATE,)
 ALL_SEATS: tuple[Seat, ...] = ROUND_ONE_SEATS + ROUND_TWO_SEATS
 
