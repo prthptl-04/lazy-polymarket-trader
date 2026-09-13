@@ -4,7 +4,7 @@
 > unresolved, or deliberately left undone lives here. Update it in the same
 > commit that changes its status — a stale notes file is worse than none.
 >
-> Last updated: 2026-09-12
+> Last updated: 2026-09-12 (session 2)
 
 ---
 
@@ -55,33 +55,7 @@ buried. User asked to revisit this explicitly (2026-09-12).
 
 **Do not run live — paper or otherwise — until this is closed.**
 
-### 3. Polymarket US — adapter built, needs credentials (user)
-Resolved the confusion: **Polymarket US is a different product** from the
-on-chain CLOB in `trading/polymarket_client.py`. It authenticates with an
-ed25519 API key pair, so the user was right — **no funder address needed**.
-
-`trading/venues/polymarket_us.py` implements `VenueAdapter` over the
-`polymarket-us` SDK (now in pyproject). Read paths (bbo, positions, balances)
-need no creds; order paths refuse without them rather than failing deep in the
-SDK.
-
-**Credentials in place and VERIFIED live 2026-09-12.** `account.balances`,
-`portfolio.positions` and `orders.list` all authenticate. Parsers were
-corrected against the real response shapes (my initial guesses were wrong):
-- balances is `{"balances":[{currentBalance, buyingPower, assetNotional,...}]}`
-  — **equity = currentBalance + assetNotional**, because open positions are
-  carried separately from cash. Reading currentBalance alone would report a
-  fully-invested account as near-empty and trip the kill-switch.
-- positions returns `{}` (not `[]`) when empty.
-
-**Current wallet: $0.247 cash, no open positions.** Far below any tradable
-size — `max_position_usd` is $10 and Kelly would size to ~$0. Fund it before
-expecting Polymarket activity.
-
-The old wallet vars stay valid for the CLOB path; they are simply unused by
-this adapter.
-
-### 4. MCP auth is desktop-interactive OAuth
+### 3. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
 account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
 across restarts is unsolved and is the real blocker on unattended autonomy.
@@ -91,10 +65,18 @@ across restarts is unsolved and is the real blocker on unattended autonomy.
 
 ## 🟡 Deferred — decided, not yet built
 
-### Polymarket is not behind the venue interface
-Kept as venue #3 per the user's decision, but `trading/polymarket_client.py`
-and `live_market/` still run on their own path rather than as a `VenueAdapter`.
-Works today; will drift.
+### Polymarket: US adapter done, CLOB path still separate
+`trading/venues/polymarket_us.py` implements `VenueAdapter` and is **verified
+live** (2026-09-12: auth works, balance $0.247, no positions). Parsers were
+corrected against real response shapes.
+
+Still open:
+- **Wallet is $0.247** — below any tradable size (`max_position_usd` is $10,
+  Kelly sizes to ~0). Fund it before expecting activity.
+- `markets.bbo` shape unverified — needs a live market slug to test against.
+- The old on-chain CLOB path (`trading/polymarket_client.py`, `live_market/`)
+  is a *different product* and still runs outside the venue interface. It
+  works; it will drift. Not urgent now that Polymarket US is the live path.
 
 ### Market data — DECIDED, Massive purchased 2026-09-12
 User subscribed to **Massive $29/mo stocks**. MCP server registered
@@ -115,24 +97,6 @@ Still needed from the user.
 
 **Crypto bars remain unsolved** — Massive's stocks plan does not cover them.
 Check Robinhood's surface for crypto history before buying anything else.
-
-### Superseded: the original provider comparison
-`MarketDataProvider` exists with two dependency-free implementations
-(`StaticProvider`, `VenueQuoteProvider`), so the fund runs end-to-end on
-supplied/recorded data and gets live quotes from any venue. What is missing is
-**historical bars and fundamentals from a live source**. Options:
-  - yfinance — free, no key, gives both; pulls pandas+numpy (~100MB) and is an
-    unofficial Yahoo scraper that breaks periodically.
-  - Robinhood MCP — already connected, but its data surface is unverified
-    (blocker #1) and may not expose fundamentals at all.
-  - A paid API — evaluated 2026-09-12. **Recommended: Massive**, free tier
-    (EOD bars, 5 req/min) + $29/mo fundamentals add-on, composed with Robinhood
-    MCP for real-time quotes. Unusual Whales was rejected: it has NO historical
-    OHLCV bars, which breaks ATR, the exit plan, and every gate downstream —
-    and $125/mo is ~6% of a sub-$25k account annually.
-Altman/Piotroski need fundamentals; without them those screens stay
-NOT AVAILABLE and the Analyst seat is flying on less.
-
 
 ### The fitted shrink is not fed back automatically
 `fit_confidence_shrink` returns a number; `ThesisPipeline` still uses the
@@ -156,6 +120,11 @@ literal; with it empty, `attach_live_feeds` subscribes to zero tokens.
 ### HTTP/2 keepalive on the CLOB client
 Each `post_order` opens a new HTTPS connection; persistent connection would cut
 ~30% off a 50–150 ms RTT.
+
+### Robinhood balance cannot reach the dashboard process
+The header shows `RH n/a` because MCP is session-bound. Resolving blocker #3
+(daemon auth) fixes this for free. Until then the pill stays honest rather
+than showing a cached number the user might size against.
 
 ### Dashboard token auth
 Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
@@ -222,5 +191,9 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Dashboard wiring for the fund engine | `8f1a281` |
 | Fund config + entrypoint wiring + stale-thesis policy | `116b73c` |
 | Seat scoring + confidence calibration | `b48bf6e` |
-| Stops were never enforced after entry | this commit |
-| Nothing resolved theses (scorecard always empty) | this commit |
+| Stops were never enforced after entry | `66da561` |
+| Nothing resolved theses (scorecard always empty) | `66da561` |
+| Robinhood + Massive MCP enumerated; data architecture verified | `decc705` |
+| Polymarket US venue adapter (API-key auth, no funder address) | `9823f1a` |
+| Polymarket parsers corrected against live API | `2c94471` |
+| Dashboard header balance pills | `769725c` |
