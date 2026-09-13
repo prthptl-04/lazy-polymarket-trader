@@ -218,7 +218,7 @@
    already carries the contrast on its own, so a browser that refuses the
    animation loses shine, not legibility.
    --------------------------------------------------------------------------- */
-@keyframes gold-sweep { from { background-position: -220% 0; } to { background-position: 220% 0; } }
+@keyframes sweep { from { background-position: -220% 0; } to { background-position: 220% 0; } }
 
 /* A translucent sweep over the button's own gradient washed it olive, because
    background-image REPLACES rather than overlays. Under Gold the control is
@@ -228,7 +228,7 @@
   background-image: linear-gradient(105deg,
     #B8860B 0%, #D4AF37 36%, #FFF3B0 50%, #D4AF37 64%, #B8860B 100%);
   background-size: 220% 100%;
-  animation: gold-sweep 3.6s linear infinite;
+  animation: sweep 3.6s linear infinite;
 }
 :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-text {
   background-image: linear-gradient(100deg,
@@ -236,7 +236,7 @@
   background-size: 220% 100%;
   -webkit-background-clip: text; background-clip: text;
   color: transparent;
-  animation: gold-sweep 4.4s linear infinite;
+  animation: sweep 4.4s linear infinite;
 }
 :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-edge { border-color: var(--rh-gold) !important; }
 :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-glow { box-shadow: 0 0 14px rgb(255 215 0 / 0.45); }
@@ -308,6 +308,7 @@
   background: var(--pm-canvas, #0d1b2a);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --pm-canvas: #0d1b2a; --pm-surface: rgba(74,101,114,0.22); --pm-surface-rgb: 74 101 114;
+  --pm-surface-solid: #1a2b3a;
   --pm-border: rgba(74,101,114,0.45); --pm-heading: #F5F5F5; --pm-muted: #E0E0E0;
   --pm-accent: #2d52f3; --pm-accent-edge: #4f74ff;
 }
@@ -335,7 +336,7 @@
   background-image: linear-gradient(105deg, #B8860B 0%, #D4AF37 36%, #FFF3B0 50%,
                                     #D4AF37 64%, #B8860B 100%) !important;
   background-size: 220% 100%;
-  animation: gold-sweep 3.6s linear infinite;
+  animation: sweep 3.6s linear infinite;
   border-color: var(--rh-gold) !important;
   color: #0a0a0a !important;
 }
@@ -398,7 +399,7 @@
    gradient fills the border box, and only the gradient's position animates.
    That is what lets an existing panel grow a frame without new markup.
    --------------------------------------------------------------------------- */
-@keyframes gold-frame {
+@keyframes frame-sweep {
   from { background-position: 0 0, -220% 0; }
   to   { background-position: 0 0, 220% 0; }
 }
@@ -416,7 +417,7 @@
   background-origin: border-box;
   background-clip: padding-box, border-box;
   background-size: auto, 220% 100%;
-  animation: gold-frame 7s linear infinite;
+  animation: frame-sweep 7s linear infinite;
 }
 
 /* The sticky header is chrome, not a section. A frame there would box in the
@@ -433,4 +434,68 @@
 @media (prefers-reduced-motion: reduce) {
   :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .bg-glass-white,
   [data-venue-skin="robinhood"] { animation: none; background-position: 0 0, 50% 0; }
+}
+
+/* ---------------------------------------------------------------------------
+   Polymarket: the same frame, in dark green.
+
+   Same mechanism as Robinhood's gold — two background layers, only the
+   gradient's position moving — but the fill layer keeps the translucent slate
+   rather than going solid, because Polymarket's panels are glass and painting
+   them opaque would flatten the thing that makes the theme its own.
+   --------------------------------------------------------------------------- */
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .bg-glass-white,
+[data-venue-skin="polymarket"] {
+  border: 1px solid transparent !important;
+  /* The fill layer must be OPAQUE. The border layer is painted underneath it,
+     so a translucent slate here does not frame the panel — it tints the whole
+     of it green. --pm-surface-solid is that slate already composited over the
+     canvas, which on this theme's flat ground is the same colour to the eye. */
+  background-image:
+    linear-gradient(var(--pm-surface-solid), var(--pm-surface-solid)),
+    linear-gradient(105deg,
+      #15803d 0%, #22a35a 34%, #BBF7D0 50%, #22a35a 66%, #15803d 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: auto, 220% 100%;
+  animation: frame-sweep 7s linear infinite;
+}
+/* The skin container on the Overview has the canvas as its fill, not a panel
+   surface — it IS the ground rather than a card sitting on it. */
+[data-venue-skin="polymarket"] {
+  background-image:
+    linear-gradient(var(--pm-canvas), var(--pm-canvas)),
+    linear-gradient(105deg,
+      #15803d 0%, #22a35a 34%, #BBF7D0 50%, #22a35a 66%, #15803d 100%);
+}
+[data-venue-theme="polymarket"] header .bg-glass-white,
+[data-venue-theme="polymarket"] header .glass-plain {
+  background-image: none !important;
+  animation: none !important;
+}
+
+/* The headline figure, struck from each venue's metal. */
+.figure-metal {
+  background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: sweep 4.4s linear infinite;
+}
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .figure-metal {
+  background-image: linear-gradient(100deg,
+    #B8860B 0%, #D4AF37 34%, #FFF6C2 50%, #D4AF37 66%, #B8860B 100%);
+}
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .figure-metal {
+  background-image: linear-gradient(100deg,
+    #15803d 0%, #22a35a 34%, #BBF7D0 50%, #22a35a 66%, #15803d 100%);
+}
+/* Outside a venue theme it is an ordinary number, not a transparent one. */
+.figure-metal:not(:is([data-venue-theme] *, [data-venue-skin] *)) {
+  background-image: none; color: inherit; animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .bg-glass-white,
+  [data-venue-skin="polymarket"],
+  .figure-metal { animation: none; background-position: 0 0, 50% 0; }
 }

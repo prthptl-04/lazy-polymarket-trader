@@ -7,7 +7,7 @@
  */
 import { strict as assert } from "node:assert";
 import { contrastRatio, type Rgb } from "../src/lib/useDynamicBackground.ts";
-import { ACCENT, ACCENT_EDGE, HEADING, MUTED, PALETTES } from "../src/lib/polymarketTheme.ts";
+import { ACCENT, ACCENT_EDGE, GREEN_DEEP, GREEN_LIGHT, GREEN_MID, HEADING, MUTED, PALETTES } from "../src/lib/polymarketTheme.ts";
 import { RH_BLACK, RH_CHAMPAGNE, RH_GOLD, RH_GOLD_DEEP, RH_HAIRLINE, RH_WHITE } from "../src/lib/robinhoodTheme.ts";
 
 const hex = (h: string): Rgb => ({
@@ -60,6 +60,24 @@ for (const [name, p] of Object.entries(PALETTES)) {
     `${name.padEnd(9)} canvas ${p.canvas}  surface→rgb(${surface.r},${surface.g},${surface.b})  ` +
     `heading ${contrastRatio(hex(HEADING), surface).toFixed(2)}:1  ` +
     `muted ${contrastRatio(hex(MUTED), surface).toFixed(2)}:1  edge ${edge.toFixed(2)}:1`);
+}
+
+// ---- the frame ramp, against the ground it is drawn on ----
+{
+  const canvas = hex(PALETTES.midnight.canvas);
+  for (const [name, stop] of Object.entries({
+    deep: GREEN_DEEP, mid: GREEN_MID, light: GREEN_LIGHT,
+  })) {
+    const c = contrastRatio(hex(stop), canvas);
+    // 3:1 is the floor for a control boundary and for large text, which is
+    // exactly what this ramp paints: the panel frame and the headline figure.
+    assert.ok(c >= UI_COMPONENT,
+      `polymarket frame ${name} ${stop} is ${c.toFixed(2)}:1 on the canvas`);
+  }
+  console.log(
+    `pm frame   deep ${contrastRatio(hex(GREEN_DEEP), canvas).toFixed(2)}:1  ` +
+    `mid ${contrastRatio(hex(GREEN_MID), canvas).toFixed(2)}:1  ` +
+    `light ${contrastRatio(hex(GREEN_LIGHT), canvas).toFixed(2)}:1`);
 }
 
 // ---- Robinhood Gold: pitch black, metallic accents ----

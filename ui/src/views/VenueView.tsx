@@ -170,7 +170,7 @@ export function VenueView({ venue }: { venue: Venue }) {
               <div>
                 <div className="text-[12px] text-white/55">{title} account</div>
                 {wallet?.available ? (
-                  <div className="venue-figure gold-text text-5xl font-light tracking-tighter font-mono mt-1">
+                  <div className="venue-figure figure-metal text-5xl font-light tracking-tighter font-mono mt-1">
                     {money(wallet.equity_usd)}
                   </div>
                 ) : (

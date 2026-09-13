@@ -323,7 +323,7 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
       {/* One size for both. Robinhood's 80px ticker is right on a page that is
           nothing but that number; in a two-up panel it just shouted over the
           other venue. */}
-      <div className="font-mono text-3xl font-light tracking-tighter text-white/90 mb-1">
+      <div className="figure-metal font-mono text-3xl font-light tracking-tighter mb-1">
         {money(shown.invested)}
       </div>
 
