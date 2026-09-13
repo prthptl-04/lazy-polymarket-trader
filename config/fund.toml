@@ -47,7 +47,9 @@ equity = []
 
 # Traded nights, weekends and market holidays. Exempt from the PDT rule, which
 # is why the weekend rotation exists.
-crypto = ["BTC", "ETH"]
+# Set FUND_CRYPTO_WATCHLIST in .env instead — a tracked file must not
+# decide what a fresh clone trades.
+crypto = []
 
 [data]
 # none   — no price history; every candidate is pre-screened out. Safe default.
