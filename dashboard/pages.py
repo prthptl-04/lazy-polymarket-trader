@@ -43,9 +43,10 @@ _OVERVIEW_BODY = """
 
 _OVERVIEW_JS = """
 async function refresh(){
-  const [rec,pnl,bal,agents,fund,audit,pos] = await Promise.all([
+  const [rec,pnl,bal,agents,fund,audit,pos,vs] = await Promise.all([
     j('/api/record'), j('/api/pnl'), j('/api/balances'), j('/api/agents'),
-    j('/api/fund'), j('/api/audit?limit=12'), j('/api/positions')]);
+    j('/api/fund'), j('/api/audit?limit=12'), j('/api/positions'), j('/api/venue-sessions')]);
+  if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
 
   if(pnl){ $('equity').textContent = money(pnl.equity_usd);
     $('equity-sub').textContent = 'started at '+money(pnl.starting_bankroll_usd); }
@@ -133,8 +134,9 @@ _POSITIONS_BODY = """
 
 _POSITIONS_JS = """
 async function refresh(){
-  const [pos,fund,bal,rec] = await Promise.all([
-    j('/api/positions'), j('/api/fund'), j('/api/balances'), j('/api/record')]);
+  const [pos,fund,bal,rec,vs] = await Promise.all([
+    j('/api/positions'), j('/api/fund'), j('/api/balances'), j('/api/record'), j('/api/venue-sessions')]);
+  if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
   if(bal) renderBalances(bal);
   if(fund) renderState(fund.attached?fund:{state:'stopped'});
 
@@ -203,13 +205,16 @@ _VENUES_BODY = """
 
 _VENUES_JS = """
 async function refresh(){
-  const [bal,fund,score] = await Promise.all([
-    j('/api/balances'), j('/api/fund'), j('/api/scorecard')]);
+  const [bal,fund,score,vs] = await Promise.all([
+    j('/api/balances'), j('/api/fund'), j('/api/scorecard'), j('/api/venue-sessions')]);
+  if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
   if(bal) renderBalances(bal);
   if(fund) renderState(fund.attached?fund:{state:'stopped'});
 
   if(bal){
-    $('venues').innerHTML = Object.entries(bal).map(([k,v])=>{
+    const sess = (vs && vs.sessions) || {};
+    const changed = paint('venues', Object.entries(bal).map(([k,v])=>{
+      const on = sess[k] !== false;
       const nm = k==='polymarket_us'?'Polymarket US':(k==='robinhood'?'Robinhood':k);
       return '<div class="panel" id="'+k+'" style="background:var(--panel-2)">'
         +'<h2>'+nm+'</h2>'
@@ -217,8 +222,13 @@ async function refresh(){
           ? '<div class="stat">'+money(v.cash_usd)+'</div><div class="sub">cash \\u00b7 equity '
             +money(v.equity_usd)+'</div>'
           : '<div class="na" style="color:var(--dim)">'+(v.reason||'unavailable')+'</div>')
+        +'<div style="margin-top:12px;display:flex;align-items:center;gap:10px">'
+          +'<span class="sub">trading</span>'+venueSwitch(k, nm, on)+'</div>'
+        +(on ? '' : '<div class="warn">Switched OFF &mdash; no new positions here. '
+            +'Exits still allowed so nothing gets trapped.</div>')
         +'</div>';
-    }).join('');
+    }).join(''));
+    if(changed) wireVenueSwitches(refresh);
   }
 
   if(fund && fund.attached){

@@ -108,6 +108,20 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
         repo_root = Path(__file__).resolve().parent.parent
         return JSONResponse(content=_json.loads(to_cytoscape_json(build_graph(repo_root))))
 
+    @app.get("/api/venue-sessions")
+    def api_venue_sessions() -> dict:
+        return {"sessions": runtime.venue_sessions()}
+
+    @app.post("/api/venue-sessions/{name}/{action}")
+    def api_set_venue_session(name: str, action: str) -> Any:
+        if action not in ("start", "stop"):
+            return JSONResponse(status_code=400,
+                                content={"error": "action must be start or stop"})
+        result = runtime.set_venue_session(name, action == "start")
+        if not result.get("ok"):
+            return JSONResponse(status_code=404, content=result)
+        return result
+
     @app.get("/api/record")
     def api_record() -> dict:
         return runtime.record()

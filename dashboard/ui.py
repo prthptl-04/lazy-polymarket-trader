@@ -90,6 +90,17 @@ td.num,th.num{text-align:right;font-family:var(--mono)}
 .thread .who{font-weight:600;font-size:13px}
 .thread .msg{color:var(--muted);font-size:13px;margin-top:3px;white-space:pre-wrap}
 .warn{color:var(--amber);font-size:12px;margin-top:8px}
+.sw{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.sw input{display:none}
+.sw .track{width:40px;height:22px;border-radius:999px;background:#2a3444;
+  border:1px solid var(--border);position:relative;transition:background .18s}
+.sw .knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:var(--dim);transition:transform .18s,background .18s}
+.sw input:checked + .track{background:rgba(38,217,127,.22);border-color:var(--green)}
+.sw input:checked + .track .knob{transform:translateX(18px);background:var(--green)}
+.sw .lbl{font-size:12px;color:var(--muted);min-width:34px}
+.sw input:checked ~ .lbl{color:var(--green)}
+.sw.busy{opacity:.5;pointer-events:none}
 """
 
 _NAV = """
@@ -102,6 +113,7 @@ _NAV = """
     <a href="/venues" class="{on_v}">Venues</a>
   </nav>
   <div class="right">
+    <span id="venue-switches" style="display:flex;gap:8px"></span>
     <span id="bal-polymarket" class="pill">PM &mdash;</span>
     <span id="bal-robinhood" class="pill">RH &mdash;</span>
     <span id="state-pill" class="pill">stopped</span>
@@ -126,6 +138,15 @@ const signed = v => (v==null?'--':(v>0?'+':'')+money(v).replace('$-','-$'));
 const cls = v => v==null?'flat':(v>0?'up':(v<0?'down':'flat'));
 async function j(u){ try{ const r = await fetch(u); return r.ok ? await r.json() : null; }catch(e){ return null; } }
 
+// A 5s refresh that rewrites innerHTML unconditionally detaches whatever the
+// user is mid-click on. Only rewrite when the markup actually changed.
+const _sig = {};
+function paint(id, html){
+  const el = $(id); if(!el) return false;
+  if(_sig[id] === html) return false;
+  _sig[id] = html; el.innerHTML = html; return true;
+}
+
 function renderBalances(b){
   const set=(el,label,v)=>{
     const n=$(el); if(!n) return;
@@ -145,6 +166,35 @@ function renderState(s){
   const run = st==='running'||st==='starting';
   if($('go-btn')) $('go-btn').disabled=run;
   if($('stop-btn')) $('stop-btn').disabled=!run;
+}
+function venueSwitch(name, label, on){
+  return '<label class="sw" data-venue="'+name+'">'
+    +'<input type="checkbox" '+(on?'checked':'')+'>'
+    +'<span class="track"><span class="knob"></span></span>'
+    +'<span class="lbl">'+(on?'ON':'OFF')+'</span></label>';
+}
+function wireVenueSwitches(refresh){
+  document.querySelectorAll('.sw[data-venue]').forEach(el=>{
+    const box = el.querySelector('input');
+    box.onchange = async () => {
+      const name = el.dataset.venue, action = box.checked ? 'start' : 'stop';
+      el.classList.add('busy');
+      const r = await fetch('/api/venue-sessions/'+name+'/'+action, {method:'POST'});
+      el.classList.remove('busy');
+      if(!r.ok){ box.checked = !box.checked; alert('could not switch '+name); }
+      el.querySelector('.lbl').textContent = box.checked?'ON':'OFF';
+      refresh();
+    };
+  });
+}
+function renderVenuePills(sessions){
+  const host = $('venue-switches'); if(!host || !sessions) return false;
+  const nice = n => n==='polymarket_us'?'Polymarket':(n==='robinhood'?'Robinhood':n);
+  const html = Object.entries(sessions).map(([n,on])=>
+    '<span class="pill" style="display:inline-flex;gap:8px;align-items:center">'
+    + nice(n) + venueSwitch(n, nice(n), on) + '</span>').join('');
+  if(_sig['venue-switches'] === html) return false;
+  _sig['venue-switches'] = html; host.innerHTML = html; return true;
 }
 function wireControls(refresh){
   const go=$('go-btn'), st=$('stop-btn');

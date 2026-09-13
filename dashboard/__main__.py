@@ -62,6 +62,9 @@ def main() -> None:
         runtime.position_book = runtime.fund_scheduler.position_book
         runtime.data_provider = runtime.fund_scheduler.fund.data
 
+    # An operator who switched a venue off must not find it back on.
+    runtime.restore_venue_sessions()
+
     app = create_app(runtime)
     uvicorn.run(app, host=host, port=port, log_level="info")
 

@@ -168,6 +168,53 @@ class DashboardRuntime:
 
     # ---------- overview ----------
 
+    # ---------- venue sessions ----------
+
+    SESSION_KEY = "venue_sessions"
+
+    def venue_sessions(self) -> dict[str, bool]:
+        """Which venues are currently allowed to OPEN positions."""
+        router = self._router()
+        if router is None:
+            return {name: True for name in self.venues}
+        names = {a.name for a in router.adapters} | set(self.venues)
+        return {n: router.is_enabled(n) for n in sorted(names)}
+
+    def set_venue_session(self, name: str, on: bool) -> dict:
+        """Toggle one venue. Persisted, so a restart keeps the operator's intent
+        rather than quietly re-enabling something they switched off."""
+        router = self._router()
+        if router is None:
+            return {"ok": False, "reason": "no router attached", "sessions": {}}
+        known = {a.name for a in router.adapters}
+        if name not in known:
+            return {"ok": False, "reason": f"unknown venue {name!r}",
+                    "sessions": self.venue_sessions()}
+        router.set_enabled(name, on)
+        try:
+            self.memory.put("dashboard", self.SESSION_KEY, router.enabled)
+            self.memory.record_audit_event(
+                "user", "venue_session_on" if on else "venue_session_off", name,
+            )
+        except Exception:
+            pass
+        return {"ok": True, "sessions": self.venue_sessions()}
+
+    def restore_venue_sessions(self) -> None:
+        router = self._router()
+        if router is None:
+            return
+        try:
+            saved = self.memory.get("dashboard", self.SESSION_KEY, {}) or {}
+        except Exception:
+            return
+        for name, on in saved.items():
+            router.set_enabled(name, bool(on))
+
+    def _router(self):
+        sched = self.fund_scheduler
+        return getattr(getattr(sched, "fund", None), "router", None) if sched else None
+
     def record(self) -> dict:
         """Wins, losses and the equity curve — the 'am I making money' view.
 
