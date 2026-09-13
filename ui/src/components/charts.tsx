@@ -72,8 +72,8 @@ export function EquityArea({
       <AreaChart data={data} margin={{ top: 12, right: 10, bottom: 0, left: -18 }}>
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={colour} stopOpacity={0.42} />
-            <stop offset="100%" stopColor={colour} stopOpacity={0.02} />
+            <stop offset="0%" stopColor={colour} stopOpacity={0.4} />
+            <stop offset="100%" stopColor={colour} stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />

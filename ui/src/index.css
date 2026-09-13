@@ -74,3 +74,55 @@
 [data-surface="light"] [class*="text-hood-green"] { color: rgb(10 125 20); }
 [data-surface="light"] [class*="text-red-400"]    { color: rgb(200 30 30); }
 [data-surface="light"] [class*="text-amber-400"]  { color: rgb(138 82 6); }
+
+/* ---------------------------------------------------------------------------
+   Polymarket dark mode. Mounted by usePolymarketTheme() while the Polymarket
+   tab is open; the attribute is removed on unmount so the other views keep the
+   house palette.
+
+   Typography maps onto the existing white-alpha tokens: the strong buckets
+   become the off-white heading colour, everything below it the muted gray.
+   Alphas stay high because #E0E0E0 at 25% over a slate card is decoration,
+   not text — scripts/polymarketTheme.check.ts holds the floor at 4.5:1.
+   --------------------------------------------------------------------------- */
+[data-venue-theme="polymarket"] body { background: var(--pm-canvas) !important; }
+
+[data-venue-theme="polymarket"] .bg-glass-white { background-color: var(--pm-surface); }
+[data-venue-theme="polymarket"] .border-glass-border,
+[data-venue-theme="polymarket"] [class*="border-white/"] { border-color: var(--pm-border); }
+[data-venue-theme="polymarket"] [class*="bg-white/"] {
+  background-color: rgb(var(--pm-surface-rgb) / 0.16);
+}
+/* Depth from surface luminance, not from a drop shadow. */
+[data-venue-theme="polymarket"] .shadow-glass,
+[data-venue-theme="polymarket"] .bg-glass-white {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06) !important;
+}
+
+[data-venue-theme="polymarket"] .text-white,
+[data-venue-theme="polymarket"] [class*="text-white/9"],
+[data-venue-theme="polymarket"] [class*="text-white/8"] { color: var(--pm-heading); }
+[data-venue-theme="polymarket"] [class*="text-white/7"],
+[data-venue-theme="polymarket"] [class*="text-white/6"],
+[data-venue-theme="polymarket"] [class*="text-white/5"] { color: var(--pm-muted); }
+[data-venue-theme="polymarket"] [class*="text-white/4"],
+[data-venue-theme="polymarket"] [class*="text-white/3"],
+[data-venue-theme="polymarket"] [class*="text-white/2"] {
+  color: rgb(224 224 224 / 0.72);
+}
+
+/* Accent controls: soft radius, a perceivable edge, a hover that fills rather
+   than jumps. The edge is a lighter blue because #2d52f3 on the slate card is
+   2.6:1 — under the 3:1 floor for a control's boundary. */
+.pm-action {
+  border-radius: 14px;
+  border: 1px solid var(--pm-accent-edge, #4f74ff);
+  background-color: rgb(45 82 243 / 0.14);
+  color: var(--pm-heading, #F5F5F5);
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+.pm-action:hover { background-color: rgb(45 82 243 / 0.30); transform: translateY(-1px); }
+.pm-action:active { transform: translateY(0); }
+.pm-action[data-selected="true"] { background-color: var(--pm-accent, #2d52f3); }
+.pm-action:focus-visible { outline: 2px solid var(--pm-accent-edge, #4f74ff); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .pm-action { transition: none; } .pm-action:hover { transform: none; } }

@@ -1,10 +1,12 @@
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { AgentDialogue } from "../components/AgentDialogue";
 import { LiveFeed } from "../components/LiveFeed";
+import { MarketStance } from "../components/MarketStance";
 import { RoundTableFeed } from "../components/RoundTableFeed";
 import { TradeHistory } from "../components/TradeHistory";
 import { EquityArea, Sparkline, type Marker } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
+import { usePolymarketTheme } from "../lib/polymarketTheme";
 import {
   post, usePoll, type Balances, type FundStatus, type PaperProgress,
   type Position, type Record_,
@@ -26,6 +28,8 @@ type Venue = "polymarket_us" | "robinhood";
  */
 export function VenueView({ venue }: { venue: Venue }) {
   const poly = venue === "polymarket_us";
+  // Repaints the document while this tab is open; restored on unmount.
+  usePolymarketTheme(poly);
   const colour = poly ? "#2d52f3" : "#00c805";
   const title = poly ? "Polymarket" : "Robinhood";
 
@@ -173,6 +177,8 @@ export function VenueView({ venue }: { venue: Venue }) {
             </span>
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
+
+          {poly && <MarketStance />}
 
           <GlassCard className="p-5" inert>
             <PanelTitle right={<Pill tone="warn">simulated</Pill>}>
