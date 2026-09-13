@@ -113,6 +113,7 @@ _NAV = """
     <a href="/venues" class="{on_v}">Venues</a>
   </nav>
   <div class="right">
+    <span id="llm-pill" class="pill" title="model provider">model &mdash;</span>
     <span id="venue-switches" style="display:flex;gap:8px"></span>
     <span id="bal-polymarket" class="pill">PM &mdash;</span>
     <span id="bal-robinhood" class="pill">RH &mdash;</span>
@@ -195,6 +196,24 @@ function renderVenuePills(sessions){
     + nice(n) + venueSwitch(n, nice(n), on) + '</span>').join('');
   if(_sig['venue-switches'] === html) return false;
   _sig['venue-switches'] = html; host.innerHTML = html; return true;
+}
+function renderLlm(s){
+  const el = $('llm-pill'); if(!el) return;
+  if(!s || !s.attached){ el.textContent = 'model n/a'; el.style.color='var(--dim)';
+    el.title='no fund attached'; return; }
+  const used = s.limits && s.limits.percent_used;
+  const onGemini = s.active_provider === 'gemini';
+  el.textContent = (onGemini ? 'GEMINI ' : 'CLAUDE ') + s.active_model
+    + (used != null && !onGemini ? '  ' + used.toFixed(0) + '%' : '');
+  // Amber while on the fallback: the fund still works, but a different model
+  // is forming the opinions and the scorecard should not be read as one series.
+  el.style.color = onGemini ? 'var(--amber)'
+    : (used != null && used >= s.failover_threshold_pct ? 'var(--amber)' : 'var(--green)');
+  el.style.borderColor = el.style.color;
+  const reset = s.limits && s.limits.seconds_to_reset;
+  el.title = s.reason + (reset ? '  \u00b7 resets in ' + Math.max(0, reset) + 's' : '')
+    + (s.calls ? '  \u00b7 calls: claude ' + (s.calls.anthropic||0)
+        + ', gemini ' + (s.calls.gemini||0) : '');
 }
 function wireControls(refresh){
   const go=$('go-btn'), st=$('stop-btn');

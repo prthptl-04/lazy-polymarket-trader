@@ -22,6 +22,8 @@ import logging
 import os
 from typing import Any, Optional
 
+from cache.gemini_backend import GeminiBackend
+from cache.llm_router import LlmRouter
 from roundtable.engine import RoundTable
 from roundtable.postmortem import Postmortem
 from trading.fund import FundLoop
@@ -91,6 +93,13 @@ def build_fund(
         logger.info("fund not attached: no Anthropic client (ANTHROPIC_API_KEY unset)")
         return None
 
+    # Gemini failover. Absent config it reports unavailable and the router
+    # simply never routes to it.
+    gemini = GeminiBackend()
+    router = LlmRouter(client=client, gemini=gemini)
+    if not gemini.available:
+        logger.info("Gemini failover not configured (no GEMINI_API_KEY, no CLI)")
+
     trading_venue = venue or PaperVenue(
         name="paper",
         starting_cash_usd=cfg.bankroll_usd,
@@ -117,7 +126,7 @@ def build_fund(
         router=router,
         position_book=position_book,
         pipeline=pipeline,
-        round_table=RoundTable(client=client, memory=memory),
+        round_table=RoundTable(client=client, router=router, memory=memory),
         data=build_data_provider(cfg, trading_venue),
         equity_watchlist=cfg.equity_watchlist,
         crypto_watchlist=cfg.crypto_watchlist,
@@ -137,6 +146,7 @@ def build_fund(
     )
     # Exposed so the dashboard can show open positions and their live stops.
     scheduler.position_book = position_book
+    scheduler.llm_router = router
     return scheduler
 
 

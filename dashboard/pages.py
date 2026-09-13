@@ -48,10 +48,11 @@ _OVERVIEW_BODY = """
 
 _OVERVIEW_JS = """
 async function refresh(){
-  const [rec,pnl,bal,agents,fund,audit,pos,vs,lessons] = await Promise.all([
+  const [rec,pnl,bal,agents,fund,audit,pos,vs,lessons,llm] = await Promise.all([
     j('/api/record'), j('/api/pnl'), j('/api/balances'), j('/api/agents'),
     j('/api/fund'), j('/api/audit?limit=12'), j('/api/positions'), j('/api/venue-sessions'),
-    j('/api/lessons?limit=8')]);
+    j('/api/lessons?limit=8'), j('/api/llm')]);
+  renderLlm(llm);
   if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
 
   if(pnl){ $('equity').textContent = money(pnl.equity_usd);
@@ -153,9 +154,10 @@ _POSITIONS_BODY = """
 
 _POSITIONS_JS = """
 async function refresh(){
-  const [pos,fund,bal,rec,vs] = await Promise.all([
-    j('/api/positions'), j('/api/fund'), j('/api/balances'), j('/api/record'), j('/api/venue-sessions')]);
+  const [pos,fund,bal,rec,vs,llm] = await Promise.all([
+    j('/api/positions'), j('/api/fund'), j('/api/balances'), j('/api/record'), j('/api/venue-sessions'), j('/api/llm')]);
   if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
+  renderLlm(llm);
   if(bal) renderBalances(bal);
   if(fund) renderState(fund.attached?fund:{state:'stopped'});
 
@@ -224,9 +226,10 @@ _VENUES_BODY = """
 
 _VENUES_JS = """
 async function refresh(){
-  const [bal,fund,score,vs] = await Promise.all([
-    j('/api/balances'), j('/api/fund'), j('/api/scorecard'), j('/api/venue-sessions')]);
+  const [bal,fund,score,vs,llm] = await Promise.all([
+    j('/api/balances'), j('/api/fund'), j('/api/scorecard'), j('/api/venue-sessions'), j('/api/llm')]);
   if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
+  renderLlm(llm);
   if(bal) renderBalances(bal);
   if(fund) renderState(fund.attached?fund:{state:'stopped'});
 

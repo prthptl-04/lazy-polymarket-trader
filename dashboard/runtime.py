@@ -265,6 +265,13 @@ class DashboardRuntime:
             })
         return out[:limit]
 
+    def llm_status(self) -> dict:
+        """Which model is answering, and how much Anthropic headroom is left."""
+        router = getattr(self.fund_scheduler, "llm_router", None)
+        if router is None:
+            return {"attached": False}
+        return {"attached": True, **router.status()}
+
     def agents(self) -> list[dict]:
         """The roster, for the UI's hover cards."""
         from roundtable.seats import ALL_SEATS

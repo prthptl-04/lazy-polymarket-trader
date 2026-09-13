@@ -130,6 +130,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_lessons(limit: int = 20) -> list[dict]:
         return runtime.lessons(limit=max(1, min(100, limit)))
 
+    @app.get("/api/llm")
+    def api_llm() -> dict:
+        return runtime.llm_status()
+
     @app.get("/api/agents")
     def api_agents() -> list[dict]:
         return runtime.agents()

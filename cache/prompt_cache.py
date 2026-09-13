@@ -1,6 +1,6 @@
 from typing import Any
 
-DEFAULT_MODEL = "claude-opus-4-7"
+DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_SONNET_THINKING_BUDGET = 2000
 
 

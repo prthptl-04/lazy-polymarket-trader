@@ -63,12 +63,14 @@ class RoundTable:
     """Runs deliberations. `client` is the Anthropic client; inject a fake in tests."""
 
     client: Any
+    router: Any = None          # cache.llm_router.LlmRouter
     memory: Any = None                       # MemoryStore; optional
     model: Optional[str] = None
     max_tokens: int = DEFAULT_MAX_TOKENS
     seat_timeout_seconds: float = 60.0
     on_opinion: Any = None                   # callback(SeatOpinion) for live UI
     on_thesis: Any = None                    # callback(Thesis) when complete
+    _last_provider: Optional[str] = None
 
     # ---------- public API ----------
 
@@ -223,7 +225,13 @@ class RoundTable:
     # ---------- plumbing ----------
 
     def _call(self, system: str, content: str, max_tokens: int) -> str:
-        """Synchronous Anthropic call, routed through the mandated cache wrapper."""
+        """One model call, through the mandated cache wrapper (rule #2).
+
+        With a router attached the provider may be Anthropic or Gemini. Seats
+        never learn which: the call is stateless — full system prompt plus the
+        whole evidence block every time — so a mid-deliberation switch loses no
+        context. The provider is recorded for the transcript, not for the seat.
+        """
         kwargs: dict[str, Any] = {
             "system": system,
             "messages": [{"role": "user", "content": content}],
@@ -231,6 +239,10 @@ class RoundTable:
         }
         if self.model:
             kwargs["model"] = self.model
+        if self.router is not None:
+            text, provider = self.router.create(**kwargs)
+            self._last_provider = provider
+            return text
         response = cached_create(self.client, **kwargs)
         return _extract_text(response)
 
