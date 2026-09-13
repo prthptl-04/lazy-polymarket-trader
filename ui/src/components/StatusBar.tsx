@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Pause, Play, Sparkles } from "lucide-react";
-import { post, usePoll, type Balances, type FundStatus, type LlmStatus } from "../lib/api";
+import { post, usePoll, type FundStatus, type LlmStatus } from "../lib/api";
 import { useState } from "react";
 import { Confirm } from "./Confirm";
 import { useDocumentSurface } from "../lib/useDynamicBackground";
@@ -121,7 +121,6 @@ function ExecButton({
 export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey) => void }) {
   const { data: fund, refresh } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: llm } = usePoll<LlmStatus>("/api/llm", 6000);
-  const { data: bal } = usePoll<Balances>("/api/balances", 15000);
 
   const running = fund?.state === "running" || fund?.state === "starting";
   // The master switch. Both directions are confirmed: GO commits the machine to
@@ -211,9 +210,6 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
         </div>
       </div>
 
-      {/* Wallets read from the same balances call the venue pages use. */}
-      <WalletStrip balances={bal} />
-
       <Confirm
         open={ask === "start"}
         title="Start Project धन?"
@@ -243,27 +239,3 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
   );
 }
 
-function WalletStrip({ balances }: { balances: Balances | null }) {
-  if (!balances) return null;
-  const entries = Object.entries(balances);
-  const total = entries.reduce((a, [, v]) => a + (v.available ? v.cash_usd ?? 0 : 0), 0);
-  const nice = (k: string) => (k === "polymarket_us" ? "Polymarket" : k === "robinhood" ? "Robinhood" : k);
-  return (
-    // On a veil rather than on the bare page: these numbers sit outside every
-    // card, and ink at label weight does not clear 4.5:1 against a fully
-    // saturated ground.
-    <div className="flex items-center justify-end gap-5 text-[11px] mt-2 ml-auto w-fit
-                    glass-plain bg-glass-white border border-glass-border rounded-2xl px-4 py-1.5">
-      <span className="text-white/35">Combined</span>
-      <span className="font-mono text-white/80">${total.toFixed(2)}</span>
-      {entries.map(([k, v]) => (
-        <span key={k} className="flex items-center gap-1.5">
-          <span className="text-white/35">{nice(k)}</span>
-          {v.available
-            ? <span className="font-mono text-white/70">${(v.cash_usd ?? 0).toFixed(2)}</span>
-            : <span className="text-white/25 italic" title={v.reason}>n/a</span>}
-        </span>
-      ))}
-    </div>
-  );
-}
