@@ -499,3 +499,16 @@
   [data-venue-skin="polymarket"],
   .figure-metal { animation: none; background-position: 0 0, 50% 0; }
 }
+
+/* The Overview's two columns sit on a near-white card, not on their own dark
+   ground. A 1px frame that separates two panels on black disappears there —
+   the eye reads the panel/page edge, not the colour. So on a SKIN (never on
+   the venue pages, where 1px is right) the frame doubles and gains a halo in
+   its own colour, which is what actually says "this half is Polymarket's". */
+[data-venue-skin] { border-width: 2px !important; }
+[data-venue-skin="polymarket"] {
+  box-shadow: 0 0 0 1px rgb(34 163 90 / 0.28), 0 10px 30px rgb(21 128 61 / 0.22);
+}
+[data-venue-skin="robinhood"] {
+  box-shadow: 0 0 0 1px rgb(255 215 0 / 0.25), 0 10px 30px rgb(184 134 11 / 0.28);
+}
