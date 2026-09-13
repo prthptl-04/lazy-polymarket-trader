@@ -55,18 +55,23 @@ buried. User asked to revisit this explicitly (2026-09-12).
 
 **Do not run live — paper or otherwise — until this is closed.**
 
-### 3. TODO — finish Polymarket signup (user)
-`POLYMARKET_PRIVATE_KEY` is set but `POLYMARKET_FUNDER_ADDRESS` is not, and
-`signature_type=3` requires it — so every signed Polymarket call raises.
-Polymarket is venue #3 and is currently non-functional for anything signed.
+### 3. Polymarket US — adapter built, needs credentials (user)
+Resolved the confusion: **Polymarket US is a different product** from the
+on-chain CLOB in `trading/polymarket_client.py`. It authenticates with an
+ed25519 API key pair, so the user was right — **no funder address needed**.
 
-Also: the key in `.env` is 88 chars. An Ethereum EOA key is 64 hex chars, so
-that is likely a different credential (base64? an API secret?). Verify before
-relying on it.
+`trading/venues/polymarket_us.py` implements `VenueAdapter` over the
+`polymarket-us` SDK (now in pyproject). Read paths (bbo, positions, balances)
+need no creds; order paths refuse without them rather than failing deep in the
+SDK.
 
-To finish: complete Polymarket signup, fund the deposit wallet, put the
-**deposit wallet address** in `POLYMARKET_FUNDER_ADDRESS`, and confirm the
-private key is the 64-hex signer. Not blocking the equity/crypto fund.
+**Needed from the user:** `POLYMARKET_KEY_ID` and `POLYMARKET_SECRET_KEY` in
+`.env`. The existing 88-char `POLYMARKET_PRIVATE_KEY` is very likely the
+SECRET_KEY (88 chars = base64 of a 64-byte ed25519 key, and the SDK pulls in
+pynacl) — but the KEY_ID is missing either way. Confirm and move it.
+
+The old wallet vars stay valid for the CLOB path; they are simply unused by
+this adapter.
 
 ### 4. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
