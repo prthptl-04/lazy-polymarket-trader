@@ -1,6 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Pause, Play, Sparkles } from "lucide-react";
 import { post, usePoll, type Balances, type FundStatus, type LlmStatus } from "../lib/api";
+import { useState } from "react";
+import { Confirm } from "./Confirm";
 import { useDocumentSurface } from "../lib/useDynamicBackground";
 
 export type ViewKey = "overview" | "polymarket" | "robinhood";
@@ -122,6 +124,9 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
 
   const running = fund?.state === "running" || fund?.state === "starting";
+  // The master switch. Both directions are confirmed: GO commits the machine to
+  // trading, STOP takes the whole service down mid-cycle.
+  const [ask, setAsk] = useState<null | "start" | "stop">(null);
   const equitiesOpen = !!fund?.equities_open;
 
   // The spec's mockup hardcodes "GPT-4o & Claude 3.5 Sonnet". The live stack is
@@ -199,15 +204,41 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
               </motion.span>
             </AnimatePresence>
             <ExecButton kind="go" disabled={running || !fund?.attached}
-              onClick={async () => { await post("/api/start"); void refresh(); }} />
+              onClick={() => setAsk("start")} />
             <ExecButton kind="stop" disabled={!running}
-              onClick={async () => { await post("/api/stop"); void refresh(); }} />
+              onClick={() => setAsk("stop")} />
           </div>
         </div>
       </div>
 
       {/* Wallets read from the same balances call the venue pages use. */}
       <WalletStrip balances={bal} />
+
+      <Confirm
+        open={ask === "start"}
+        title="Start Project धन?"
+        confirmLabel="Start"
+        body={<>
+          The fund begins cycling in <b className="text-white/80">paper mode only</b>.
+          Live trading needs two more things you have to switch on yourself: the
+          venue engine, and Go&nbsp;Live in that venue&rsquo;s live section — which
+          the rule-#13 checklist still has to allow.
+        </>}
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => { setAsk(null); await post("/api/start"); void refresh(); }} />
+
+      <Confirm
+        open={ask === "stop"}
+        title="Stop Project धन?"
+        confirmLabel="Stop everything"
+        tone="bad"
+        body={<>
+          Stops the whole service. In-flight cycles are cancelled; orders already
+          resting at a venue are <b className="text-white/80">not</b> cancelled,
+          and open positions stay open.
+        </>}
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => { setAsk(null); await post("/api/stop"); void refresh(); }} />
     </header>
   );
 }

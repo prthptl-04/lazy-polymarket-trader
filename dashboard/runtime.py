@@ -585,6 +585,231 @@ class DashboardRuntime:
             "target": position.plan.target if position else None,
         }
 
+    # ---------- venue engines ----------
+    #
+    # An "engine" is the connection to a venue: authenticated, reachable, and
+    # allowed to open positions. It is the venue session under a name that says
+    # what starting it actually does. Trading mode (paper vs live) is a separate
+    # decision — see venue_modes.
+
+    ENGINE_ADAPTERS = {"robinhood": ("robinhood", "paper"), "polymarket_us": ("polymarket_us",)}
+
+    def engines(self) -> dict[str, dict]:
+        """Per-venue connection state, and why it is not usable if it is not."""
+        router = self._router()
+        adapters = {a.name: a for a in (router.adapters if router else [])}
+        running = getattr(self.fund_scheduler, "state", None) == "running"
+
+        out: dict[str, dict] = {}
+        for venue, candidates in self.ENGINE_ADAPTERS.items():
+            adapter_name = next((c for c in candidates if c in adapters), None)
+            adapter = adapters.get(adapter_name) if adapter_name else None
+            authed, reason = self._venue_auth(venue, adapter)
+            out[venue] = {
+                "adapter": adapter_name,
+                "attached": adapter is not None,
+                "authenticated": authed,
+                "reason": reason,
+                "on": bool(adapter_name and router and router.is_enabled(adapter_name)),
+                # The engine is a no-op while the fund is stopped; saying so is
+                # better than a button that appears to work and changes nothing.
+                "system_running": running,
+            }
+        return out
+
+    def _venue_auth(self, venue: str, adapter: Any) -> tuple[bool, Optional[str]]:
+        if adapter is None:
+            return False, "no adapter registered for this venue"
+        session = getattr(adapter, "session", None)
+        summary = getattr(session, "auth_summary", None)
+        if summary is None:
+            # A paper adapter has nothing to authenticate against, and saying
+            # "authenticated" would overstate it.
+            return True, None if getattr(adapter, "is_live", False) else "paper adapter — nothing to authenticate"
+        try:
+            info = summary() or {}
+        except Exception as e:
+            return False, f"auth check failed: {type(e).__name__}"
+        if info.get("authenticated"):
+            return True, None
+        return False, "not authenticated — run scripts_mcp_auth.py once"
+
+    def set_engine(self, venue: str, on: bool) -> dict:
+        """Start or stop a venue's engine. Refuses while the fund is stopped:
+        an engine that connects to nothing is a light, not a switch."""
+        if venue not in self.ENGINE_ADAPTERS:
+            return {"ok": False, "reason": f"unknown venue {venue!r}", "engines": self.engines()}
+        state = self.engines()[venue]
+        if not state["attached"]:
+            return {"ok": False, "reason": state["reason"], "engines": self.engines()}
+        if on and not state["system_running"]:
+            return {"ok": False, "reason": "Project धन is stopped — start the system first",
+                    "engines": self.engines()}
+        if on and not state["authenticated"]:
+            return {"ok": False, "reason": state["reason"], "engines": self.engines()}
+        result = self.set_venue_session(state["adapter"], on)
+        if not result.get("ok"):
+            return {**result, "engines": self.engines()}
+        return {"ok": True, "engines": self.engines()}
+
+    # ---------- per-seat evaluation matrix ----------
+
+    RECENT_WINDOW = 10
+
+    def agent_matrix(self) -> list[dict]:
+        """Per-seat examination: what they did, where they failed, what it costs
+        them, and what clearing the bar would take.
+
+        Three tenses, from three different sources:
+
+        **Past** — hit rate, Brier and overconfidence over every scored call,
+        from `roundtable.calibration`. Brier rather than accuracy, because being
+        right 55% of the time while claiming 95% is the behaviour that costs
+        money and accuracy cannot see it.
+
+        **Present** — the same score over the last `RECENT_WINDOW` debates
+        against everything before them. That delta is the improvement rate; a
+        seat is not judged on a lifetime average it can no longer influence.
+
+        **Future** — what the next calls have to look like. `required_hit_rate`
+        is the bar, `gap` is the distance to it, and `enforced` says what the
+        fund is ALREADY doing about the seat rather than what someone might do.
+
+        Blame counts come from resolved losses where the seat's own signal
+        matched the consensus. A dissenter is never counted, here or anywhere.
+        """
+        from roundtable.calibration import score_seats
+
+        try:
+            delibs = self.memory.recent_deliberations(limit=500)
+            outcomes = {o["thesis_id"]: o for o in self.memory.resolved_outcomes(limit=500)}
+        except Exception:
+            return []
+
+        overall = {s.seat_id: s for s in score_seats(delibs, outcomes).seats}
+        # recent_deliberations is newest-first, so the head IS the recent window.
+        recent = {s.seat_id: s for s in score_seats(delibs[: self.RECENT_WINDOW], outcomes).seats}
+        prior = {s.seat_id: s for s in score_seats(delibs[self.RECENT_WINDOW :], outcomes).seats}
+
+        blame = self._blame_by_seat()
+        fit = (self.scorecard().get("fit") or {})
+        shrink = fit.get("shrink")
+
+        rows = []
+        for agent in self.agents():
+            sid = agent["id"]
+            o, r, pr = overall.get(sid), recent.get(sid), prior.get(sid)
+            samples = o.samples if o else 0
+            hit = o.hit_rate * 100 if o and o.samples else None
+            recent_hit = r.hit_rate * 100 if r and r.samples else None
+            prior_hit = pr.hit_rate * 100 if pr and pr.samples else None
+            improvement = (
+                round(recent_hit - prior_hit, 1)
+                if recent_hit is not None and prior_hit is not None else None
+            )
+            failure = blame.get(sid, {})
+            rows.append({
+                **agent,
+                "samples": samples,
+                "abstentions": o.abstentions if o else 0,
+                "hit_rate": None if hit is None else round(hit, 1),
+                "brier": round(o.brier, 4) if o and o.samples else None,
+                "mean_confidence": round(o.mean_confidence, 1) if o and o.samples else None,
+                "overconfidence": round(o.overconfidence, 1) if o and o.samples else None,
+                "calibrated": bool(o and o.is_calibrated),
+                "beats_coin_flip": bool(o and o.beats_a_coin_flip),
+                "recent": {"window": self.RECENT_WINDOW, "samples": r.samples if r else 0,
+                           "hit_rate": None if recent_hit is None else round(recent_hit, 1)},
+                "prior": {"samples": pr.samples if pr else 0,
+                          "hit_rate": None if prior_hit is None else round(prior_hit, 1)},
+                "improvement_pts": improvement,
+                "blamed_losses": failure.get("count", 0),
+                "top_failure": failure.get("top"),
+                "failure_note": failure.get("note"),
+                "enforced": self._enforcement_for(o, shrink),
+                "target": self._target_for(o),
+            })
+        return rows
+
+    def _blame_by_seat(self) -> dict[str, dict]:
+        """Losses each seat backed, and the postmortem code that names why."""
+        from collections import Counter
+        counts: dict[str, Counter] = {}
+        totals: dict[str, int] = {}
+        notes: dict[str, str] = {}
+        for row in self.trade_history(limit=100):
+            if row["won"]:
+                continue
+            codes = [a["code"] for a in row.get("actions", []) if a.get("code")]
+            for blamed in row.get("blamed", []):
+                sid = self._seat_id_for(blamed.get("name"))
+                if sid is None:
+                    continue
+                totals[sid] = totals.get(sid, 0) + 1
+                counts.setdefault(sid, Counter()).update(codes)
+                if sid not in notes and row.get("actions"):
+                    notes[sid] = row["actions"][0]["lesson"]
+        out = {}
+        for sid, total in totals.items():
+            common = counts[sid].most_common(1)
+            out[sid] = {
+                "count": total,
+                "top": {"code": common[0][0], "count": common[0][1]} if common else None,
+                "note": notes.get(sid),
+            }
+        return out
+
+    def _seat_id_for(self, name: Optional[str]) -> Optional[str]:
+        if not name:
+            return None
+        for a in self.agents():
+            if a["name"] == name:
+                return a["id"]
+        return None
+
+    def _enforcement_for(self, score, shrink) -> dict:
+        """What the fund ALREADY does to this seat's number.
+
+        Split deliberately: `applied` is machinery that runs today, `flagged` is
+        a recommendation. Printing a recommendation as though it were enforced
+        would make the dashboard describe a fund that does not exist.
+        """
+        from trading.pipeline import CONFIDENCE_SHRINK
+        used = shrink if shrink is not None else CONFIDENCE_SHRINK
+        applied = [
+            f"stated confidence scaled by {used:.2f} before sizing"
+            + (" (fitted)" if shrink is not None else " (pessimistic default — not yet fittable)")
+        ]
+        flagged = []
+        if score and score.samples:
+            if score.overconfidence > 10:
+                flagged.append(
+                    f"overstates by {score.overconfidence:.0f} points — its own shrink should be tighter")
+            elif score.overconfidence < -10:
+                flagged.append(
+                    f"understates by {abs(score.overconfidence):.0f} points — its calls are worth more than it claims")
+            if not score.beats_a_coin_flip:
+                flagged.append(f"Brier {score.brier:.2f} is no better than always saying 50%")
+        if score and score.abstentions and score.samples == 0:
+            flagged.append("has never completed a call — every appearance was an abstention")
+        return {"applied": applied, "flagged": flagged}
+
+    def _target_for(self, score) -> dict:
+        """What the next calls have to look like to clear the bar."""
+        from roundtable.calibration import MIN_SAMPLES_FOR_FIT
+        if score is None or not score.samples:
+            return {"required_hit_rate": 50.0, "gap": None,
+                    "note": f"unscored — {MIN_SAMPLES_FOR_FIT} resolved theses before a fit means anything"}
+        required = 50.0
+        gap = round(required - score.hit_rate * 100, 1)
+        if gap > 0:
+            note = f"needs +{gap:.0f} points of hit rate to beat chance"
+        elif abs(score.overconfidence) > 10:
+            note = "hit rate is fine; the confidence attached to it is not"
+        else:
+            note = "clearing the bar — hold it over more samples"
+        return {"required_hit_rate": required, "gap": gap, "note": note}
+
     def scorecard(self) -> dict:
         from roundtable.calibration import fit_confidence_shrink, score_seats
         try:

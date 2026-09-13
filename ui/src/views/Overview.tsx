@@ -1,9 +1,11 @@
 import { motion } from "framer-motion";
+import { AgentScorecard } from "../components/AgentScorecard";
+import { EngineButton } from "../components/EngineButton";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { EquityArea } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import {
-  usePoll, type Agent, type Balances, type Feed, type FundStatus, type Lesson,
+  usePoll, type Balances, type EngineState, type Feed, type FundStatus, type Lesson,
   type PaperProgress, type Position, type Record_,
 } from "../lib/api";
 import { useDynamicBackground } from "../lib/useDynamicBackground";
@@ -13,7 +15,8 @@ export function Overview() {
   const { data: paper } = usePoll<PaperProgress>("/api/paper");
   const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
-  const { data: agents } = usePoll<Agent[]>("/api/agents", 60000);
+  const { data: engineData, refresh: refreshEngines } =
+    usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 6000);
   const { data: lessons } = usePoll<Lesson[]>("/api/lessons?limit=6", 12000);
 
   const curve = rec?.equity_curve ?? [];
@@ -36,17 +39,21 @@ export function Overview() {
         </PanelTitle>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-2">
               <span className="w-2 h-2 rounded-full bg-poly-blue" />
               <span className="text-[12px] text-white/70">Polymarket</span>
             </div>
+            <EngineButton venue="polymarket_us" label="Polymarket Engine"
+                          state={engineData?.engines?.polymarket_us} onDone={refreshEngines} />
             <EquityArea values={curve} colour="#2d52f3" />
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-2">
               <span className="w-2 h-2 rounded-full bg-hood-green" />
               <span className="text-[12px] text-white/70">Robinhood</span>
             </div>
+            <EngineButton venue="robinhood" label="Robinhood Engine"
+                          state={engineData?.engines?.robinhood} onDone={refreshEngines} />
             <EquityArea values={curve} colour="#00c805" />
           </div>
         </div>
@@ -117,36 +124,7 @@ export function Overview() {
       </GlassCard>
 
       {/* ---------------- agents ---------------- */}
-      <GlassCard className="col-span-full p-5">
-        <PanelTitle right={paper ? <Pill tone={paper.seats_calibrated ? "good" : "neutral"}>
-          {paper.seats_calibrated} of {paper.seats_scored} calibrated
-        </Pill> : undefined}>
-          Agents performance
-        </PanelTitle>
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
-          {(agents ?? []).map((a) => {
-            const s = paper?.seats.find((x) => x.seat_id === a.id);
-            const scored = !!s?.samples;
-            const good = scored && s!.hit_rate >= 0.5;
-            return (
-              <motion.div key={a.id} whileHover={{ y: -2 }}
-                className="rounded-2xl border border-white/[0.08] p-3"
-                style={{ background: !scored ? "rgba(255,255,255,0.03)"
-                  : good ? "linear-gradient(160deg, rgba(0,200,5,0.10), rgba(255,255,255,0.02))"
-                         : "linear-gradient(160deg, rgba(248,113,113,0.10), rgba(255,255,255,0.02))" }}>
-                <div className="text-[15px] leading-none">{a.icon}</div>
-                <div className="text-[11px] text-white/70 mt-1.5 leading-tight">{a.name}</div>
-                <div className={`font-mono text-[14px] mt-1 ${scored ? (good ? "text-hood-green" : "text-red-400") : "text-white/25"}`}>
-                  {scored ? `${(s!.hit_rate * 100).toFixed(0)}%` : "—"}
-                </div>
-                <div className="text-[9px] text-white/30 mt-0.5">
-                  {scored ? `${s!.samples} calls · brier ${s!.brier.toFixed(2)}` : "unscored"}
-                </div>
-              </motion.div>
-            );
-          })}
-        </div>
-      </GlassCard>
+      <AgentScorecard />
 
       {/* ---------------- paper progress ---------------- */}
       <GlassCard className="md:col-span-2 p-5">

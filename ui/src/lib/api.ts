@@ -134,3 +134,23 @@ export interface VenueModes {
   [venue: string]: { paper: ModeState; live: ModeState };
 }
 export interface ModeState { on: boolean; attached: boolean }
+
+export interface EngineState {
+  adapter: string | null; attached: boolean; authenticated: boolean;
+  reason: string | null; on: boolean; system_running: boolean;
+}
+export interface AgentMatrixRow {
+  id: string; name: string; mandate: string; round: number; icon: string;
+  samples: number; abstentions: number;
+  hit_rate: number | null; brier: number | null;
+  mean_confidence: number | null; overconfidence: number | null;
+  calibrated: boolean; beats_coin_flip: boolean;
+  recent: { window: number; samples: number; hit_rate: number | null };
+  prior: { samples: number; hit_rate: number | null };
+  improvement_pts: number | null;
+  blamed_losses: number;
+  top_failure: { code: string; count: number } | null;
+  failure_note: string | null;
+  enforced: { applied: string[]; flagged: string[] };
+  target: { required_hit_rate: number; gap: number | null; note: string };
+}

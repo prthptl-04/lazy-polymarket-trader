@@ -136,6 +136,24 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
             return JSONResponse(status_code=404, content=result)
         return result
 
+    @app.get("/api/engines")
+    def api_engines() -> dict:
+        return {"engines": runtime.engines()}
+
+    @app.post("/api/engines/{venue}/{action}")
+    def api_set_engine(venue: str, action: str) -> Any:
+        if action not in ("start", "stop"):
+            return JSONResponse(status_code=400,
+                                content={"error": "action must be start or stop"})
+        result = runtime.set_engine(venue, action == "start")
+        if not result.get("ok"):
+            return JSONResponse(status_code=409, content=result)
+        return result
+
+    @app.get("/api/agents/matrix")
+    def api_agent_matrix() -> list[dict]:
+        return runtime.agent_matrix()
+
     @app.get("/api/venue-modes")
     def api_venue_modes() -> dict:
         return {"modes": runtime.venue_modes()}

@@ -1,4 +1,6 @@
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Preflight, type Step } from "../components/Preflight";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { AgentDialogue } from "../components/AgentDialogue";
 import { LiveFeed } from "../components/LiveFeed";
@@ -12,7 +14,7 @@ import { AgentRoundTable } from "../components/AgentRoundTable";
 import { usePolymarketTheme } from "../lib/polymarketTheme";
 import { RH_GOLD as GOLD, RH_GOLD_DEEP as GOLD_DEEP, useRobinhoodTheme } from "../lib/robinhoodTheme";
 import {
-  post, usePoll, type Balances, type FundStatus, type ModeState,
+  post, usePoll, type Balances, type EngineState, type FundStatus, type ModeState,
   type PaperProgress, type Position, type Record_, type VenueModes,
 } from "../lib/api";
 
@@ -38,18 +40,17 @@ export function VenueView({ venue }: { venue: Venue }) {
   const colour = poly ? "#2d52f3" : "#00c805";
   const title = poly ? "Polymarket" : "Robinhood";
 
-  const { data: fund, refresh } = usePoll<FundStatus>("/api/fund", 4000);
+  const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
   const { data: rec } = usePoll<Record_>("/api/record");
   const { data: paper } = usePoll<PaperProgress>("/api/paper", 10000);
   const { data: positions } = usePoll<Position[]>("/api/positions");
-  const { data: sessions, refresh: refreshSessions } =
-    usePoll<{ sessions: Record<string, boolean> }>("/api/venue-sessions", 8000);
   const { data: modeData, refresh: refreshModes } =
     usePoll<{ modes: VenueModes }>("/api/venue-modes", 8000);
+  const { data: engineData } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 6000);
+  const engine = engineData?.engines?.[venue];
 
   const wallet = bal?.[venue];
-  const on = sessions?.sessions?.[venue] !== false;
   // Modes are keyed by ADAPTER name. The venue key exists in that map even when
   // no adapter is registered under it — execution currently sits on the shared
   // paper adapter — so the key is chosen by whether an adapter is actually
@@ -61,6 +62,33 @@ export function VenueView({ venue }: { venue: Venue }) {
   const modeKey = wired(venue) ? venue : Object.keys(modes).find(wired) ?? venue;
   const liveMode: ModeState | undefined = modeKey ? modes[modeKey]?.live : undefined;
   const paperMode: ModeState | undefined = modeKey ? modes[modeKey]?.paper : undefined;
+  const [preflight, setPreflight] = useState<null | "paper" | "live">(null);
+  const systemOn = fund?.state === "running" || fund?.state === "starting";
+
+  // The checks the toast walks through. They are READ from live state rather
+  // than assumed, so a step that says "on" means the API said so a moment ago.
+  const steps: Step[] = preflight === "live" ? [
+    { label: "Project धन is running", ok: systemOn,
+      detail: systemOn ? undefined : "start the system from the top-right control" },
+    { label: `${title} engine is connected`, ok: !!engine?.on,
+      detail: engine?.on ? engine.adapter ?? undefined
+                         : engine?.reason ?? "start the engine from the Overview" },
+    { label: "Rule-#13 live gate allows live orders",
+      ok: !!fund?.router_live_gate?.live_possible,
+      detail: fund?.router_live_gate?.live_possible ? undefined
+        : `${fund?.router_live_gate?.graded_paper_trades ?? 0}/${fund?.router_live_gate?.required_paper_trades ?? 50} graded paper trades, and the checklist is not complete` },
+    { label: "Seats begin acting on live data", ok: true,
+      detail: "orders route to the live venue; exits still route to whoever holds the position" },
+  ] : [
+    { label: "Project धन is running", ok: systemOn,
+      detail: systemOn ? undefined : "start the system from the top-right control" },
+    { label: `${title} engine is off`, ok: true, required: false,
+      detail: engine?.on ? "engine is connected — its quotes are real, fills stay simulated"
+                         : "not needed: paper fills are simulated either way" },
+    { label: "Seats begin paper trading", ok: true,
+      detail: "every fill is simulated; the record counts toward the rule-#13 bar" },
+  ];
+
   const setMode = async (mode: "paper" | "live", start: boolean) => {
     if (!modeKey) return;
     await post(`/api/venue-sessions/${modeKey}/${mode}/${start ? "start" : "stop"}`);
@@ -73,6 +101,16 @@ export function VenueView({ venue }: { venue: Venue }) {
 
   return (
     <div className="p-5 space-y-5">
+      <AnimatePresence>
+        {preflight && (
+          <Preflight
+            key={preflight}
+            title={`${title} · ${preflight === "live" ? "going live" : "paper trading"}`}
+            steps={steps}
+            onComplete={() => void setMode(preflight, true)}
+            onDismiss={() => setPreflight(null)} />
+        )}
+      </AnimatePresence>
       {/* ---------- §1 execution, full width above the split ---------- */}
       <GlassCard liquid className="p-5">
         <div className="flex flex-col lg:flex-row lg:items-center gap-5">
@@ -82,8 +120,6 @@ export function VenueView({ venue }: { venue: Venue }) {
               {title} · Execution
             </h1>
           </div>
-
-          <SessionToggle venue={venue} on={on} onDone={refreshSessions} />
 
           {/* Scheduler state and market session read horizontally beside the
               switch — the switch gates THIS venue, the scheduler runs the
@@ -97,23 +133,13 @@ export function VenueView({ venue }: { venue: Venue }) {
             <Readout label="Cycles" value={String(fund?.metrics?.cycles ?? 0)} />
           </div>
 
-          <div className="flex items-center gap-2 lg:ml-auto">
-            <button onClick={async () => { await post("/api/start"); void refresh(); }}
-              className="gold-shimmer px-8 py-2.5 rounded-2xl text-[13px] font-bold tracking-wide
-                         bg-gradient-to-r from-green-400 to-green-600 text-black
-                         hover:brightness-110 transition">
-              GO
-            </button>
-            <button onClick={async () => { await post("/api/stop"); void refresh(); }}
-              className="px-8 py-2.5 rounded-2xl text-[13px] font-bold tracking-wide
-                         bg-gradient-to-r from-red-500 to-red-700 hover:brightness-110 transition">
-              STOP
-            </button>
-          </div>
         </div>
         <div className="text-[11px] text-white/35 mt-3 lg:pl-[242px]">
-          The switch blocks new positions only. Exits pass. It bypasses no gates —
-          the grader and the rule-#13 live gate still run on every order.
+          {title} engine: <b className={engine?.on ? "text-hood-green" : "text-white/50"}>
+            {engine?.on ? "connected" : "off"}</b>. Start it from the Overview.
+          Go&nbsp;Live and paper both refuse to open positions with the engine down,
+          and neither bypasses a gate — the grader and the rule-#13 live gate run
+          on every order.
         </div>
       </GlassCard>
 
@@ -128,9 +154,9 @@ export function VenueView({ venue }: { venue: Venue }) {
             <span className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-semibold">
               Live
             </span>
-            <ModeToggle mode="live" state={liveMode} venue={modeKey}
+            <ModeToggle mode="live" label="Go Live" state={liveMode} venue={modeKey}
                         gateOpen={!!fund?.router_live_gate?.live_possible}
-                        onSet={(v) => setMode("live", v)} />
+                        onSet={(v) => (v ? setPreflight("live") : setMode("live", false))} />
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
 
@@ -224,8 +250,8 @@ export function VenueView({ venue }: { venue: Venue }) {
             <span className="text-[10px] uppercase tracking-[0.16em] text-amber-400/70 font-semibold">
               Paper
             </span>
-            <ModeToggle mode="paper" state={paperMode} venue={modeKey}
-                        gateOpen onSet={(v) => setMode("paper", v)} />
+            <ModeToggle mode="paper" label="Go Paper" state={paperMode} venue={modeKey}
+                        gateOpen onSet={(v) => (v ? setPreflight("paper") : setMode("paper", false))} />
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
 
@@ -335,18 +361,23 @@ const LABELS: Record<string, string> = {
  * process cannot do. A closed rule-#13 gate is shown the same way: the switch
  * is a permission, never an override.
  */
-function ModeToggle({ mode, state, venue, gateOpen, onSet }: {
+function ModeToggle({ mode, label, state, venue, gateOpen, onSet }: {
   mode: "paper" | "live";
+  label: string;
   state?: ModeState;
   venue?: string;
   gateOpen: boolean;
   onSet: (on: boolean) => void;
 }) {
-  const usable = !!state?.attached && gateOpen && !!venue;
+  // Disabled ONLY when there is no adapter of this mode to act on. A shut
+  // rule-#13 gate leaves the button live on purpose: pressing it runs the
+  // preflight, which names the check that stopped it. A dead control explains
+  // nothing, and "why is this greyed out" is the question it would create.
+  const usable = !!venue && !!state?.attached;
   const on = state?.on !== false;
   const why = !venue ? "no venue attached"
     : !state?.attached ? `no ${mode} venue attached`
-    : !gateOpen ? "rule-#13 gate closed" : "";
+    : !gateOpen ? "gate shut — press to see why" : "";
 
   return (
     <div className="flex items-center gap-2">
@@ -358,6 +389,7 @@ function ModeToggle({ mode, state, venue, gateOpen, onSet }: {
             <button key={k} type="button" disabled={!usable}
               aria-pressed={active}
               aria-label={`${mode} trading ${k}`}
+              title={k === "GO" ? label : undefined}
               onClick={() => onSet(k === "GO")}
               className="relative px-3 py-[3px] text-[10px] font-bold tracking-wide
                          disabled:cursor-not-allowed">
@@ -368,9 +400,9 @@ function ModeToggle({ mode, state, venue, gateOpen, onSet }: {
                                : "bg-red-500/20 border border-red-400/40"}`}
                   transition={{ type: "spring", stiffness: 480, damping: 36 }} />
               )}
-              <span className={`relative z-10 ${
+              <span className={`relative z-10 whitespace-nowrap ${
                 active ? (k === "GO" ? "text-hood-green" : "text-red-400") : "text-white/35"}`}>
-                {k}
+                {k === "GO" ? label : k}
               </span>
             </button>
           );
@@ -389,42 +421,6 @@ function Readout({ label, value, tone = "text-white/70" }: {
       <div className="text-[9px] uppercase tracking-[0.14em] text-white/30">{label}</div>
       <div className={`text-[12px] font-medium mt-0.5 ${tone}`}>{value}</div>
     </div>
-  );
-}
-
-/** GO / STOP for one venue's session. The knob is laid out by `layout`, so the
- *  spring is the real element moving rather than two states cross-fading. */
-function SessionToggle({ venue, on, onDone }: { venue: string; on: boolean; onDone: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      aria-label={`${venue} session: ${on ? "GO" : "STOP"}`}
-      onClick={async () => {
-        await post(`/api/venue-sessions/${venue}/${on ? "stop" : "start"}`);
-        onDone();
-      }}
-      className="relative flex items-center gap-1 p-1 rounded-full border border-white/12
-                 bg-white/[0.05] w-[136px] select-none">
-      {(["GO", "STOP"] as const).map((k) => {
-        const active = (k === "GO") === on;
-        return (
-          <span key={k} className="relative flex-1 text-center py-1.5 text-[11px] font-bold tracking-wide">
-            {active && (
-              <motion.span layoutId={`session-${venue}`}
-                className={`absolute inset-0 rounded-full ${
-                  k === "GO" ? "bg-hood-green/25 border border-hood-green/50"
-                             : "bg-red-500/20 border border-red-400/40"}`}
-                transition={{ type: "spring", stiffness: 480, damping: 36 }} />
-            )}
-            <span className={`relative z-10 ${
-              active ? (k === "GO" ? "text-hood-green" : "text-red-400") : "text-white/35"}`}>
-              {k}
-            </span>
-          </span>
-        );
-      })}
-    </button>
   );
 }
 
