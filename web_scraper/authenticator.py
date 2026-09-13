@@ -28,6 +28,7 @@ No third-party deps — uses only urllib + json from the stdlib.
 from __future__ import annotations
 
 import json
+import os
 import ssl
 from dataclasses import dataclass
 from typing import Any
@@ -180,7 +181,12 @@ class GitHubAuthenticator:
         return status, host
 
     def _default_http_get(self, url: str):
-        req = request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"})
+        # SEC (and others) 403 a caller that does not declare a contact. Honour
+        # SEC_USER_AGENT when set so the gate can verify those hosts at all;
+        # the GitHub Accept header is harmless elsewhere.
+        agent = os.environ.get("SEC_USER_AGENT") or USER_AGENT
+        req = request.Request(url, headers={
+            "User-Agent": agent, "Accept": "application/vnd.github+json"})
         ctx = ssl.create_default_context()
         try:
             with request.urlopen(req, timeout=self._timeout, context=ctx) as resp:

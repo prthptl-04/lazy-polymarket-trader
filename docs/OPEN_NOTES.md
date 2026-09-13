@@ -84,10 +84,11 @@ post-restart authentication as robinhood-trading.
 **Done:** `trading/massive_provider.py` verified live — equity and crypto bars
 both work (AAPL 30 bars, BTC 30 bars).
 
-**Still open:** fundamentals are NOT_ENTITLED on the \$29 plan, so Altman and
-Piotroski report NOT AVAILABLE. Cheapest fix is SEC EDGAR's free public XBRL
-API (`data.sec.gov`, no key) routed through the rule-#8 trust gate — same data
-Robinhood's `get_sec_filing_facts` returns, but reachable from the daemon.
+**Fundamentals solved free:** `trading/sec_edgar.py` pulls XBRL company facts
+from `data.sec.gov` (allowlisted, gated). Verified live on AAPL — Altman
+Z=12.46 safe, Piotroski F=8/9, matching the Robinhood MCP numbers.
+`MassiveProvider(financials=SecEdgarFundamentals())` wires it in.
+**Requires `SEC_USER_AGENT` in `.env`** — SEC 403s undeclared callers.
 
 **Two channels, do not confuse them:** the MCP connection belongs to the
 Claude Code session and is for discovery. The fund runs as its own process and
@@ -124,6 +125,17 @@ Each `post_order` opens a new HTTPS connection; persistent connection would cut
 The header shows `RH n/a` because MCP is session-bound. Resolving blocker #3
 (daemon auth) fixes this for free. Until then the pill stays honest rather
 than showing a cached number the user might size against.
+
+### Scraper stack: only Playwright works
+Checked all four (2026-09-12):
+- **Playwright** — installed, working, gated (`research_agent/playwright_fetcher.py`).
+  Headed by default. **This is the one to use.**
+- `microsoft/playwright-cli` — a codegen/inspection tool, not a runtime. Not adopted.
+- **Agent Reach** — zero backends installed and CLAUDE.md #20 refuses
+  `install --env=auto`. Currently fetches nothing. Either install backends by
+  hand after review, or drop the wrapper.
+- **Scrapling** — declared in pyproject but `import scrapling` fails on a
+  missing `curl_cffi`. Dead weight; fix the dep or remove it.
 
 ### Dashboard token auth
 Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
@@ -199,3 +211,6 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Polymarket on-chain CLOB path removed (~4,400 lines) | `54b568b` |
 | MassiveProvider — equity + crypto bars, verified live | `e32ebe9` |
 | Corroborator seat + deterministic fact cross-check | `e32ebe9` |
+| SEC EDGAR fundamentals (free, replaces unentitled feed) | this commit |
+| Playwright headed fetcher, trust-gated | this commit |
+| Authenticator 403'd on UA-requiring hosts | this commit |

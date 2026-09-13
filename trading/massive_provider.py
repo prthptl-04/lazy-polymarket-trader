@@ -42,6 +42,8 @@ class MassiveProvider:
     base_url: str = BASE_URL
     timeout: float = DEFAULT_TIMEOUT
     fetch: Any = None
+    # Massive's plan has no financials; SEC EDGAR serves them free.
+    financials: Any = None
 
     def __post_init__(self) -> None:
         self.api_key = self.api_key or os.environ.get("MASSIVE_API_KEY")
@@ -81,13 +83,15 @@ class MassiveProvider:
     async def get_financials(
         self, symbol: str
     ) -> Optional[tuple[Financials, Optional[Financials]]]:
-        """Not entitled on the stocks plan — verified 2026-09-12.
+        """Massive returns NOT_ENTITLED on the $29 plan (verified 2026-09-12),
+        so this delegates to SEC EDGAR when one is attached.
 
-        Returning None is deliberate: the candidate builder reports the quality
-        screens as NOT AVAILABLE and the Analyst seat is told to say so and
-        lower its confidence, which is better than a fabricated score.
+        With no delegate it returns None, and the candidate builder reports the
+        quality screens as NOT AVAILABLE — better than a fabricated score.
         """
-        return None
+        if self.financials is None:
+            return None
+        return await self.financials.get_financials(symbol)
 
     # ---------- internals ----------
 
