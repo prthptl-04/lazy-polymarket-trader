@@ -4,7 +4,7 @@ import { CostMatrix } from "../components/CostMatrix";
 import { AgentScorecard } from "../components/AgentScorecard";
 import { EngineButton } from "../components/EngineButton";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
-import { EquityArea } from "../components/charts";
+import { EquityArea, Sparkline } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import {
   usePoll, type Balances, type EngineState, type Feed, type FundStatus, type Lesson,
@@ -57,19 +57,17 @@ export function Overview() {
             numbers under two charts reads as though both venues produced them;
             the divider is there so a Polymarket loss is never mistaken for the
             broker's. */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <VenuePanel
-            label="Polymarket" dot="bg-poly-blue" colour="#2d52f3"
+            label="Polymarket" skin="polymarket" dot="bg-poly-blue" colour="#2d52f3"
             venue="polymarket_us" engineLabel="Polymarket Engine"
             engine={engineData?.engines?.polymarket_us} onEngine={refreshEngines}
-            stats={polyStats} cycles={fund?.metrics?.cycles ?? 0}
-            className="lg:pr-6" />
+            stats={polyStats} cycles={fund?.metrics?.cycles ?? 0} />
           <VenuePanel
-            label="Robinhood" dot="bg-hood-green" colour="#00c805"
+            label="Robinhood" skin="robinhood" dot="bg-hood-green" colour="#00c805"
             venue="robinhood" engineLabel="Robinhood Engine"
             engine={engineData?.engines?.robinhood} onEngine={refreshEngines}
-            stats={hoodStats} cycles={fund?.metrics?.cycles ?? 0}
-            className="lg:pl-6 lg:border-l border-white/[0.09] mt-6 lg:mt-0" />
+            stats={hoodStats} cycles={fund?.metrics?.cycles ?? 0} />
         </div>
       </GlassCard>
 
@@ -270,11 +268,13 @@ const LABELS: Record<string, string> = {
  * the fund never made and the fund's paper record contains fills the broker
  * never saw.
  */
-function VenuePanel({ label, dot, colour, venue, engineLabel, engine, onEngine, stats, cycles, className = "" }: {
-  label: string; dot: string; colour: string; venue: string; engineLabel: string;
+function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEngine, stats, cycles }: {
+  label: string; skin: "polymarket" | "robinhood"; dot: string; colour: string;
+  venue: string; engineLabel: string;
   engine?: EngineState; onEngine: () => void; stats?: VenueStats | null;
-  cycles: number; className?: string;
+  cycles: number;
 }) {
+  const hood = skin === "robinhood";
   const fundRec = stats?.fund ?? null;
   const broker = stats?.broker;
   const live = stats?.primary === "broker" && broker?.available;
@@ -304,23 +304,39 @@ function VenuePanel({ label, dot, colour, venue, engineLabel, engine, onEngine, 
   };
 
   return (
-    <div className={className}>
+    // data-venue-skin carries the venue's whole design language — ground,
+    // typography, accents, controls — scoped to this column.
+    <div data-venue-skin={skin}>
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2 h-2 rounded-full ${dot}`} />
         <span className="text-[12px] text-white/70">{label}</span>
+        <span className="text-[10px] uppercase tracking-[0.1em] text-white/35">
+          {shown.investedLabel}
+        </span>
         <Pill tone={live ? "good" : "neutral"}>
           {live ? `broker · ${broker!.span ?? "all"}` : "fund paper record"}
         </Pill>
       </div>
       <EngineButton venue={venue} label={engineLabel} state={engine} onDone={onEngine} />
+      {/* Headline figure in the venue's own voice: Robinhood's is the thin
+          white ticker, Polymarket's the ordinary panel number. */}
+      <div className={hood
+        ? "venue-figure font-mono mb-1"
+        : "font-mono text-3xl font-light tracking-tighter text-white/90 mb-1"}>
+        {money(shown.invested)}
+      </div>
+
       {/* The curve is always the FUND's — the broker's ledger gives realised
           totals, not a series — so it is labelled rather than passed off as
-          the account's equity history. */}
-      <EquityArea values={fundRec?.equity_curve ?? []} colour={colour} height={320} />
+          the account's equity history. Polymarket draws it as a gradient area,
+          Robinhood as a bare sparkline with no grid and no axes. */}
+      {hood
+        ? <Sparkline values={fundRec?.equity_curve ?? []} colour="#FFD700"
+                     gradient={["#FFD700", "#B8860B"]} height={300} />
+        : <EquityArea values={fundRec?.equity_curve ?? []} colour={colour} height={300} />}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4 mt-5 pt-4
                       border-t border-white/[0.07]">
-        <Stat label={shown.investedLabel} value={money(shown.invested)} />
         <Stat label="Realised P&L" value={signed(shown.realized)}
               tone={toneOf(shown.realized)} />
         <Stat label="Win rate"

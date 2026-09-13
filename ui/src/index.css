@@ -87,27 +87,27 @@
    --------------------------------------------------------------------------- */
 [data-venue-theme="polymarket"] body { background: var(--pm-canvas) !important; }
 
-[data-venue-theme="polymarket"] .bg-glass-white { background-color: var(--pm-surface); }
-[data-venue-theme="polymarket"] .border-glass-border,
-[data-venue-theme="polymarket"] [class*="border-white/"] { border-color: var(--pm-border); }
-[data-venue-theme="polymarket"] [class*="bg-white/"] {
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .bg-glass-white { background-color: var(--pm-surface); }
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .border-glass-border,
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="border-white/"] { border-color: var(--pm-border); }
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="bg-white/"] {
   background-color: rgb(var(--pm-surface-rgb) / 0.16);
 }
 /* Depth from surface luminance, not from a drop shadow. */
-[data-venue-theme="polymarket"] .shadow-glass,
-[data-venue-theme="polymarket"] .bg-glass-white {
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .shadow-glass,
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .bg-glass-white {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06) !important;
 }
 
-[data-venue-theme="polymarket"] .text-white,
-[data-venue-theme="polymarket"] [class*="text-white/9"],
-[data-venue-theme="polymarket"] [class*="text-white/8"] { color: var(--pm-heading); }
-[data-venue-theme="polymarket"] [class*="text-white/7"],
-[data-venue-theme="polymarket"] [class*="text-white/6"],
-[data-venue-theme="polymarket"] [class*="text-white/5"] { color: var(--pm-muted); }
-[data-venue-theme="polymarket"] [class*="text-white/4"],
-[data-venue-theme="polymarket"] [class*="text-white/3"],
-[data-venue-theme="polymarket"] [class*="text-white/2"] {
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .text-white,
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/9"],
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/8"] { color: var(--pm-heading); }
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/7"],
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/6"],
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/5"] { color: var(--pm-muted); }
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/4"],
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/3"],
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) [class*="text-white/2"] {
   color: rgb(224 224 224 / 0.72);
 }
 
@@ -144,9 +144,9 @@
    --------------------------------------------------------------------------- */
 [data-venue-theme="robinhood"] body { background: var(--rh-black) !important; }
 
-[data-venue-theme="robinhood"] .bg-glass-white,
-[data-venue-theme="robinhood"] .glass-plain,
-[data-venue-theme="robinhood"] .liquid-glass {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .bg-glass-white,
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .glass-plain,
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .liquid-glass {
   background-color: transparent !important;
   backdrop-filter: none !important;
   border-radius: 0 !important;
@@ -154,40 +154,40 @@
   box-shadow: none !important;
 }
 /* Row rules and dividers only — never a box around a panel. */
-[data-venue-theme="robinhood"] [class*="border-t"],
-[data-venue-theme="robinhood"] [class*="border-l"],
-[data-venue-theme="robinhood"] [class*="border-b"] { border-color: var(--rh-hairline); }
-[data-venue-theme="robinhood"] [class*="bg-white/"] { background-color: transparent; }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="border-t"],
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="border-l"],
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="border-b"] { border-color: var(--rh-hairline); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="bg-white/"] { background-color: transparent; }
 
 /* Typography: the price is the page. */
-[data-venue-theme="robinhood"] .venue-figure {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .venue-figure {
   font-size: clamp(3.25rem, 6.5vw, 5rem);
   font-weight: 200;
   letter-spacing: -0.035em;
   color: var(--rh-white);
 }
-[data-venue-theme="robinhood"] .text-white { color: var(--rh-white); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .text-white { color: var(--rh-white); }
 
 /* The accent: interactive elements, active states, gains. */
-[data-venue-theme="robinhood"] [class*="text-hood-green"] { color: var(--rh-gold); }
-[data-venue-theme="robinhood"] [class*="bg-hood-green"] { background-color: rgb(255 215 0 / 0.12); }
-[data-venue-theme="robinhood"] [class*="border-hood-green"] { border-color: rgb(255 215 0 / 0.55); }
-[data-venue-theme="robinhood"] [class*="bg-white/[0.14]"] { background-color: rgb(255 215 0 / 0.14); }
-[data-venue-theme="robinhood"] .pm-action,
-[data-venue-theme="robinhood"] .rh-action {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="text-hood-green"] { color: var(--rh-gold); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="bg-hood-green"] { background-color: rgb(255 215 0 / 0.12); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="border-hood-green"] { border-color: rgb(255 215 0 / 0.55); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) [class*="bg-white/[0.14]"] { background-color: rgb(255 215 0 / 0.14); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .pm-action,
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rh-action {
   border-radius: 4px;
   border: 1px solid var(--rh-gold);
   background-color: transparent;
   color: var(--rh-gold);
   transition: background-color 150ms linear;
 }
-[data-venue-theme="robinhood"] .rh-action:hover { background-color: rgb(255 215 0 / 0.12); }
-[data-venue-theme="robinhood"] .rh-action:focus-visible {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rh-action:hover { background-color: rgb(255 215 0 / 0.12); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rh-action:focus-visible {
   outline: 2px solid var(--rh-gold); outline-offset: 2px;
 }
 
 /* Round table: dark circles, thin #333 outline, neon validation path. */
-[data-venue-theme="robinhood"] .rt-node {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rt-node {
   background-color: #0a0a0a !important;
   border-color: var(--rh-hairline) !important;
   backdrop-filter: none !important;
@@ -195,16 +195,16 @@
      rectangles is not a round table. */
   border-radius: 9999px !important;
 }
-[data-venue-theme="robinhood"] .rt-node-live {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rt-node-live {
   border-color: var(--rh-gold) !important;
   box-shadow: 0 0 10px #FFD700;
 }
-[data-venue-theme="robinhood"] .rt-spoke { stroke: var(--rh-hairline); }
-[data-venue-theme="robinhood"] .rt-pulse {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rt-spoke { stroke: var(--rh-hairline); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rt-pulse {
   stroke: var(--rh-gold);
   filter: drop-shadow(0 0 8px #FFD700);
 }
-[data-venue-theme="robinhood"] .rt-hub {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .rt-hub {
   fill: #0a0a0a; stroke: var(--rh-gold); stroke-width: 1;
   filter: drop-shadow(0 0 10px rgb(255 215 0 / 0.5));
 }
@@ -223,14 +223,14 @@
 /* A translucent sweep over the button's own gradient washed it olive, because
    background-image REPLACES rather than overlays. Under Gold the control is
    struck from metal instead, and the sweep is the highlight moving across it. */
-[data-venue-theme="robinhood"] .gold-shimmer {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-shimmer {
   color: #0a0a0a;
   background-image: linear-gradient(105deg,
     #B8860B 0%, #D4AF37 36%, #FFF3B0 50%, #D4AF37 64%, #B8860B 100%);
   background-size: 220% 100%;
   animation: gold-sweep 3.6s linear infinite;
 }
-[data-venue-theme="robinhood"] .gold-text {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-text {
   background-image: linear-gradient(100deg,
     #B8860B 0%, #D4AF37 34%, #FFF6C2 50%, #D4AF37 66%, #B8860B 100%);
   background-size: 220% 100%;
@@ -238,22 +238,22 @@
   color: transparent;
   animation: gold-sweep 4.4s linear infinite;
 }
-[data-venue-theme="robinhood"] .gold-edge { border-color: var(--rh-gold) !important; }
-[data-venue-theme="robinhood"] .gold-glow { box-shadow: 0 0 14px rgb(255 215 0 / 0.45); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-edge { border-color: var(--rh-gold) !important; }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-glow { box-shadow: 0 0 14px rgb(255 215 0 / 0.45); }
 
 /* The gate panel stays dim until every condition is met — the dashboard should
    not look armed while the router is still refusing live orders. */
-[data-venue-theme="robinhood"] .gate-locked { opacity: 0.55; }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gate-locked { opacity: 0.55; }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-venue-theme="robinhood"] .gold-shimmer,
-  [data-venue-theme="robinhood"] .gold-text { animation: none; }
-  [data-venue-theme="robinhood"] .gold-text { background-position: 50% 0; }
+  :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-shimmer,
+  :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-text { animation: none; }
+  :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-text { background-position: 50% 0; }
 }
 
 /* A failed quote reads as a warning in every theme; gold is its Robinhood voice. */
 .feed-error { color: rgb(251 191 36 / 0.8); }
-[data-venue-theme="robinhood"] .feed-error { color: var(--rh-champagne); }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .feed-error { color: var(--rh-champagne); }
 
 /* The hub carries the sweep as a slow pulse — a filter, since it is an SVG
    circle and there is no box to paint a gradient across. */
@@ -261,16 +261,16 @@
   0%, 100% { filter: drop-shadow(0 0 6px rgb(255 215 0 / 0.35)); }
   50%      { filter: drop-shadow(0 0 16px rgb(255 215 0 / 0.75)); }
 }
-[data-venue-theme="robinhood"] .gold-hub { animation: hub-pulse 3.6s ease-in-out infinite; }
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-hub { animation: hub-pulse 3.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  [data-venue-theme="robinhood"] .gold-hub { animation: none; }
+  :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .gold-hub { animation: none; }
 }
 
 /* A seat that failed is not a quiet neutral — the table was thinner than its
    seat count claims, and it should look wrong. */
 .abstention-error { border-color: rgb(248 113 113 / 0.35); background-color: rgb(248 113 113 / 0.07); }
 .chair-block { background-color: rgb(255 255 255 / 0.04); }
-[data-venue-theme="robinhood"] .chair-block {
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .chair-block {
   background-color: rgb(255 215 0 / 0.06);
   box-shadow: inset 0 0 0 1px rgb(255 215 0 / 0.25);
 }
@@ -283,3 +283,104 @@
   background-color: var(--rh-black) !important;
   border-bottom: 1px solid var(--rh-hairline);
 }
+
+/* ---------------------------------------------------------------------------
+   Venue SKINS.
+
+   The same design languages as the venue pages, applied to a panel instead of
+   the document — so the Overview's dual feed can show each venue in its own
+   idiom while the page around it keeps the P&L tint.
+
+   Each skin paints its own ground. The typography rules above map white-alpha
+   tokens onto palettes that assume a dark surface, so a skin that inherited
+   the page's light tint would map ink onto ink.
+   --------------------------------------------------------------------------- */
+[data-venue-skin] {
+  border-radius: 18px;
+  padding: 16px;
+  /* Base colour, not just the tokens: the page sets body { color: ink } for its
+     own ground, and anything inside a skin without an explicit class would
+     otherwise inherit dark ink onto a dark panel. */
+  color: rgb(255 255 255 / 0.92);
+}
+
+[data-venue-skin="polymarket"] {
+  background: var(--pm-canvas, #0d1b2a);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --pm-canvas: #0d1b2a; --pm-surface: rgba(74,101,114,0.22); --pm-surface-rgb: 74 101 114;
+  --pm-border: rgba(74,101,114,0.45); --pm-heading: #F5F5F5; --pm-muted: #E0E0E0;
+  --pm-accent: #2d52f3; --pm-accent-edge: #4f74ff;
+}
+/* Robinhood's is pitch black and square-shouldered — the radius is the one
+   concession, so the panel still reads as a panel inside the card. */
+[data-venue-skin="robinhood"] {
+  background: var(--rh-black, #000000);
+  --rh-black: #000000; --rh-gold: #FFD700; --rh-gold-deep: #B8860B;
+  --rh-champagne: #D4AF37; --rh-white: #FFFFFF; --rh-hairline: #333333;
+}
+
+/* The engine button speaks the venue's language too: Polymarket's soft blue,
+   Robinhood's struck-metal gold. */
+[data-venue-skin] .engine-button { border-radius: 12px; }
+[data-venue-skin="polymarket"] .engine-button:not(:disabled) {
+  background: rgb(45 82 243 / 0.16) !important;
+  border-color: var(--pm-accent-edge) !important;
+  color: var(--pm-heading) !important;
+}
+[data-venue-skin="polymarket"] .engine-button:not(:disabled):hover {
+  background: rgb(45 82 243 / 0.3) !important;
+}
+[data-venue-skin="robinhood"] .engine-button:not(:disabled) {
+  border-radius: 4px;
+  background-image: linear-gradient(105deg, #B8860B 0%, #D4AF37 36%, #FFF3B0 50%,
+                                    #D4AF37 64%, #B8860B 100%) !important;
+  background-size: 220% 100%;
+  animation: gold-sweep 3.6s linear infinite;
+  border-color: var(--rh-gold) !important;
+  color: #0a0a0a !important;
+}
+[data-venue-skin] .engine-button:disabled {
+  background: rgb(255 255 255 / 0.05) !important;
+  border-color: rgb(255 255 255 / 0.12) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-venue-skin="robinhood"] .engine-button:not(:disabled) { animation: none; }
+}
+
+/* A skin sits INSIDE whatever the page is painted as — on the Overview that is
+   the light P&L tint, whose rules remap every white-alpha token to dark ink.
+   On a midnight or pitch-black panel that ink is invisible, so each skin
+   restores its own ladder. Same three buckets as everywhere else: alpha that
+   reads on near-black is not the alpha that reads on near-white.
+
+   These come last in the file on purpose — they tie on specificity with the
+   light-ground rules and win on order. */
+[data-venue-skin] .text-white,
+[data-venue-skin] [class*="text-white/9"],
+[data-venue-skin] [class*="text-white/8"] { color: rgb(255 255 255 / 0.92); }
+[data-venue-skin] [class*="text-white/7"],
+[data-venue-skin] [class*="text-white/6"],
+[data-venue-skin] [class*="text-white/5"] { color: rgb(255 255 255 / 0.68); }
+[data-venue-skin] [class*="text-white/4"],
+[data-venue-skin] [class*="text-white/3"],
+[data-venue-skin] [class*="text-white/2"] { color: rgb(255 255 255 / 0.45); }
+
+[data-venue-skin] [class*="border-white/"] { border-color: rgb(255 255 255 / 0.10); }
+[data-venue-skin] [class*="bg-white/"] { background-color: rgb(255 255 255 / 0.05); }
+
+/* Then each venue's own voice on top of that. */
+[data-venue-skin="polymarket"] .text-white,
+[data-venue-skin="polymarket"] [class*="text-white/9"],
+[data-venue-skin="polymarket"] [class*="text-white/8"] { color: var(--pm-heading); }
+[data-venue-skin="polymarket"] [class*="text-white/7"],
+[data-venue-skin="polymarket"] [class*="text-white/6"],
+[data-venue-skin="polymarket"] [class*="text-white/5"] { color: var(--pm-muted); }
+[data-venue-skin="polymarket"] [class*="border-white/"] { border-color: var(--pm-border); }
+
+[data-venue-skin="robinhood"] .text-white,
+[data-venue-skin="robinhood"] [class*="text-white/9"],
+[data-venue-skin="robinhood"] [class*="text-white/8"] { color: var(--rh-white); }
+/* Hairlines, not boxes — the same rule the Robinhood page keeps after the
+   glass is stripped. */
+[data-venue-skin="robinhood"] [class*="border-white/"] { border-color: var(--rh-hairline); }
+[data-venue-skin="robinhood"] [class*="text-hood-green"] { color: var(--rh-gold); }

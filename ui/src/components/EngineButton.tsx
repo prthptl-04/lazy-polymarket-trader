@@ -44,7 +44,7 @@ export function EngineButton({ venue, label, state, onDone }: {
         disabled={disabled}
         whileHover={disabled ? undefined : { scale: 1.015 }}
         whileTap={disabled ? undefined : { scale: 0.985 }}
-        className={`w-full py-2 rounded-xl text-[12px] font-semibold tracking-wide border transition
+        className={`engine-button w-full py-2 rounded-xl text-[12px] font-semibold tracking-wide border transition
           ${on ? "border-hood-green/45 bg-hood-green/15 text-hood-green"
                : disabled ? "border-white/10 bg-white/[0.03] text-white/25 cursor-not-allowed"
                           : "border-green-400/40 bg-gradient-to-r from-green-400 to-green-600 text-black"}`}>
