@@ -136,5 +136,48 @@ def test_failing_venue_degrades_rather_than_500s(tmp_path):
 
 
 def test_header_has_both_balance_pills():
-    from dashboard.server import _INDEX_HTML
-    assert 'id="bal-polymarket"' in _INDEX_HTML and 'id="bal-robinhood"' in _INDEX_HTML
+    from dashboard.pages import OVERVIEW_HTML
+    assert 'id="bal-polymarket"' in OVERVIEW_HTML and 'id="bal-robinhood"' in OVERVIEW_HTML
+
+
+@pytest.mark.parametrize("path,marker", [
+    ("/", "Equity curve"), ("/positions", "Open positions"), ("/venues", "Gates"),
+])
+def test_all_pages_render(client, path, marker):
+    c, _ = client
+    r = c.get(path)
+    assert r.status_code == 200 and marker in r.text
+
+
+def test_every_page_carries_the_nav_and_controls():
+    from dashboard.pages import OVERVIEW_HTML, POSITIONS_HTML, VENUES_HTML
+    for html in (OVERVIEW_HTML, POSITIONS_HTML, VENUES_HTML):
+        for needed in ('href="/positions"', 'href="/roundtable"', 'id="go-btn"', 'id="stop-btn"'):
+            assert needed in html
+
+
+def test_empty_states_explain_themselves():
+    """'No positions' and 'no data provider' mean very different things to
+    someone deciding whether to trust the screen."""
+    from dashboard.pages import POSITIONS_HTML
+    assert "round table reaches a" in POSITIONS_HTML
+
+
+@pytest.mark.parametrize("path,kind", [("/api/record", dict), ("/api/agents", list)])
+def test_new_routes_shape(client, path, kind):
+    c, _ = client
+    assert isinstance(c.get(path).json(), kind)
+
+
+def test_agent_roster_has_mandates_for_hover(client):
+    c, _ = client
+    roster = c.get("/api/agents").json()
+    assert len(roster) == 7          # 6 seats + chair
+    assert all(a["mandate"] and a["icon"] for a in roster)
+
+
+def test_candles_without_a_provider_says_why(client):
+    c, _ = client
+    body = c.get("/api/candles?symbol=AAPL").json()
+    assert body["closes"] == []
+    assert "no data provider" in body["reason"]

@@ -57,6 +57,11 @@ def main() -> None:
     except Exception as e:
         print(f"[dashboard] Polymarket US venue unavailable: {type(e).__name__}")
 
+    # Charts and the positions table read through these.
+    if runtime.fund_scheduler is not None:
+        runtime.position_book = runtime.fund_scheduler.position_book
+        runtime.data_provider = runtime.fund_scheduler.fund.data
+
     app = create_app(runtime)
     uvicorn.run(app, host=host, port=port, log_level="info")
 

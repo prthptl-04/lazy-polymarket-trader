@@ -156,17 +156,18 @@ def test_status_is_unchanged_without_a_fund(tmp_path):
 
 # ---------------- UI ----------------
 
-def test_dashboard_renders_the_fund_panel(tmp_path):
+def test_venues_page_renders_the_gate_panel(tmp_path):
     c = TestClient(create_app(_runtime(tmp_path)))
-    html = c.get("/").text
-    for el in ("fund-session", "fund-cycles", "fund-pdt",
-               "fund-headroom", "renderFund"):
+    html = c.get("/venues").text
+    for el in ("daily loss headroom", "day trades left", "cycles run", "Gates"):
         assert el in html
 
 
-def test_ui_warns_on_the_dangerous_states(tmp_path):
+def test_ui_warns_on_the_three_dangerous_states(tmp_path):
+    """These must shout, not inform: a tripped switch, an UNARMED switch (the
+    limit cannot fire at all), and an exhausted day-trade budget."""
     c = TestClient(create_app(_runtime(tmp_path)))
-    html = c.get("/").text
+    html = c.get("/venues").text
     assert "DAILY LOSS LIMIT TRIPPED" in html
     assert "UNARMED" in html
     assert "Day-trade budget exhausted" in html

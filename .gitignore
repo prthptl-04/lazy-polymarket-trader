@@ -27,3 +27,7 @@ build/
 # explicit internal-use-only override. The clone must never be committed or
 # published; only our adapted .claude/skills/karpathy-guidelines/ is tracked.
 .claude/skills/karpathy-src/
+
+# UI skill clones — we vendor the adapted SKILL.md only.
+.claude/skills/gsap-src/
+.claude/skills/uiux-src/

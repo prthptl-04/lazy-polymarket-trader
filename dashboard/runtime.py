@@ -28,6 +28,7 @@ class DashboardRuntime:
     position_book: Optional[Any] = None
     # name -> VenueAdapter, for the header balance strip.
     venues: dict[str, Any] = field(default_factory=dict)
+    data_provider: Optional[Any] = None
 
     # ---------- status ----------
 
@@ -58,10 +59,24 @@ class DashboardRuntime:
         }
 
     def positions(self) -> list[dict]:
+        """Open positions with their plan, so the UI can show where we exit."""
         book = self.position_book
         if book is None:
             return []
-        return book.status().get("positions", [])
+        rows = []
+        for p in (getattr(book, "positions", {}) or {}).values():
+            rows.append({
+                "symbol": p.symbol,
+                "asset_class": p.asset_class,
+                "quantity": p.quantity,
+                "entry": p.entry_price,
+                "stop": p.plan.stop,
+                "target": p.plan.target,
+                "thesis_id": p.thesis_id,
+                "opened_at": p.opened_at,
+                "unrealized_pct": None,   # needs a live quote; the cycle marks it
+            })
+        return rows
 
     def open_orders(self) -> list[dict]:
         return []      # orders live at the venue now; no local mirror
@@ -149,6 +164,83 @@ class DashboardRuntime:
             "tally": payload.get("tally", {}),
             "unanimous": _is_unanimous(payload.get("tally", {})),
             "abstentions": [o["seat_name"] for o in opinions if o.get("failed")],
+        }
+
+    # ---------- overview ----------
+
+    def record(self) -> dict:
+        """Wins, losses and the equity curve — the 'am I making money' view.
+
+        Built from closed positions, which is the only honest source: an open
+        position has an opinion about itself, a closed one has a result.
+        """
+        closed = list(getattr(self.position_book, "closed", []) or [])
+        wins = [c for c in closed if c.get("realized_usd", 0) > 0]
+        losses = [c for c in closed if c.get("realized_usd", 0) < 0]
+        realized = sum(c.get("realized_usd", 0.0) for c in closed)
+
+        curve, running = [self.starting_bankroll_usd], self.starting_bankroll_usd
+        for c in closed:
+            running += c.get("realized_usd", 0.0)
+            curve.append(round(running, 4))
+
+        gross_win = sum(c["realized_usd"] for c in wins)
+        gross_loss = abs(sum(c["realized_usd"] for c in losses))
+        return {
+            "closed": len(closed),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(len(wins) / len(closed) * 100, 2) if closed else None,
+            "realized_usd": round(realized, 2),
+            "best_usd": round(max((c["realized_usd"] for c in closed), default=0.0), 2),
+            "worst_usd": round(min((c["realized_usd"] for c in closed), default=0.0), 2),
+            # Profit factor beats win rate: a 70% win rate with tiny wins and
+            # huge losses is a losing strategy that looks like a winning one.
+            "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else None,
+            "equity_curve": curve,
+        }
+
+    def agents(self) -> list[dict]:
+        """The roster, for the UI's hover cards."""
+        from roundtable.seats import ALL_SEATS
+        icons = {
+            "analyst": "\U0001F4D8", "sentiment": "\U0001F4AC", "quant": "\U0001F4C8",
+            "risk": "\U0001F6E1", "corroborator": "\U0001F50D", "devils_advocate": "\U0001F608",
+        }
+        out = [
+            {"id": s.id, "name": s.name, "mandate": s.mandate,
+             "round": s.round, "icon": icons.get(s.id, "\U0001F464")}
+            for s in ALL_SEATS
+        ]
+        out.append({"id": "chair", "name": "Chair", "round": 3,
+                    "icon": "\U0001F3DB",
+                    "mandate": "Synthesises the seats; weights argument quality over vote count"})
+        return out
+
+    async def candles(self, symbol: str, *, lookback: int = 60) -> dict:
+        """Price series for a chart. Empty rather than fabricated when the
+        provider has nothing — a made-up line on a trading dashboard is worse
+        than a blank panel."""
+        provider = getattr(self, "data_provider", None)
+        if provider is None:
+            return {"symbol": symbol, "closes": [], "reason": "no data provider attached"}
+        try:
+            history = await provider.get_history(symbol, lookback=lookback)
+        except Exception as e:
+            return {"symbol": symbol, "closes": [], "reason": f"{type(e).__name__}"}
+        if history is None:
+            return {"symbol": symbol, "closes": [], "reason": "no history for this symbol"}
+
+        position = (getattr(self.position_book, "positions", {}) or {}).get(symbol)
+        return {
+            "symbol": symbol,
+            "closes": list(history.closes),
+            "highs": [b.high for b in history.bars],
+            "lows": [b.low for b in history.bars],
+            # Overlaid on the chart so the plan is visible, not just the price.
+            "entry": position.entry_price if position else None,
+            "stop": position.plan.stop if position else None,
+            "target": position.plan.target if position else None,
         }
 
     def scorecard(self) -> dict:
