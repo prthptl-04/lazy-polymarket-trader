@@ -62,7 +62,7 @@ def test_roundtable_page_renders(client):
 
 def test_dashboard_links_to_the_round_table(client):
     c, _ = client
-    assert "/roundtable" in c.get("/").text
+    assert 'href="/roundtable"' in c.get("/legacy").text
 
 
 def test_empty_index(client):

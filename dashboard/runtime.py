@@ -99,9 +99,12 @@ class DashboardRuntime:
                 }
             except Exception as e:
                 out[name] = {"available": False, "reason": f"{type(e).__name__}"}
+        # Robinhood used to be unreachable from this process. It no longer is:
+        # the daemon holds its own OAuth'd MCP session. This default only
+        # applies when no adapter was registered.
         out.setdefault("robinhood", {
             "available": False,
-            "reason": "MCP-only — not reachable from this process",
+            "reason": "not authenticated — run scripts_mcp_auth.py once",
         })
         return out
 

@@ -35,3 +35,8 @@ build/
 # MCP OAuth tokens (bearer credentials for a brokerage account)
 mcp-tokens.json
 .config/
+
+# React UI build artefacts. The bundle is generated; the source lives in ui/src.
+ui/node_modules/
+ui/dist/
+dashboard/static/

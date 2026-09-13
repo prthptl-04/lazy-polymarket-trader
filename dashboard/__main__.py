@@ -66,6 +66,20 @@ def main() -> None:
     except Exception as e:
         print(f"[dashboard] Polymarket US venue unavailable: {type(e).__name__}")
 
+    # Robinhood, for READS only — balances and positions in the header. The
+    # live gate still refuses any order to it, and execution routes to the
+    # paper venue regardless.
+    try:
+        from trading.mcp_client import McpSession
+        from trading.venues.robinhood import MCP_URL, RobinhoodVenue
+        session = McpSession(server_url=MCP_URL)
+        if session.auth_summary().get("authenticated"):
+            runtime.venues["robinhood"] = RobinhoodVenue(session=session)
+        else:
+            print("[dashboard] Robinhood not authenticated; run scripts_mcp_auth.py")
+    except Exception as e:
+        print(f"[dashboard] Robinhood venue unavailable: {type(e).__name__}")
+
     # Charts and the positions table read through these.
     if runtime.fund_scheduler is not None:
         runtime.position_book = runtime.fund_scheduler.position_book

@@ -124,10 +124,13 @@ def test_balances_reports_live_venue(tmp_path):
     assert body["polymarket_us"] == {"available": True, "cash_usd": 0.247, "equity_usd": 0.247}
 
 
-def test_robinhood_always_unavailable_with_a_reason(tmp_path):
-    """MCP is session-bound; never invent a number the user might size against."""
+def test_robinhood_unavailable_says_how_to_fix_it(tmp_path):
+    """With no adapter registered the row must still explain itself. It used to
+    say 'MCP-only, unreachable', which stopped being true once the daemon held
+    its own OAuth session — a stale reason is its own kind of wrong number."""
     body = _with(tmp_path, {}).get("/api/balances").json()
-    assert body["robinhood"]["available"] is False and "MCP" in body["robinhood"]["reason"]
+    assert body["robinhood"]["available"] is False
+    assert "scripts_mcp_auth" in body["robinhood"]["reason"]
 
 
 def test_failing_venue_degrades_rather_than_500s(tmp_path):
@@ -141,12 +144,22 @@ def test_header_has_both_balance_pills():
 
 
 @pytest.mark.parametrize("path,marker", [
-    ("/", "Equity curve"), ("/positions", "Open positions"), ("/venues", "Gates"),
+    ("/legacy", "Equity curve"), ("/positions", "Open positions"), ("/venues", "Gates"),
 ])
 def test_all_pages_render(client, path, marker):
+    """The server-rendered pages remain as a no-build fallback; `/` serves the
+    React bundle when it has been built."""
     c, _ = client
     r = c.get(path)
     assert r.status_code == 200 and marker in r.text
+
+
+def test_root_serves_the_spa_when_built(client):
+    c, _ = client
+    r = c.get("/")
+    assert r.status_code == 200
+    # Either the built bundle or the fallback, but always a page.
+    assert "Project" in r.text or "Equity curve" in r.text
 
 
 def test_every_page_carries_the_nav_and_controls():

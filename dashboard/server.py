@@ -38,8 +38,22 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     app.state.runtime = runtime
 
     # ---------- HTML ----------
+    #
+    # The React bundle (Project धन) is served when it has been built; the
+    # server-rendered pages remain as a no-build fallback so the dashboard still
+    # works from a clean checkout without npm.
+    _STATIC = Path(__file__).resolve().parent / "static"
+
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
+    def index() -> Any:
+        spa = _STATIC / "index.html"
+        if spa.exists():
+            return HTMLResponse(spa.read_text())
+        from dashboard.pages import OVERVIEW_HTML
+        return HTMLResponse(OVERVIEW_HTML)
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    def legacy_index() -> str:
         from dashboard.pages import OVERVIEW_HTML
         return OVERVIEW_HTML
 
@@ -198,6 +212,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
             pass
         finally:
             runtime.hub.unsubscribe(q)
+
+    if _STATIC.exists():
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/assets", StaticFiles(directory=str(_STATIC / "assets")), name="assets")
 
     if enable_cors:
         from fastapi.middleware.cors import CORSMiddleware
