@@ -31,7 +31,18 @@ only account/positions/quote reads. Do NOT place, modify or cancel any order —
 not as a test, not to verify the integration, not for one share — without the
 user explicitly naming symbol and size.
 
-### 2. MCP auth is desktop-interactive OAuth
+### 2. PositionBook is not wired into `build_fund` — REVISIT THIS
+`FundLoop` enforces stops only when a `position_book` is attached.
+`dashboard/fund_wiring.build_fund` does not construct one, so **a fund built
+from config still has unenforced stops** — the exact hole closed in `66da561`
+is still open on the path the dashboard actually uses.
+
+One line to fix. Left for its own commit so it gets reviewed rather than
+buried. User asked to revisit this explicitly (2026-09-12).
+
+**Do not run live — paper or otherwise — until this is closed.**
+
+### 3. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
 account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
 across restarts is unsolved and is the real blocker on unattended autonomy.
@@ -46,7 +57,27 @@ Kept as venue #3 per the user's decision, but `trading/polymarket_client.py`
 and `live_market/` still run on their own path rather than as a `VenueAdapter`.
 Works today; will drift.
 
-### No LIVE market-data source — DECISION NEEDED
+### Market data — DECIDED, Massive purchased 2026-09-12
+User subscribed to **Massive $29/mo stocks**. MCP server registered
+(`massive` → https://mcp.massive.com/, project scope) and awaiting the same
+post-restart authentication as robinhood-trading.
+
+**Next session, after both MCPs are live:**
+1. Enumerate Massive's tools; confirm daily OHLCV bars and the fundamentals
+   add-on (income statement / balance sheet / cash flow, current AND prior
+   period — Piotroski needs both years).
+2. Write `trading/market_data.py::MassiveProvider` against the verified shapes.
+3. Set `provider = "massive"` in `config/fund.toml`.
+
+**Two channels, do not confuse them:** the MCP connection belongs to the
+Claude Code session and is for discovery. The fund runs as its own process and
+cannot reach it — `MassiveProvider` needs a plain `MASSIVE_API_KEY` in `.env`.
+Still needed from the user.
+
+**Crypto bars remain unsolved** — Massive's stocks plan does not cover them.
+Check Robinhood's surface for crypto history before buying anything else.
+
+### Superseded: the original provider comparison
 `MarketDataProvider` exists with two dependency-free implementations
 (`StaticProvider`, `VenueQuoteProvider`), so the fund runs end-to-end on
 supplied/recorded data and gets live quotes from any venue. What is missing is
@@ -63,12 +94,6 @@ supplied/recorded data and gets live quotes from any venue. What is missing is
 Altman/Piotroski need fundamentals; without them those screens stay
 NOT AVAILABLE and the Analyst seat is flying on less.
 
-### PositionBook is not wired into fund_wiring yet
-`FundLoop` enforces stops when a `position_book` is attached, but
-`dashboard/fund_wiring.build_fund` does not construct one. Until it does, a
-fund built from config still has unenforced stops. **Do not run live before
-closing this** — it is a one-line construction, deliberately left for a commit
-of its own so it gets reviewed.
 
 ### The fitted shrink is not fed back automatically
 `fit_confidence_shrink` returns a number; `ThesisPipeline` still uses the
