@@ -384,3 +384,53 @@
    glass is stripped. */
 [data-venue-skin="robinhood"] [class*="border-white/"] { border-color: var(--rh-hairline); }
 [data-venue-skin="robinhood"] [class*="text-hood-green"] { color: var(--rh-gold); }
+
+/* ---------------------------------------------------------------------------
+   Robinhood: a gold frame that catches the light.
+
+   Stripping the glass left every panel edge-to-edge on black, which is the
+   right aesthetic and the wrong ergonomics — with nothing between them, two
+   panels read as one. This puts the boundary back in the only colour the theme
+   allows, and moves the same highlight across it that crosses the equity
+   figure, so the frame reads as metal rather than as a line someone drew.
+
+   Two background layers on one element: the solid fills the padding box, the
+   gradient fills the border box, and only the gradient's position animates.
+   That is what lets an existing panel grow a frame without new markup.
+   --------------------------------------------------------------------------- */
+@keyframes gold-frame {
+  from { background-position: 0 0, -220% 0; }
+  to   { background-position: 0 0, 220% 0; }
+}
+
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .bg-glass-white,
+[data-venue-skin="robinhood"] {
+  border: 1px solid transparent !important;
+  border-radius: 14px !important;
+  background-image:
+    linear-gradient(var(--rh-black, #000), var(--rh-black, #000)),
+    linear-gradient(105deg,
+      rgb(184 134 11 / 0.55) 0%, rgb(212 175 55 / 0.8) 34%,
+      #FFF3B0 50%,
+      rgb(212 175 55 / 0.8) 66%, rgb(184 134 11 / 0.55) 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: auto, 220% 100%;
+  animation: gold-frame 7s linear infinite;
+}
+
+/* The sticky header is chrome, not a section. A frame there would box in the
+   whole app and compete with the panels it is supposed to sit above. */
+[data-venue-theme="robinhood"] header .bg-glass-white,
+[data-venue-theme="robinhood"] header .glass-plain {
+  border: none !important;
+  border-bottom: 1px solid var(--rh-hairline) !important;
+  border-radius: 0 !important;
+  background-image: none !important;
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .bg-glass-white,
+  [data-venue-skin="robinhood"] { animation: none; background-position: 0 0, 50% 0; }
+}
