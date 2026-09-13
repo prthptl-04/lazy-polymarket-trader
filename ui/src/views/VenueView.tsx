@@ -154,7 +154,7 @@ export function VenueView({ venue }: { venue: Venue }) {
             <span className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-semibold">
               Live
             </span>
-            <ModeToggle mode="live" label="Go Live" state={liveMode} venue={modeKey}
+            <ModeToggle mode="live" label="Go Live" state={liveMode} venue={modeKey} page={venue}
                         gateOpen={!!fund?.router_live_gate?.live_possible}
                         onSet={(v) => (v ? setPreflight("live") : setMode("live", false))} />
             <span className="h-px flex-1 bg-white/[0.09]" />
@@ -250,7 +250,7 @@ export function VenueView({ venue }: { venue: Venue }) {
             <span className="text-[10px] uppercase tracking-[0.16em] text-amber-400/70 font-semibold">
               Paper
             </span>
-            <ModeToggle mode="paper" label="Go Paper" state={paperMode} venue={modeKey}
+            <ModeToggle mode="paper" label="Go Paper" state={paperMode} venue={modeKey} page={venue}
                         gateOpen onSet={(v) => (v ? setPreflight("paper") : setMode("paper", false))} />
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
@@ -361,11 +361,15 @@ const LABELS: Record<string, string> = {
  * process cannot do. A closed rule-#13 gate is shown the same way: the switch
  * is a permission, never an override.
  */
-function ModeToggle({ mode, label, state, venue, gateOpen, onSet }: {
+function ModeToggle({ mode, label, state, venue, page, gateOpen, onSet }: {
   mode: "paper" | "live";
   label: string;
   state?: ModeState;
   venue?: string;
+  /** The PAGE this toggle is on. Both venue pages resolve `venue` to the same
+   *  shared paper adapter, so keying the layout animation on that made the two
+   *  pages' pills one shared element across a view switch. */
+  page: string;
   gateOpen: boolean;
   onSet: (on: boolean) => void;
 }) {
@@ -394,7 +398,7 @@ function ModeToggle({ mode, label, state, venue, gateOpen, onSet }: {
               className="relative px-3 py-[3px] text-[10px] font-bold tracking-wide
                          disabled:cursor-not-allowed">
               {active && (
-                <motion.span layoutId={`mode-${mode}-${venue ?? "none"}`}
+                <motion.span layoutId={`mode-${mode}-${page}`}
                   className={`absolute inset-0 rounded-full ${
                     k === "GO" ? "bg-hood-green/25 border border-hood-green/50"
                                : "bg-red-500/20 border border-red-400/40"}`}
