@@ -32,3 +32,45 @@
   /* NEVER use `opacity` on a glass element — it collapses the backdrop filter
      entirely. Fade with background-color or a wrapper instead. */
 }
+
+/* ---------------------------------------------------------------------------
+   Light ground (P&L-reactive background).
+
+   `useDynamicBackground` stamps data-surface="light" on a wrapper when it has
+   MEASURED that dark ink wins on that wrapper's composited card surface, and
+   passes the ink down as --dhan-ink-rgb. These rules exist because the rest of
+   the dashboard is written in white-on-dark tokens, which vanish on a pale
+   tint; they re-point those same tokens at the ink instead of asking every
+   component to know which ground it is on.
+
+   The alpha hierarchy collapses into three buckets on purpose. White at 25%
+   over near-black is legible; ink at 25% over a near-white card is not, and
+   scripts/pnlColour.check.ts fails the build-adjacent check if the faintest
+   bucket drops under 4.5:1.
+   --------------------------------------------------------------------------- */
+[data-surface="light"] { color: var(--dhan-ink); }
+
+[data-surface="light"] .text-white,
+[data-surface="light"] [class*="text-white/9"],
+[data-surface="light"] [class*="text-white/8"] { color: rgb(var(--dhan-ink-rgb) / 1); }
+[data-surface="light"] [class*="text-white/7"],
+[data-surface="light"] [class*="text-white/6"],
+[data-surface="light"] [class*="text-white/5"] { color: rgb(var(--dhan-ink-rgb) / 0.8); }
+[data-surface="light"] [class*="text-white/4"],
+[data-surface="light"] [class*="text-white/3"],
+[data-surface="light"] [class*="text-white/2"] { color: rgb(var(--dhan-ink-rgb) / 0.66); }
+
+/* Surfaces: a white veil over the tint, so the tint reads through the gaps
+   while text sits on something it can clear 4.5:1 against. */
+[data-surface="light"] .bg-glass-white { background-color: var(--dhan-card); }
+[data-surface="light"] .border-glass-border,
+[data-surface="light"] [class*="border-white/"] { border-color: rgb(var(--dhan-ink-rgb) / 0.14); }
+[data-surface="light"] [class*="bg-white/"] { background-color: rgb(var(--dhan-ink-rgb) / 0.05); }
+[data-surface="light"] .shadow-glass,
+[data-surface="light"] .bg-glass-white { box-shadow: 0 8px 28px rgb(var(--dhan-ink-rgb) / 0.10) !important; }
+
+/* Accents. Neon-on-black does not survive a pale ground; these are the darkened
+   equivalents the check script asserts against the most saturated card. */
+[data-surface="light"] [class*="text-hood-green"] { color: rgb(10 125 20); }
+[data-surface="light"] [class*="text-red-400"]    { color: rgb(200 30 30); }
+[data-surface="light"] [class*="text-amber-400"]  { color: rgb(138 82 6); }

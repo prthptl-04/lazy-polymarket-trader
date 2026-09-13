@@ -3,9 +3,10 @@ import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { EquityArea } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import {
-  usePoll, type Agent, type Balances, type FundStatus, type Lesson,
-  type PaperProgress, type Record_,
+  usePoll, type Agent, type Balances, type Feed, type FundStatus, type Lesson,
+  type PaperProgress, type Position, type Record_,
 } from "../lib/api";
+import { useDynamicBackground } from "../lib/useDynamicBackground";
 
 export function Overview() {
   const { data: rec } = usePoll<Record_>("/api/record");
@@ -18,8 +19,14 @@ export function Overview() {
   const curve = rec?.equity_curve ?? [];
   const gate = fund?.router_live_gate;
 
+  // The ground colour tracks the open trade, bounded by its own exit plan.
+  const active = useActiveTrade();
+  const bg = useDynamicBackground(active?.pnl, active?.maxProfit, active?.maxLoss);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-5 p-5">
+    <div data-surface={bg.surface} style={bg.style}
+         className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-5 p-5 rounded-3xl">
+      <ActiveTradeBanner trade={active} pct={bg.pct} />
 
       {/* ---------------- dual market feed ---------------- */}
       <GlassCard liquid className="md:col-span-2 xl:col-span-3 p-5">
@@ -190,6 +197,68 @@ export function Overview() {
                  hint="A lesson is written every time a position closes at a loss — who dissented and was right, whether the table was unanimous, whether the data was ever verified." />
         )}
       </GlassCard>
+    </div>
+  );
+}
+
+interface ActiveTrade {
+  symbol: string; pnl: number; maxProfit: number; maxLoss: number; last: number;
+}
+
+/**
+ * The trade the ground colour answers to.
+ *
+ * Live marks come from the venue feeds rather than from `/api/positions`,
+ * which reports `unrealized_pct: null` until a cycle marks it — a background
+ * driven by a stale entry price would sit at neutral through a whole move.
+ * The bounds are the position's OWN stop and target, so "fully red" means
+ * "at its stop", not "down some arbitrary dollar amount".
+ */
+function useActiveTrade(): ActiveTrade | undefined {
+  const { data: positions } = usePoll<Position[]>("/api/positions");
+  const { data: hood } = usePoll<Feed[]>("/api/feeds?venue=robinhood", 4000);
+  const { data: poly } = usePoll<Feed[]>("/api/feeds?venue=polymarket_us", 4000);
+
+  const marks = new Map<string, number>();
+  for (const f of [...(hood ?? []), ...(poly ?? [])]) {
+    if (f.last != null) marks.set(f.symbol, f.last);
+  }
+  for (const p of positions ?? []) {
+    const last = marks.get(p.symbol);
+    if (last == null) continue;
+    // Direction is not on the wire; the plan implies it.
+    const long = p.target >= p.entry;
+    const dir = long ? 1 : -1;
+    return {
+      symbol: p.symbol,
+      last,
+      pnl: (last - p.entry) * p.quantity * dir,
+      maxProfit: Math.abs(p.target - p.entry) * p.quantity,
+      maxLoss: Math.abs(p.entry - p.stop) * p.quantity,
+    };
+  }
+  return undefined;
+}
+
+/** Says what the colour means. A page that changes hue without explaining why
+ *  is a mood ring, not an instrument. */
+function ActiveTradeBanner({ trade, pct }: { trade?: ActiveTrade; pct: number }) {
+  return (
+    // On a veil, not on the bare tint: ink at reading weight clears 4.5:1
+    // against a frosted card at every point on the ramp, and against the raw
+    // saturated ground at neither end.
+    <div className="col-span-full w-fit flex items-center gap-2.5 text-[11px] text-white/50
+                    bg-glass-white border border-glass-border rounded-full px-3.5 py-1.5">
+      <span className="w-2 h-2 rounded-full" style={{ background: "currentColor" }} />
+      {trade ? (
+        <span>
+          Ground colour tracks <b className="text-white/80">{trade.symbol}</b>:
+          {" "}{signed(trade.pnl)} unrealised, {pct > 0 ? "+" : ""}{pct.toFixed(0)}% of the way
+          to its {pct >= 0 ? "target" : "stop"} (marked at {money(trade.last)}).
+        </span>
+      ) : (
+        <span>No open position with a live mark — the ground stays neutral.</span>
+      )}
     </div>
   );
 }
