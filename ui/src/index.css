@@ -126,3 +126,10 @@
 .pm-action[data-selected="true"] { background-color: var(--pm-accent, #2d52f3); }
 .pm-action:focus-visible { outline: 2px solid var(--pm-accent-edge, #4f74ff); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .pm-action { transition: none; } .pm-action:hover { transform: none; } }
+
+/* The segmented control's active pill and the status bar's own fills are
+   white-on-dark by default; on a light ground they need the ink instead, and
+   the pill needs more of it than an ordinary panel or the selected tab stops
+   reading as selected. */
+[data-surface="light"] [class*="bg-white/[0.14]"] { background-color: rgb(var(--dhan-ink-rgb) / 0.13); }
+[data-surface="light"] [class*="bg-white/30"]     { background-color: rgb(var(--dhan-ink-rgb) / 0.30); }

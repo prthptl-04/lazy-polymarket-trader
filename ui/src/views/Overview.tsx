@@ -24,8 +24,9 @@ export function Overview() {
   const bg = useDynamicBackground(active?.pnl, active?.maxProfit, active?.maxLoss);
 
   return (
-    <div data-surface={bg.surface} style={bg.style}
-         className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-5 p-5 rounded-3xl">
+    // The tint is painted on <body> by the hook, so it carries the chrome and
+    // the page margins too; this wrapper only lays the panels out.
+    <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-5 p-5">
       <ActiveTradeBanner trade={active} pct={bg.pct} />
 
       {/* ---------------- dual market feed ---------------- */}

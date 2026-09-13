@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * P&L-reactive page tint.
@@ -122,7 +122,13 @@ export interface DynamicBackground {
   surface: "light" | "dark";
   contrast: number;
   passesBodyText: boolean;
-  /** Wrapper style, transition included. */
+  /** Ink for text sitting on the BARE tint — the chrome outside any card.
+   *  Measured separately because a card's white veil lightens what is behind
+   *  the glyphs, and the page has no veil. */
+  pageInk: string;
+  pageSurface: "light" | "dark";
+  /** Wrapper style, transition included. Redundant while `paintDocument` is
+   *  on, which is the default — kept for a wrapper-scoped tint. */
   style: React.CSSProperties;
 }
 
@@ -130,18 +136,20 @@ export function useDynamicBackground(
   currentPnL: number | null | undefined,
   maxExpectedPnL: number | null | undefined,
   maxExpectedLoss: number | null | undefined,
-  options: { neutral?: Rgb; veil?: number } = {},
+  options: { neutral?: Rgb; veil?: number; paintDocument?: boolean } = {},
 ): DynamicBackground {
-  const { neutral = NEUTRAL, veil = CARD_VEIL } = options;
-  return useMemo(() => {
+  const { neutral = NEUTRAL, veil = CARD_VEIL, paintDocument = true } = options;
+  const value = useMemo(() => {
     const pct = pnlPercent(currentPnL ?? 0, maxExpectedPnL ?? 0, maxExpectedLoss ?? 0);
     const rgb = interpolate(pct, neutral);
     const card = composite(rgb, { r: 255, g: 255, b: 255 }, veil);
     const { ink, surface, contrast, passesBodyText } = readableInk(card);
+    const page = readableInk(rgb);
     return {
       pct, rgb, color: toCss(rgb), cardColor: toCss(card),
       ink: toCss(ink), inkRgb: `${ink.r} ${ink.g} ${ink.b}`,
       surface, contrast, passesBodyText,
+      pageInk: toCss(page.ink), pageSurface: page.surface,
       style: {
         backgroundColor: toCss(rgb),
         transition: "background-color 0.5s ease-in-out",
@@ -149,7 +157,79 @@ export function useDynamicBackground(
         ["--dhan-ink" as string]: toCss(ink),
         ["--dhan-ink-rgb" as string]: `${ink.r} ${ink.g} ${ink.b}`,
         ["--dhan-card" as string]: `rgba(255, 255, 255, ${veil})`,
+        ["--dhan-page-ink" as string]: toCss(page.ink),
       } as React.CSSProperties,
     };
   }, [currentPnL, maxExpectedPnL, maxExpectedLoss, neutral, veil]);
+
+  usePaintDocument(paintDocument ? value : null);
+  return value;
+}
+
+const VARS = ["--dhan-ink", "--dhan-ink-rgb", "--dhan-card", "--dhan-page-ink"] as const;
+
+/**
+ * Paint the whole document, not just a wrapper.
+ *
+ * The canvas belongs to `body` and the chrome (status bar, wallet strip) is a
+ * sibling of every view, so a tint confined to one div leaves the page around
+ * it on the house gradient and the bar's white type unreadable. Putting the
+ * attribute on <html> means the same [data-surface] rules that restyle a card
+ * restyle the chrome, with no view having to hand the colour to its siblings.
+ *
+ * The original background is captured ONCE. Restoring per colour change would
+ * hand back the previous tint rather than the gradient this hook found.
+ */
+function usePaintDocument(value: DynamicBackground | null) {
+  const original = useRef<{ background: string; transition: string } | null>(null);
+  const active = value !== null;
+
+  useEffect(() => {
+    if (!active) return;
+    const body = document.body;
+    original.current = { background: body.style.background, transition: body.style.transition };
+    body.style.transition = "background-color 0.5s ease-in-out, color 0.5s ease-in-out";
+    return () => {
+      const root = document.documentElement;
+      delete root.dataset.surface;
+      for (const v of VARS) root.style.removeProperty(v);
+      body.style.background = original.current?.background ?? "";
+      body.style.transition = original.current?.transition ?? "";
+      body.style.color = "";
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!value) return;
+    const root = document.documentElement;
+    root.dataset.surface = value.surface;
+    root.style.setProperty("--dhan-ink", value.ink);
+    root.style.setProperty("--dhan-ink-rgb", value.inkRgb);
+    root.style.setProperty("--dhan-card", `rgba(255, 255, 255, ${CARD_VEIL})`);
+    root.style.setProperty("--dhan-page-ink", value.pageInk);
+    document.body.style.background = value.color;
+    document.body.style.color = value.pageInk;
+  }, [value]);
+}
+
+/**
+ * What the document is currently painted as, for chrome that cannot be styled
+ * from CSS — framer-motion writes its colours inline, so those few values have
+ * to be chosen in JS. Reads the attribute the painter sets, so it works for
+ * any view that paints, and reports "dark" when nothing has.
+ */
+export function useDocumentSurface(): "light" | "dark" {
+  const read = () =>
+    (document.documentElement.dataset.surface === "light" ? "light" : "dark");
+  const [surface, setSurface] = useState<"light" | "dark">(read);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => setSurface(read()));
+    observer.observe(root, { attributes: true, attributeFilter: ["data-surface"] });
+    setSurface(read());
+    return () => observer.disconnect();
+  }, []);
+
+  return surface;
 }

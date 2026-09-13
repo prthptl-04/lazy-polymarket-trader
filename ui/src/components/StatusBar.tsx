@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Pause, Play, Sparkles } from "lucide-react";
 import { post, usePoll, type Balances, type FundStatus, type LlmStatus } from "../lib/api";
+import { useDocumentSurface } from "../lib/useDynamicBackground";
 
 export type ViewKey = "overview" | "polymarket" | "robinhood";
 
@@ -16,6 +17,11 @@ function ToggleSwitch({
   on, onChange, label, tone = "amber",
 }: { on: boolean; onChange: (v: boolean) => void; label: string; tone?: "amber" | "green" }) {
   const glow = tone === "amber" ? "rgba(251,191,36,0.55)" : "rgba(0,200,5,0.55)";
+  // framer-motion writes these inline, where the [data-surface] CSS cannot
+  // reach them — so this is the one place the ink is chosen in JS.
+  const light = useDocumentSurface() === "light";
+  const track = light ? "rgba(20,24,30,0.10)" : "rgba(255,255,255,0.06)";
+  const knob = light ? "rgba(20,24,30,0.45)" : "rgba(255,255,255,0.45)";
   return (
     <button
       onClick={() => onChange(!on)}
@@ -27,7 +33,7 @@ function ToggleSwitch({
       <motion.span
         className="relative w-[42px] h-[24px] rounded-full border border-white/15 flex items-center px-[3px]"
         animate={{
-          backgroundColor: on ? "rgba(251,191,36,0.22)" : "rgba(255,255,255,0.06)",
+          backgroundColor: on ? "rgba(251,191,36,0.22)" : track,
           boxShadow: on ? `0 0 14px ${glow}` : "0 0 0 rgba(0,0,0,0)",
         }}
         transition={{ duration: 0.22 }}
@@ -37,7 +43,7 @@ function ToggleSwitch({
           className="w-[18px] h-[18px] rounded-full"
           animate={{
             x: on ? 18 : 0,
-            backgroundColor: on ? "#fbbf24" : "rgba(255,255,255,0.45)",
+            backgroundColor: on ? "#fbbf24" : knob,
           }}
           transition={{ type: "spring", stiffness: 520, damping: 32 }}
         />
@@ -212,7 +218,11 @@ function WalletStrip({ balances }: { balances: Balances | null }) {
   const total = entries.reduce((a, [, v]) => a + (v.available ? v.cash_usd ?? 0 : 0), 0);
   const nice = (k: string) => (k === "polymarket_us" ? "Polymarket" : k === "robinhood" ? "Robinhood" : k);
   return (
-    <div className="flex items-center justify-end gap-5 px-6 pt-2 text-[11px]">
+    // On a veil rather than on the bare page: these numbers sit outside every
+    // card, and ink at label weight does not clear 4.5:1 against a fully
+    // saturated ground.
+    <div className="flex items-center justify-end gap-5 text-[11px] mt-2 ml-auto w-fit
+                    glass-plain bg-glass-white border border-glass-border rounded-2xl px-4 py-1.5">
       <span className="text-white/35">Combined</span>
       <span className="font-mono text-white/80">${total.toFixed(2)}</span>
       {entries.map(([k, v]) => (
