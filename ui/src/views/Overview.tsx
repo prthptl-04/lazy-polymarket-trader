@@ -358,7 +358,18 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
               tone={toneOf(shown.realized)} />
         <Stat label="Win rate"
               value={shown.win_rate == null ? "—" : `${shown.win_rate.toFixed(0)}%`}
-              sub={shown.closed ? `${shown.wins}W · ${shown.losses}L` : "nothing closed here"} />
+              sub={shown.closed
+                ? `${shown.wins}W · ${shown.losses}L · ${live ? "broker" : "paper"}`
+                : "nothing closed here"} />
+        {/* Always the fund's simulated record, whatever the headline is sourced
+            from. It is the number rule #13 counts, so it should not disappear
+            behind the broker's the moment an engine connects — and when the
+            broker is not readable the two coincide, which the subtitles say. */}
+        <Stat label="Paper win rate"
+              value={fundRec?.win_rate == null ? "—" : `${fundRec.win_rate.toFixed(0)}%`}
+              sub={fundRec?.closed
+                ? `${fundRec.wins}W · ${fundRec.losses}L · simulated fills`
+                : "no paper trades here yet"} />
         <Stat label="Best / worst"
               value={`${signed(shown.best)} / ${signed(shown.worst)}`} />
         <Stat label="Profit factor"
