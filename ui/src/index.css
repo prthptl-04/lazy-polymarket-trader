@@ -512,3 +512,49 @@
 [data-venue-skin="robinhood"] {
   box-shadow: 0 0 0 1px rgb(255 215 0 / 0.25), 0 10px 30px rgb(184 134 11 / 0.28);
 }
+
+/* Insets: the same lit frame one level down.
+ *
+ * A framed column with unstructured content inside it still reads as one
+ * undivided slab — the chart and the numbers run together. These give the
+ * blocks inside a venue column their own boundary in the venue's own colour,
+ * at one pixel so the nesting is legible: the column owns the 2px frame, the
+ * blocks inside own a hairline of the same metal.
+ *
+ * The fill is a step off the ground rather than the same colour, because a
+ * frame alone does not say "this is a layer" — the surface under it has to
+ * change too. */
+:is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .venue-inset {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background-image:
+    linear-gradient(var(--pm-surface-solid, #1a2b3a), var(--pm-surface-solid, #1a2b3a)),
+    linear-gradient(105deg,
+      #15803d 0%, #22a35a 34%, #BBF7D0 50%, #22a35a 66%, #15803d 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: auto, 220% 100%;
+  animation: frame-sweep 9s linear infinite;
+}
+:is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .venue-inset {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background-image:
+    linear-gradient(#0a0a0a, #0a0a0a),
+    linear-gradient(105deg,
+      rgb(184 134 11 / 0.6) 0%, rgb(212 175 55 / 0.85) 34%, #FFF3B0 50%,
+      rgb(212 175 55 / 0.85) 66%, rgb(184 134 11 / 0.6) 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: auto, 220% 100%;
+  animation: frame-sweep 9s linear infinite;
+}
+/* An inset already has a boundary; a rule inside it is one line too many. */
+[data-venue-skin] .venue-inset { border-top-color: transparent !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  :is([data-venue-theme="polymarket"], [data-venue-skin="polymarket"]) .venue-inset,
+  :is([data-venue-theme="robinhood"], [data-venue-skin="robinhood"]) .venue-inset {
+    animation: none; background-position: 0 0, 50% 0;
+  }
+}

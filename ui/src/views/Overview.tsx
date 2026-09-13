@@ -345,15 +345,15 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
 
       {/* Bled to the panel edges and stretched into whatever height is left —
           the chart is the thing worth the space. */}
-      <div className="flex-1 min-h-[280px] -mx-4">
+      <div className="venue-inset flex-1 min-h-[280px] -mx-2 p-2">
         {hood
           ? <Sparkline values={fundRec?.equity_curve ?? []} colour="#FFD700"
                        gradient={["#FFD700", "#B8860B"]} height="100%" />
           : <EquityArea values={fundRec?.equity_curve ?? []} colour={colour} height="100%" />}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4 mt-auto pt-4
-                      border-t border-white/[0.07]">
+      <div className="venue-inset grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4
+                      mt-3 -mx-2 p-4">
         <Stat label="Realised P&L" value={signed(shown.realized)}
               tone={toneOf(shown.realized)} />
         <Stat label="Win rate"
