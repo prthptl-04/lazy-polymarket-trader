@@ -154,7 +154,12 @@ export function VenueView({ venue }: { venue: Venue }) {
             <span className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-semibold">
               Live
             </span>
+            {/* Live cannot run without the connection it trades through, so
+                the control is disabled AND reads STOP while the engine is down
+                — not merely refused on press. Showing GO as the active side
+                would claim a live session that cannot exist. */}
             <ModeToggle mode="live" label="Go Live" state={liveMode} venue={modeKey} page={venue}
+                        blockedBy={engine?.on ? null : "engine off — start it on the Overview"}
                         gateOpen={!!fund?.router_live_gate?.live_possible}
                         onSet={(v) => (v ? setPreflight("live") : setMode("live", false))} />
             <span className="h-px flex-1 bg-white/[0.09]" />
@@ -361,11 +366,16 @@ const LABELS: Record<string, string> = {
  * process cannot do. A closed rule-#13 gate is shown the same way: the switch
  * is a permission, never an override.
  */
-function ModeToggle({ mode, label, state, venue, page, gateOpen, onSet }: {
+function ModeToggle({ mode, label, state, venue, page, gateOpen, blockedBy = null, onSet }: {
   mode: "paper" | "live";
   label: string;
   state?: ModeState;
   venue?: string;
+  /** A precondition this mode cannot run without, or null. When set the toggle
+   *  is disabled and reads STOP whatever the stored mode says — which is also
+   *  the truth, since the engine being down switches the venue session off and
+   *  the router refuses every open. */
+  blockedBy?: string | null;
   /** The PAGE this toggle is on. Both venue pages resolve `venue` to the same
    *  shared paper adapter, so keying the layout animation on that made the two
    *  pages' pills one shared element across a view switch. */
@@ -377,10 +387,13 @@ function ModeToggle({ mode, label, state, venue, page, gateOpen, onSet }: {
   // rule-#13 gate leaves the button live on purpose: pressing it runs the
   // preflight, which names the check that stopped it. A dead control explains
   // nothing, and "why is this greyed out" is the question it would create.
-  const usable = !!venue && !!state?.attached;
-  const on = state?.on !== false;
+  const usable = !!venue && !!state?.attached && !blockedBy;
+  // Effective, not stored: with the precondition unmet nothing can open, so
+  // the switch shows the state the fund is actually in.
+  const on = !blockedBy && state?.on !== false;
   const why = !venue ? "no venue attached"
     : !state?.attached ? `no ${mode} venue attached`
+    : blockedBy ? blockedBy
     : !gateOpen ? "gate shut — press to see why" : "";
 
   return (
