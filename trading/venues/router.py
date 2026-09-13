@@ -67,6 +67,15 @@ class VenueRouter:
     max_extended_hours_spread_bps: int = MAX_EXTENDED_HOURS_SPREAD_BPS
     # Venue preference per asset class; first supporting adapter wins otherwise.
     preferences: dict[str, str] = field(default_factory=dict)
+    # Which venue a symbol was actually opened at. A close MUST go back to the
+    # broker that holds the position: routing a live exit to paper would mark a
+    # position closed in our books while it is still open at the broker, which
+    # is the single worst thing two execution venues can do to you.
+    #
+    # In memory only. After a restart the map is empty and an unknown close
+    # falls back to the live venue when one is usable — a broker that rejects
+    # "you don't hold this" is loud and harmless; the reverse is silent and not.
+    opened_at: dict[str, str] = field(default_factory=dict)
 
     def register(self, adapter: VenueAdapter) -> None:
         self.adapters.append(adapter)
@@ -106,16 +115,68 @@ class VenueRouter:
         self.modes[f"{name}:{mode}"] = bool(on)
         return self.modes[f"{name}:{mode}"]
 
-    def venue_for(self, asset_class: AssetClass) -> Optional[VenueAdapter]:
+    def venue_for(
+        self,
+        asset_class: AssetClass,
+        *,
+        symbol: Optional[str] = None,
+        is_close: bool = False,
+    ) -> Optional[VenueAdapter]:
+        """Pick the adapter for this order.
+
+        Order of authority:
+
+        1. **An explicit preference**, if it supports the class.
+        2. **The venue that opened the position**, for a close. Nothing may
+           override this — see `opened_at`.
+        3. **Live, but only if it is both switched on AND permitted.** The
+           live-mode session says the operator wants it; `LiveTradingGate` says
+           rule #13 allows it. Either one saying no means paper, because a
+           toggle must never be able to promote itself past the checklist.
+        4. **Paper**, then whatever supports the class at all, so a refusal can
+           still name a venue.
+        """
+        supporting = [a for a in self.adapters if a.supports(asset_class)]
+        if not supporting:
+            return None
+
         preferred = self.preferences.get(asset_class)
         if preferred:
-            for a in self.adapters:
-                if a.name == preferred and a.supports(asset_class):
+            for a in supporting:
+                if a.name == preferred:
                     return a
-        for a in self.adapters:
-            if a.supports(asset_class):
+
+        if is_close and symbol:
+            held = self.opened_at.get(symbol)
+            if held:
+                for a in supporting:
+                    if a.name == held:
+                        return a
+
+        live = [a for a in supporting if self.mode_of(a) == "live"]
+        usable_live = [a for a in live if self._live_is_permitted(a)]
+        if usable_live and (not is_close or not symbol or symbol not in self.opened_at):
+            return usable_live[0]
+
+        for a in supporting:
+            if self.mode_of(a) == "paper":
                 return a
-        return None
+        return supporting[0]
+
+    def _live_is_permitted(self, adapter: VenueAdapter) -> bool:
+        """Switched on by the operator AND allowed by rule #13. Both, always."""
+        if not self.is_enabled(adapter.name):
+            return False
+        if not self.is_mode_enabled(adapter.name, "live"):
+            return False
+        if self.live_gate is None:
+            # No gate attached is not an endorsement. Refuse by default, same
+            # stance the gate itself takes.
+            return False
+        try:
+            return bool(self.live_gate.evaluate(adapter).allowed)
+        except Exception:
+            return False
 
     # ---------- gates ----------
 
@@ -127,7 +188,8 @@ class VenueRouter:
         quote: Optional[Quote] = None,
     ) -> RouteDecision:
         """Dry-run every gate. `place()` calls this first; callers may too."""
-        adapter = self.venue_for(request.asset_class)
+        adapter = self.venue_for(request.asset_class, symbol=request.symbol,
+                                 is_close=request.is_close)
         if adapter is None:
             return RouteDecision(
                 allowed=False, gate="venue",
@@ -255,9 +317,18 @@ class VenueRouter:
                 venue=decision.venue_name,
             )
 
-        adapter = self.venue_for(request.asset_class)
+        adapter = self.venue_for(request.asset_class, symbol=request.symbol,
+                                 is_close=request.is_close)
         assert adapter is not None    # evaluate() already proved this
         ack = await adapter.place_order(request)
+
+        # Remember where it lives, so the exit goes back to the same broker.
+        # Deliberately NOT cleared on a close: a partial exit leaves the rest of
+        # the position at that venue, and forgetting would send the remainder
+        # wherever the mode rules happened to point. A stale entry is harmless —
+        # reopening the symbol overwrites it.
+        if ack.accepted and not request.is_close:
+            self.opened_at[request.symbol] = adapter.name
 
         # Keep the day-trade ledger honest: only count orders that were taken.
         if ack.accepted and self.pdt is not None and request.asset_class == "equity":
@@ -284,4 +355,9 @@ class VenueRouter:
             "pdt": self.pdt.status(moment) if self.pdt else None,
             "kill_switch": self.kill_switch.status(moment) if self.kill_switch else None,
             "live_gate": self.live_gate.status() if self.live_gate else None,
+            "live_permitted": {
+                a.name: self._live_is_permitted(a)
+                for a in self.adapters if self.mode_of(a) == "live"
+            },
+            "opened_at": dict(self.opened_at),
         }

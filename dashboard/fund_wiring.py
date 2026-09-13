@@ -128,8 +128,23 @@ def build_fund(
     # for real with PAPER_TRADING=true having no effect at all.
     live_gate = LiveTradingGate(memory=memory, criteria=criteria,
                                 bankroll_usd=cfg.bankroll_usd)
-    router = VenueRouter(adapters=[trading_venue], pdt=pdt,
+    # The live venue is REGISTERED, not selected. Registration is what makes the
+    # dashboard's live switch real; selection still requires the operator to
+    # switch live on AND rule #13's checklist to pass, and VenueRouter.venue_for
+    # checks both on every order. With the checklist unmet — which is the state
+    # today — every order still routes to paper.
+    adapters = [trading_venue]
+    if robinhood is not None and robinhood is not trading_venue:
+        adapters.append(robinhood)
+        logger.info("Robinhood registered as a LIVE venue. Execution stays on "
+                    "paper until the rule-#13 checklist passes AND live is "
+                    "switched on for it.")
+
+    router = VenueRouter(adapters=adapters, pdt=pdt,
                          kill_switch=kill_switch, live_gate=live_gate)
+    # Live starts OFF. A venue that arms itself the moment it is plugged in is
+    # not a switch, and the operator should be the one to turn it on.
+    router.set_mode_enabled("robinhood", "live", False)
 
     pipeline = ThesisPipeline(
         router=router,

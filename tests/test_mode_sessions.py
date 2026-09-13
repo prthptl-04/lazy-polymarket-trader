@@ -96,3 +96,75 @@ def test_mode_choice_survives_a_restart(tmp_path):
 def test_unknown_venue_is_rejected(tmp_path):
     result = _runtime(tmp_path, _router()).set_venue_mode("nasdaq", "live", True)
     assert result["ok"] is False and "unknown venue" in result["reason"]
+
+
+# ---------- two execution venues ----------
+
+class _Live:
+    """A live adapter. Declares itself, the way trading.live_gate expects."""
+    name = "robinhood"
+    is_live = True
+    def supports(self, asset_class): return asset_class in ("equity", "crypto")
+
+
+class _Gate:
+    def __init__(self, allowed): self.allowed = allowed
+    def evaluate(self, adapter):
+        return type("V", (), {"allowed": self.allowed, "reason": "test"})()
+    def status(self): return {}
+
+
+def _two_venue_router(*, gate_open: bool, live_on: bool = True) -> VenueRouter:
+    r = VenueRouter(adapters=[PaperVenue(), _Live()], live_gate=_Gate(gate_open))
+    r.set_mode_enabled("robinhood", "live", live_on)
+    return r
+
+
+def test_live_is_only_selected_when_the_gate_and_the_switch_both_say_yes():
+    assert _two_venue_router(gate_open=True).venue_for("equity").name == "robinhood"
+    # Either one saying no is enough to keep execution on paper.
+    assert _two_venue_router(gate_open=False).venue_for("equity").name == "paper"
+    assert _two_venue_router(gate_open=True, live_on=False).venue_for("equity").name == "paper"
+
+
+def test_a_switch_cannot_promote_itself_past_the_checklist():
+    """The whole point of rule #13: the operator's intent is not the authority."""
+    r = _two_venue_router(gate_open=False)
+    r.set_mode_enabled("robinhood", "live", True)
+    assert r.venue_for("equity").name == "paper"
+
+
+def test_no_gate_attached_refuses_live():
+    r = VenueRouter(adapters=[PaperVenue(), _Live()])      # live_gate is None
+    assert r.venue_for("equity").name == "paper"
+
+
+def test_a_close_goes_back_to_the_venue_that_opened_it():
+    """Routing a live exit to paper would close it in our books only."""
+    r = _two_venue_router(gate_open=True)
+    r.opened_at["AAPL"] = "paper"
+    assert r.venue_for("equity", symbol="AAPL", is_close=True).name == "paper"
+    # ...even after live is switched off, a live position still exits live.
+    r.opened_at["MSFT"] = "robinhood"
+    r.set_mode_enabled("robinhood", "live", False)
+    assert r.venue_for("equity", symbol="MSFT", is_close=True).name == "robinhood"
+
+
+@pytest.mark.asyncio
+async def test_place_records_where_a_position_lives():
+    r = VenueRouter(adapters=[PaperVenue(quote_source=None)])
+    r.adapters[0].set_quote("AAPL", bid=100.0, ask=100.1)
+    await r.place(_order(), MOMENT)
+    assert r.opened_at["AAPL"] == "paper"
+
+
+@pytest.mark.asyncio
+async def test_a_partial_exit_does_not_forget_where_the_rest_lives():
+    """Forgetting on the first sell would route the remainder by mode rules."""
+    r = VenueRouter(adapters=[PaperVenue(quote_source=None)])
+    r.adapters[0].set_quote("AAPL", bid=100.0, ask=100.1)
+    await r.place(_order(), MOMENT)
+    await r.place(OrderRequest(symbol="AAPL", side="sell", asset_class="equity",
+                               order_type="market", quantity=0.2,
+                               client_order_id="c2"), MOMENT)
+    assert r.opened_at["AAPL"] == "paper"
