@@ -11,7 +11,8 @@
 
 [fund]
 # Capital the sizing math works against.
-bankroll_usd = 1000.0
+# Matches the funded Robinhood Agentic account (verified $500 on 2026-09-12).
+bankroll_usd = 500.0
 
 # How often a cycle runs. Swing horizon — this is not an HFT loop.
 cycle_interval_seconds = 300.0
@@ -19,7 +20,7 @@ cycle_interval_seconds = 300.0
 # Daily loss kill-switch. Once intraday drawdown reaches this, no new risk is
 # taken for the rest of the day; exits stay open. Keep it well under 25% of
 # bankroll or it will not fire before real damage is done.
-max_daily_loss_usd = 50.0
+max_daily_loss_usd = 50.0   # 10% of bankroll
 
 # Upper bound on deliberations per cycle. Each one costs six LLM calls, so this
 # is the main lever on token spend.
@@ -31,7 +32,7 @@ lookback_bars = 60
 # Robinhood Agentic account equity, used for the PDT threshold check.
 # Under $25,000 the Pattern Day Trader rule binds: 3 day trades per 5 business
 # days on equities. Crypto is exempt.
-account_equity_usd = 0.0
+account_equity_usd = 500.0
 
 # Interrupted deliberations older than this are abandoned rather than resumed.
 # A thesis reasons about prices at a moment in time; an hour-old conclusion
@@ -39,18 +40,20 @@ account_equity_usd = 0.0
 resume_max_age_seconds = 3600.0
 
 [watchlist]
-# Traded Mon-Fri, premarket through after-hours.
+# EMPTY on purpose: the scout screens the whole US tape each cycle (~12,500
+# tickers) and ranks by liquidity and momentum. Fill this in only to pin the
+# fund to specific names, which overrides discovery entirely.
 equity = []
 
 # Traded nights, weekends and market holidays. Exempt from the PDT rule, which
 # is why the weekend rotation exists.
-crypto = []
+crypto = ["BTC", "ETH"]
 
 [data]
 # none   — no price history; every candidate is pre-screened out. Safe default.
 # static — supplied in code; used by tests, backtests and replay.
 #
-# A live provider has not been chosen yet. See docs/OPEN_NOTES.md — the
-# recommendation is Massive's free EOD tier plus its $29/mo fundamentals
-# add-on, composed with Robinhood MCP for real-time quotes.
-provider = "none"
+# massive — bars from Massive (equity + crypto, verified entitled), fundamentals
+#           from SEC EDGAR (free), and live quotes from Robinhood when the
+#           daemon holds an authenticated MCP session.
+provider = "massive"

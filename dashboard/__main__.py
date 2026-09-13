@@ -11,6 +11,15 @@ from __future__ import annotations
 import os
 
 import uvicorn
+from dotenv import load_dotenv
+
+# Load .env BEFORE anything reads os.environ. Without this the entrypoint sees
+# none of the configured keys: no ANTHROPIC_API_KEY means build_fund returns
+# None and the dashboard starts with no fund attached, and no venue credentials
+# means every balance reads as an error. Every other caller in this codebase
+# loads it explicitly, so the omission here was invisible until the app was
+# actually run.
+load_dotenv()
 
 from dashboard.fund_wiring import build_fund
 from dashboard.runtime import build_runtime

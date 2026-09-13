@@ -99,7 +99,10 @@ def build_fund(
     # Gemini failover. Absent config it reports unavailable and the router
     # simply never routes to it.
     gemini = GeminiBackend()
-    router = LlmRouter(client=client, gemini=gemini)
+    # Named distinctly: an earlier version called both of these `router`,
+    # so the venue router silently replaced the LLM router and the round
+    # table was handed the wrong object entirely.
+    llm_router = LlmRouter(client=client, gemini=gemini)
     if not gemini.available:
         logger.info("Gemini failover not configured (no GEMINI_API_KEY, no CLI)")
 
@@ -144,7 +147,7 @@ def build_fund(
         router=router,
         position_book=position_book,
         pipeline=pipeline,
-        round_table=RoundTable(client=client, router=router, memory=memory),
+        round_table=RoundTable(client=client, router=llm_router, memory=memory),
         data=build_data_provider(cfg, trading_venue),
         equity_watchlist=cfg.equity_watchlist,
         crypto_watchlist=cfg.crypto_watchlist,
@@ -164,7 +167,7 @@ def build_fund(
     )
     # Exposed so the dashboard can show open positions and their live stops.
     scheduler.position_book = position_book
-    scheduler.llm_router = router
+    scheduler.llm_router = llm_router
     scheduler.robinhood = robinhood
     return scheduler
 
