@@ -168,3 +168,15 @@ export interface Costs {
              cache_read_multiplier: number; cache_write_multiplier: number };
   note: string | null;
 }
+
+export interface BrokerRecord {
+  source: "broker"; available: boolean; reason?: string; span?: string;
+  trades?: number; closed?: number; unparsed?: number;
+  wins?: number; losses?: number; realized_usd?: number;
+  best_usd?: number; worst_usd?: number; win_rate?: number | null;
+  profit_factor?: number | null; equity_usd?: number; cash_usd?: number;
+}
+export interface VenueStats {
+  venue: string; fund: Record_; broker: BrokerRecord | null;
+  primary: "broker" | "fund";
+}

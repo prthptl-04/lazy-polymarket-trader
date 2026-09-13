@@ -598,6 +598,46 @@ class DashboardRuntime:
             "target": position.plan.target if position else None,
         }
 
+    # ---------- per-venue statistics ----------
+
+    async def venue_stats(self, venue: str) -> dict:
+        """Two records for one venue, each labelled.
+
+        `fund` is what THIS FUND did at that venue, from the position book.
+        `broker` is what the ACCOUNT did, from the venue's own ledger. They
+        answer different questions and are never merged: the account's history
+        includes trades the fund never made, and the fund's paper record
+        includes fills the broker never saw.
+
+        `primary` names the one the panel should headline — the broker when it
+        is reachable, because a panel labelled with a venue's name should show
+        that venue's money.
+        """
+        fund = self.record(venue)
+        adapter = next(
+            (a for a in (self._router().adapters if self._router() else [])
+             if a.name == venue), None)
+        broker: Optional[dict] = None
+        if adapter is not None and hasattr(adapter, "realized_stats"):
+            try:
+                broker = await adapter.realized_stats()
+            except Exception as e:
+                broker = {"source": "broker", "available": False,
+                          "reason": f"{type(e).__name__}"}
+            if broker.get("available"):
+                try:
+                    snapshot = await adapter.account()
+                    broker["equity_usd"] = snapshot.equity_usd
+                    broker["cash_usd"] = snapshot.cash_usd
+                except Exception:
+                    pass                      # the P&L is still worth showing
+        return {
+            "venue": venue,
+            "fund": fund,
+            "broker": broker,
+            "primary": "broker" if (broker or {}).get("available") else "fund",
+        }
+
     # ---------- model spend ----------
 
     def costs(self) -> dict:

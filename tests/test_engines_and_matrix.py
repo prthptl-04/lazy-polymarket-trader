@@ -149,3 +149,40 @@ def test_trades_closed_before_asset_class_was_recorded_are_fund_wide_only(tmp_pa
     assert rt.record()["closed"] == 1
     assert rt.record("robinhood")["closed"] == 0
     assert rt.record("polymarket_us")["closed"] == 0
+
+
+# ---------- venue stats: fund record vs broker record ----------
+
+class _WithLedger(_Live):
+    def __init__(self, stats): super().__init__(); self._stats = stats
+    async def realized_stats(self): return self._stats
+    async def account(self):
+        from trading.venues.base import AccountSnapshot
+        return AccountSnapshot(equity_usd=500.0, buying_power_usd=500.0,
+                               cash_usd=500.0, venue="robinhood")
+
+
+@pytest.mark.asyncio
+async def test_broker_headlines_when_it_is_reachable(tmp_path):
+    rt = _runtime(tmp_path, [_WithLedger({"source": "broker", "available": True,
+                                          "realized_usd": 12.0})], running=True)
+    out = await rt.venue_stats("robinhood")
+    assert out["primary"] == "broker"
+    assert out["broker"]["equity_usd"] == 500.0
+    # The fund's own record is still carried, never merged into the broker's.
+    assert out["fund"]["closed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_unreachable_broker_falls_back_to_the_fund_record(tmp_path):
+    rt = _runtime(tmp_path, [_WithLedger({"source": "broker", "available": False,
+                                          "reason": "not authenticated"})], running=True)
+    out = await rt.venue_stats("robinhood")
+    assert out["primary"] == "fund"
+    assert out["broker"]["reason"] == "not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_a_venue_without_a_ledger_reports_no_broker(tmp_path):
+    out = await _runtime(tmp_path, [PaperVenue()], running=True).venue_stats("paper")
+    assert out["broker"] is None and out["primary"] == "fund"

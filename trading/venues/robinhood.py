@@ -59,6 +59,7 @@ TOOL_NAMES = {
     "place_crypto": "place_crypto_order",
     "cancel_equity": "cancel_equity_order",
     "cancel_crypto": "cancel_crypto_order",
+    "pnl_history": "get_pnl_trade_history",
 }
 
 # Our vocabulary -> Robinhood's.
@@ -180,6 +181,80 @@ class RobinhoodVenue:
         )
 
     # ---------- writes ----------
+
+    # ---------- realised record ----------
+
+    async def realized_stats(self, *, span: str = "all", pages: int = 4) -> dict:
+        """What this account has actually realised, from the broker's own ledger.
+
+        The fund's paper book knows what the FUND did. This knows what the
+        ACCOUNT did, which is the number on the Overview's Robinhood column —
+        they are different questions and the dashboard labels which it is
+        showing.
+
+        Field names are probed rather than assumed: an empty history is a valid
+        answer (this account has none), but rows we cannot parse are reported as
+        a parse failure instead of being silently counted as zero.
+
+        `span` is the server's vocabulary, not ours — week | month | 3month |
+        ytd | all. It rejects anything else with a plain string.
+        """
+        try:
+            ids = await self.account_ids()
+        except VenueError as e:
+            return {"source": "broker", "available": False, "reason": str(e)}
+
+        trades: list[dict] = []
+        cursor = ""
+        try:
+            for _ in range(max(1, pages)):
+                args = {"account_number": ids.account_number, "span": span}
+                if cursor:
+                    args["cursor"] = cursor
+                data = await self.session.call(TOOL_NAMES["pnl_history"], args)
+                # The server answers a bad argument with a plain string, not an
+                # error status. Treating that as an empty result would report
+                # "no trades" for what is actually a rejected call.
+                if not isinstance(data, dict):
+                    return {"source": "broker", "available": False,
+                            "reason": str(data)[:160]}
+                body = data.get("data") or {}
+                trades.extend(body.get("trades") or [])
+                cursor = body.get("next_cursor") or ""
+                if not cursor:
+                    break
+        except Exception as e:
+            return {"source": "broker", "available": False, "reason": redact(e)}
+
+        gains: list[float] = []
+        unparsed = 0
+        for t in trades:
+            g = _num(t.get("realized_gain"))
+            if g is None:
+                g = _num(t.get("realized_pnl")) or _num(t.get("gain")) or _num(t.get("pnl"))
+            if g is None:
+                unparsed += 1
+                continue
+            gains.append(g)
+
+        wins = [g for g in gains if g > 0]
+        losses = [g for g in gains if g < 0]
+        gross_loss = abs(sum(losses))
+        return {
+            "source": "broker",
+            "available": True,
+            "span": span,
+            "trades": len(trades),
+            "closed": len(gains),
+            "unparsed": unparsed,
+            "wins": len(wins),
+            "losses": len(losses),
+            "realized_usd": round(sum(gains), 2),
+            "best_usd": round(max(gains), 2) if gains else 0.0,
+            "worst_usd": round(min(gains), 2) if gains else 0.0,
+            "win_rate": round(len(wins) / len(gains) * 100, 2) if gains else None,
+            "profit_factor": round(sum(wins) / gross_loss, 2) if gross_loss else None,
+        }
 
     async def place_order(self, request: OrderRequest) -> OrderAck:
         try:

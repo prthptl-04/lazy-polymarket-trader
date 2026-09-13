@@ -226,11 +226,21 @@ async def test_missing_quote_raises_venue_error():
 
 
 def test_tool_names_match_the_verified_surface():
+    """Every tool here was called against the live server before being added.
+
+    The set is pinned so a tool cannot be introduced on the strength of the
+    documentation alone — the response shapes this adapter parses were read off
+    real replies, and a guessed one would fail silently rather than loudly.
+    """
     verified = {
         "get_accounts", "get_portfolio", "get_equity_positions",
         "get_crypto_positions", "get_equity_quotes", "get_crypto_quotes",
         "place_equity_order", "place_crypto_order",
         "cancel_equity_order", "cancel_crypto_order",
+        # Verified 2026-09-13: returns {"data": {"trades": [...],
+        # "next_cursor": ""}}, and answers a bad span with a plain STRING
+        # rather than an error status.
+        "get_pnl_trade_history",
     }
     assert set(TOOL_NAMES.values()) == verified
 
@@ -267,3 +277,64 @@ async def test_a_zero_bid_means_no_book_not_a_price_of_zero():
     assert q.bid is None and q.ask is None
     assert q.last == pytest.approx(100.0)
     assert q.spread_bps is None
+
+
+# ---------------- realised ledger, verified live ----------------
+
+@pytest.mark.asyncio
+async def test_realized_stats_reads_the_brokers_own_ledger():
+    s = _Session({
+        TOOL_NAMES["accounts"]: {"data": {"accounts": [
+            {"account_number": "123", "agentic_allowed": True}]}},
+        TOOL_NAMES["pnl_history"]: {"data": {"trades": [
+            {"symbol": "AAPL", "realized_gain": "41.20"},
+            {"symbol": "NVDA", "realized_gain": "-18.70"},
+            {"symbol": "MSFT", "realized_gain": "22.00"},
+        ], "next_cursor": ""}},
+    })
+    stats = await RobinhoodVenue(session=s).realized_stats()
+    assert stats["available"] and stats["closed"] == 3
+    assert stats["realized_usd"] == pytest.approx(44.5)
+    assert stats["wins"] == 2 and stats["losses"] == 1
+    assert stats["best_usd"] == 41.2 and stats["worst_usd"] == -18.7
+    assert stats["profit_factor"] == pytest.approx(3.38, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_ledger_is_a_valid_answer_not_a_failure():
+    """This account genuinely has no realised trades — verified live."""
+    s = _Session({
+        TOOL_NAMES["accounts"]: {"data": {"accounts": [
+            {"account_number": "123", "agentic_allowed": True}]}},
+        TOOL_NAMES["pnl_history"]: {"data": {"trades": [], "next_cursor": ""}},
+    })
+    stats = await RobinhoodVenue(session=s).realized_stats()
+    assert stats["available"] and stats["closed"] == 0
+    assert stats["win_rate"] is None and stats["profit_factor"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_string_reply_is_an_error_not_an_empty_history():
+    """The server rejects a bad span with a plain string. Counting that as
+    "no trades" would report a flat account for a refused call."""
+    s = _Session({
+        TOOL_NAMES["accounts"]: {"data": {"accounts": [
+            {"account_number": "123", "agentic_allowed": True}]}},
+        TOOL_NAMES["pnl_history"]: 'invalid span "year": must be one of 3month, all, month, week, ytd',
+    })
+    stats = await RobinhoodVenue(session=s).realized_stats(span="year")
+    assert stats["available"] is False and "invalid span" in stats["reason"]
+
+
+@pytest.mark.asyncio
+async def test_unparsable_rows_are_counted_not_swallowed():
+    s = _Session({
+        TOOL_NAMES["accounts"]: {"data": {"accounts": [
+            {"account_number": "123", "agentic_allowed": True}]}},
+        TOOL_NAMES["pnl_history"]: {"data": {"trades": [
+            {"symbol": "AAPL", "realized_gain": "10.00"},
+            {"symbol": "???"},
+        ], "next_cursor": ""}},
+    })
+    stats = await RobinhoodVenue(session=s).realized_stats()
+    assert stats["closed"] == 1 and stats["unparsed"] == 1

@@ -136,6 +136,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
             return JSONResponse(status_code=404, content=result)
         return result
 
+    @app.get("/api/venue-stats")
+    async def api_venue_stats(venue: str) -> dict:
+        return await runtime.venue_stats(venue)
+
     @app.get("/api/costs")
     def api_costs() -> dict:
         return runtime.costs()

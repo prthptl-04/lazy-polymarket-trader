@@ -8,14 +8,15 @@ import { EquityArea } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import {
   usePoll, type Balances, type EngineState, type Feed, type FundStatus, type Lesson,
-  type PaperProgress, type Position, type Record_,
+  type PaperProgress, type Position, type Record_, type VenueStats,
 } from "../lib/api";
 import { useDynamicBackground } from "../lib/useDynamicBackground";
 
 export function Overview() {
   const { data: rec } = usePoll<Record_>("/api/record");
-  const { data: polyRec } = usePoll<Record_>("/api/record?venue=polymarket_us");
-  const { data: hoodRec } = usePoll<Record_>("/api/record?venue=robinhood");
+  // Per-venue statistics, sourced from the venue itself where it has a ledger.
+  const { data: polyStats } = usePoll<VenueStats>("/api/venue-stats?venue=polymarket_us", 15000);
+  const { data: hoodStats } = usePoll<VenueStats>("/api/venue-stats?venue=robinhood", 15000);
   const { data: paper } = usePoll<PaperProgress>("/api/paper");
   const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
@@ -29,7 +30,8 @@ export function Overview() {
   // column. They still exist, so they are counted here rather than quietly
   // dropped — a total that does not reconcile is worse than an odd label.
   const unattributed = Math.max(
-    0, (rec?.closed ?? 0) - ((polyRec?.closed ?? 0) + (hoodRec?.closed ?? 0)));
+    0, (rec?.closed ?? 0)
+       - ((polyStats?.fund.closed ?? 0) + (hoodStats?.fund.closed ?? 0)));
 
   // The ground colour tracks the open trade, bounded by its own exit plan.
   const active = useActiveTrade();
@@ -60,13 +62,13 @@ export function Overview() {
             label="Polymarket" dot="bg-poly-blue" colour="#2d52f3"
             venue="polymarket_us" engineLabel="Polymarket Engine"
             engine={engineData?.engines?.polymarket_us} onEngine={refreshEngines}
-            record={polyRec} cycles={fund?.metrics?.cycles ?? 0}
+            stats={polyStats} cycles={fund?.metrics?.cycles ?? 0}
             className="lg:pr-6" />
           <VenuePanel
             label="Robinhood" dot="bg-hood-green" colour="#00c805"
             venue="robinhood" engineLabel="Robinhood Engine"
             engine={engineData?.engines?.robinhood} onEngine={refreshEngines}
-            record={hoodRec} cycles={fund?.metrics?.cycles ?? 0}
+            stats={hoodStats} cycles={fund?.metrics?.cycles ?? 0}
             className="lg:pl-6 lg:border-l border-white/[0.09] mt-6 lg:mt-0" />
         </div>
       </GlassCard>
@@ -258,38 +260,91 @@ const LABELS: Record<string, string> = {
   operator_approval_lesson: "Operator approval recorded",
 };
 
-/** One venue: its engine, its chart, and its OWN numbers. */
-function VenuePanel({ label, dot, colour, venue, engineLabel, engine, onEngine, record, cycles, className = "" }: {
+/**
+ * One venue: its engine, its chart, and its OWN numbers.
+ *
+ * The headline row is the BROKER's record when that venue has a reachable
+ * ledger, and the fund's paper record otherwise — a panel with a venue's name
+ * on it should show that venue's money. The other record is never merged in;
+ * it sits underneath, labelled, because the account's history contains trades
+ * the fund never made and the fund's paper record contains fills the broker
+ * never saw.
+ */
+function VenuePanel({ label, dot, colour, venue, engineLabel, engine, onEngine, stats, cycles, className = "" }: {
   label: string; dot: string; colour: string; venue: string; engineLabel: string;
-  engine?: EngineState; onEngine: () => void; record: Record_ | null;
+  engine?: EngineState; onEngine: () => void; stats?: VenueStats | null;
   cycles: number; className?: string;
 }) {
-  const invested = record?.equity_curve?.[0] ?? null;
+  const fundRec = stats?.fund ?? null;
+  const broker = stats?.broker;
+  const live = stats?.primary === "broker" && broker?.available;
+
+  const shown = live ? {
+    realized: broker!.realized_usd ?? null,
+    win_rate: broker!.win_rate ?? null,
+    best: broker!.best_usd ?? null,
+    worst: broker!.worst_usd ?? null,
+    profit_factor: broker!.profit_factor ?? null,
+    closed: broker!.closed ?? 0,
+    wins: broker!.wins ?? 0,
+    losses: broker!.losses ?? 0,
+    invested: broker!.equity_usd ?? null,
+    investedLabel: "Account equity",
+  } : {
+    realized: fundRec?.realized_usd ?? null,
+    win_rate: fundRec?.win_rate ?? null,
+    best: fundRec?.best_usd ?? null,
+    worst: fundRec?.worst_usd ?? null,
+    profit_factor: fundRec?.profit_factor ?? null,
+    closed: fundRec?.closed ?? 0,
+    wins: fundRec?.wins ?? 0,
+    losses: fundRec?.losses ?? 0,
+    invested: fundRec?.equity_curve?.[0] ?? null,
+    investedLabel: "Total invested",
+  };
+
   return (
     <div className={className}>
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2 h-2 rounded-full ${dot}`} />
         <span className="text-[12px] text-white/70">{label}</span>
+        <Pill tone={live ? "good" : "neutral"}>
+          {live ? `broker · ${broker!.span ?? "all"}` : "fund paper record"}
+        </Pill>
       </div>
       <EngineButton venue={venue} label={engineLabel} state={engine} onDone={onEngine} />
-      <EquityArea values={record?.equity_curve ?? []} colour={colour} height={320} />
+      {/* The curve is always the FUND's — the broker's ledger gives realised
+          totals, not a series — so it is labelled rather than passed off as
+          the account's equity history. */}
+      <EquityArea values={fundRec?.equity_curve ?? []} colour={colour} height={320} />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4 mt-5 pt-4
                       border-t border-white/[0.07]">
-        <Stat label="Total invested" value={money(invested)} />
-        <Stat label="Realised P&L" value={signed(record?.realized_usd)}
-              tone={toneOf(record?.realized_usd)} />
+        <Stat label={shown.investedLabel} value={money(shown.invested)} />
+        <Stat label="Realised P&L" value={signed(shown.realized)}
+              tone={toneOf(shown.realized)} />
         <Stat label="Win rate"
-              value={record?.win_rate == null ? "—" : `${record.win_rate.toFixed(0)}%`}
-              sub={record?.closed ? `${record.wins}W · ${record.losses}L` : "nothing closed here"} />
+              value={shown.win_rate == null ? "—" : `${shown.win_rate.toFixed(0)}%`}
+              sub={shown.closed ? `${shown.wins}W · ${shown.losses}L` : "nothing closed here"} />
         <Stat label="Best / worst"
-              value={`${signed(record?.best_usd)} / ${signed(record?.worst_usd)}`} />
+              value={`${signed(shown.best)} / ${signed(shown.worst)}`} />
         <Stat label="Profit factor"
-              value={record?.profit_factor == null ? "—" : record.profit_factor.toFixed(2)}
+              value={shown.profit_factor == null ? "—" : shown.profit_factor.toFixed(2)}
               sub="gross win ÷ gross loss" />
         {/* The scheduler runs one loop for both venues, so this number is the
             fund's, not this venue's. Labelled rather than silently duplicated. */}
         <Stat label="Cycles run" value={cycles} sub="fund-wide" />
+      </div>
+
+      <div className="text-[10px] text-white/30 mt-3 leading-relaxed">
+        {live
+          ? <>Figures above are {label}&rsquo;s own ledger ({broker!.trades ?? 0} trades in
+              the window). Fund paper record at this venue:{" "}
+              {fundRec?.closed ?? 0} closed, {signed(fundRec?.realized_usd)} realised.
+              The curve is the fund&rsquo;s.</>
+          : <>Fund paper record. {broker && !broker.available
+              ? `${label}'s own ledger is unreachable: ${broker.reason}`
+              : `${label} exposes no realised ledger to read.`}</>}
       </div>
     </div>
   );
