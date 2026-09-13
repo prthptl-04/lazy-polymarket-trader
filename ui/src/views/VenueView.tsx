@@ -83,9 +83,13 @@ export function VenueView({ venue }: { venue: Venue }) {
         </div>
       </GlassCard>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-0">
-        {/* ================= LEFT — live ================= */}
-        <div className="space-y-5 xl:pr-6">
+      {/* Live takes three quarters, paper one: the live column carries the
+          account, the feed, the plan and the whole trade record, and the paper
+          column is a status rail. Splitting them evenly gave the simulation the
+          same visual weight as the money. */}
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-0">
+        {/* ================= LEFT — live (75%) ================= */}
+        <div className="xl:col-span-3 space-y-5 xl:pr-6">
           <div className="flex items-center gap-2 px-1">
             <span className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-semibold">
               Live
@@ -171,9 +175,9 @@ export function VenueView({ venue }: { venue: Venue }) {
           <TradeHistory venue={venue} />
         </div>
 
-        {/* ================= RIGHT — paper =================
+        {/* ================= RIGHT — paper (25%) =================
             The border IS the differentiation line the split exists for. */}
-        <div className="space-y-5 xl:pl-6 xl:border-l border-white/[0.09] mt-5 xl:mt-0">
+        <div className="xl:col-span-1 space-y-5 xl:pl-6 xl:border-l border-white/[0.09] mt-5 xl:mt-0">
           <div className="flex items-center gap-2 px-1">
             <span className="text-[10px] uppercase tracking-[0.16em] text-amber-400/70 font-semibold">
               Paper
@@ -184,7 +188,7 @@ export function VenueView({ venue }: { venue: Venue }) {
           {poly ? <MarketStance /> : (
             <GlassCard className="p-5" inert>
               <PanelTitle>Agent round table</PanelTitle>
-              <AgentRoundTable size={320} activeIds={[]} />
+              <AgentRoundTable size={250} activeIds={[]} />
               <div className="text-[11px] text-white/30 text-center mt-2">
                 A pulse travels node → centre when that seat speaks. Hover any node for its mandate.
               </div>
@@ -195,7 +199,7 @@ export function VenueView({ venue }: { venue: Venue }) {
             <PanelTitle right={<Pill tone="warn">simulated</Pill>}>
               {title} paper trading engine
             </PanelTitle>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 mb-4">
               <Stat label="Graded trades"
                     value={`${paper?.graded_paper_trades ?? 0}/${paper?.required ?? 50}`}
                     sub={`${(paper?.pct_complete ?? 0).toFixed(0)}% to the live bar`} />
