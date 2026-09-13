@@ -13,6 +13,8 @@ better to learn that now than at 3am.
 
 import asyncio
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from trading.mcp_client import FileTokenStorage
 
@@ -50,14 +52,53 @@ async def main(name: str) -> int:
         print(f"opening browser:\n  {auth_url}\n")
         webbrowser.open(auth_url)
 
-    async def callback() -> tuple[str, str | None]:
-        print("After approving, paste the FULL redirect URL (or just the code):")
-        raw = input("> ").strip()
-        if "code=" in raw:
+    # Capture the redirect with a one-shot local server rather than asking the
+    # operator to paste a URL. Hands-off, and it cannot be fat-fingered.
+    captured: dict[str, str | None] = {}
+    done = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
             from urllib.parse import parse_qs, urlparse
-            q = parse_qs(urlparse(raw).query)
-            return q.get("code", [""])[0], q.get("state", [None])[0]
-        return raw, None
+            parsed = urlparse(self.path)
+            q = parse_qs(parsed.query)
+            code = (q.get("code") or [""])[0]
+
+            # Only a request that actually carries a code counts. Browsers hit
+            # a local server with favicon and prefetch requests, and treating
+            # the FIRST request as the callback loses the race to one of those
+            # — which surfaces later as a baffling "state mismatch: None".
+            if not code:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"waiting for the authorisation redirect")
+                return
+
+            captured["code"] = code
+            captured["state"] = (q.get("state") or [None])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<h2>Authorised.</h2><p>You can close this tab and "
+                             b"return to the terminal.</p>")
+            loop.call_soon_threadsafe(done.set)
+
+        def log_message(self, *a):   # keep the console clean
+            pass
+
+    server = HTTPServer(("127.0.0.1", 8900), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    async def callback() -> tuple[str, str | None]:
+        print("waiting for the redirect on http://localhost:8900/callback ...")
+        try:
+            await asyncio.wait_for(done.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            raise RuntimeError("timed out waiting for the browser redirect")
+        finally:
+            server.shutdown()
+        return captured.get("code", ""), captured.get("state")
 
     provider = OAuthClientProvider(
         server_url=url,

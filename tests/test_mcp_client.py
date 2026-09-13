@@ -69,10 +69,11 @@ def test_no_tokens_reads_as_unauthenticated(storage):
 async def test_servers_are_stored_separately(tmp_path):
     a = FileTokenStorage("https://a.test/mcp", path=tmp_path / "t.json")
     b = FileTokenStorage("https://b.test/mcp", path=tmp_path / "t.json")
-    await a.set_tokens({"access_token": "A"})
-    await b.set_tokens({"access_token": "B"})
-    assert (await a.get_tokens())["access_token"] == "A"
-    assert (await b.get_tokens())["access_token"] == "B"
+    await a.set_tokens({"access_token": "A", "token_type": "Bearer"})
+    await b.set_tokens({"access_token": "B", "token_type": "Bearer"})
+    # get_tokens rehydrates into the SDK model, so read the attribute.
+    assert (await a.get_tokens()).access_token == "A"
+    assert (await b.get_tokens()).access_token == "B"
 
 
 @pytest.mark.asyncio
@@ -176,3 +177,15 @@ def test_unwrap_returns_multiple_blocks_as_a_list():
         def __init__(self, t): self.text = t
     class _R: content = [_B('{"a":1}'), _B('{"b":2}')]
     assert _unwrap(_R()) == [{"a": 1}, {"b": 2}]
+
+
+def test_stored_tokens_come_back_as_the_sdk_model(storage):
+    """The storage protocol is typed. Returning the raw dict fails deep inside
+    the OAuth flow with "'dict' object has no attribute 'client_id'"."""
+    asyncio.run(storage.set_tokens({"access_token": "x", "token_type": "Bearer"}))
+    tok = asyncio.run(storage.get_tokens())
+    assert hasattr(tok, "access_token") and tok.access_token == "x"
+
+
+def test_absent_tokens_rehydrate_to_none(storage):
+    assert asyncio.run(storage.get_tokens()) is None

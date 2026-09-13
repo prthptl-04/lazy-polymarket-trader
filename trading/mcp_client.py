@@ -52,13 +52,16 @@ class FileTokenStorage:
     # -- mcp.client.auth.TokenStorage protocol --
 
     async def get_tokens(self) -> Any:
-        return self._load().get("tokens")
+        # Rehydrate into the SDK's model. Returning the raw dict we persisted
+        # fails deep inside the OAuth flow with "'dict' object has no attribute
+        # 'client_id'" — the storage protocol is typed, not just JSON-shaped.
+        return _model("OAuthToken", self._load().get("tokens"))
 
     async def set_tokens(self, tokens: Any) -> None:
         self._save("tokens", tokens)
 
     async def get_client_info(self) -> Any:
-        return self._load().get("client_info")
+        return _model("OAuthClientInformationFull", self._load().get("client_info"))
 
     async def set_client_info(self, info: Any) -> None:
         self._save("client_info", info)
@@ -227,14 +230,43 @@ def _unwrap(result: Any) -> Any:
     return out[0] if len(out) == 1 else out
 
 
+def _model(name: str, data: Any) -> Any:
+    """Rebuild an SDK auth model from stored JSON; None when absent."""
+    if not data:
+        return None
+    if not isinstance(data, dict):
+        return data
+    try:
+        import mcp.shared.auth as auth_models
+        return getattr(auth_models, name)(**data)
+    except Exception:
+        logger.warning("could not rehydrate %s from storage", name)
+        return None
+
+
 def _jsonable(value: Any) -> Any:
+    """Coerce SDK models to plain JSON.
+
+    `model_dump()` alone is not enough: pydantic keeps nested types like AnyUrl,
+    which json.dumps refuses. `mode="json"` is what actually makes it round-trip,
+    and getting this wrong fails at the very end of an OAuth flow — after the
+    browser round trip, which is the most annoying place to discover it.
+    """
     if value is None or isinstance(value, (str, int, float, bool, list, dict)):
         return value
+    fn = getattr(value, "model_dump", None)
+    if callable(fn):
+        try:
+            return fn(mode="json")
+        except TypeError:
+            pass            # pydantic v1 has no mode=
+        except Exception:
+            pass
     for attr in ("model_dump", "dict"):
-        fn = getattr(value, attr, None)
-        if callable(fn):
+        f = getattr(value, attr, None)
+        if callable(f):
             try:
-                return fn()
+                return json.loads(json.dumps(f(), default=str))
             except Exception:
                 pass
-    return getattr(value, "__dict__", str(value))
+    return json.loads(json.dumps(getattr(value, "__dict__", str(value)), default=str))

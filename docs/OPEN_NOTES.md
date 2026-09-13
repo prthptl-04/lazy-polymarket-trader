@@ -10,31 +10,18 @@
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. Robinhood MCP — auth flow not yet run (user, one-time)
-**The old blocker's premise was wrong.** "MCP-only" was read as "only Claude
-Code can reach it"; MCP over HTTP is JSON-RPC plus OAuth, and any client can
-hold a session. `trading/mcp_client.py` gives the fund its own OAuth client
-with PKCE and file-backed token storage, so the daemon no longer depends on a
-Claude Code session.
+### 1. Correct `TOOL_NAMES` against the 73 verified tools
+`trading/venues/robinhood.py::TOOL_NAMES` is still the best-effort guess.
+`scripts_mcp_auth.py robinhood` enumerated the real surface — 73 tools —
+so the map can now be corrected against ground truth and the adapter wired to
+the live session. Mechanical, not a blocker on the auth question.
 
-**What the user has to do, once:**
+Verified working from the daemon with NO browser and NO callback:
+`get_accounts`, `get_portfolio`, `get_equity_positions`. Agentic account
+••••9722 (limited_margin, active), 0 equity positions.
 
-    python scripts_mcp_auth.py robinhood
-
-A browser opens, you approve, tokens land in
-`~/.config/lazy-fund/mcp-tokens.json` (0600, gitignored).
-
-**The one fact that decides unattended running:** whether Robinhood issues a
-**refresh token**. The script prints it explicitly.
-- Refresh token issued → one-time step; the daemon renews itself. Blocker gone.
-- No refresh token → a human must re-authenticate on Robinhood's expiry
-  schedule, and the scheduler should surface that rather than dying at 3am.
-
-Until the flow is run this is unknown, and it should not be guessed.
-
-Also to do on first connect: `McpSession.discover_tools()` against the live
-server, then correct `trading/venues/robinhood.py::TOOL_NAMES` — Robinhood does
-not publish its schema, so that map is still best-effort.
+Note `get_portfolio` requires `account_number` — several tools do, and the
+adapter must resolve the agentic account once and pass it through.
 
 ---
 
@@ -202,4 +189,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Per-venue trading sessions (independent start/stop) | `b56025a` |
 | Post-mortem: a lesson written on every loss | `ddb8ade` |
 | News + publisher sentiment into the Sentiment seat | this commit |
-| Daemon could not hold an MCP session (own OAuth client) | this commit |
+| Daemon could not hold an MCP session (own OAuth client) | `5dbb643` |
+| Robinhood OAuth completed; refresh token issued | this commit |
