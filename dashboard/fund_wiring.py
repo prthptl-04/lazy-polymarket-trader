@@ -30,6 +30,7 @@ from trading.kill_switch import DailyLossKillSwitch
 from trading.market_data import StaticProvider, VenueQuoteProvider
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
+from trading.discovery import MarketScout
 from trading.sec_edgar import SecEdgarFundamentals
 from trading.pdt import DayTradeTracker
 from trading.pipeline import ThesisPipeline
@@ -78,8 +79,10 @@ def build_fund(
     for warning in cfg.warnings:
         logger.warning("fund config: %s", warning)
 
-    if not cfg.is_tradable:
-        logger.info("fund not attached: watchlist is empty")
+    # An empty watchlist is now the normal case: the scout finds candidates.
+    scout = MarketScout(limit=cfg.max_candidates_per_cycle * 2) if not cfg.equity_watchlist else None
+    if not cfg.is_tradable and scout is None:
+        logger.info("fund not attached: no watchlist and no scout")
         return None
 
     client = anthropic_client or _default_client()
@@ -118,6 +121,7 @@ def build_fund(
         equity_watchlist=cfg.equity_watchlist,
         crypto_watchlist=cfg.crypto_watchlist,
         kill_switch=kill_switch,
+        scout=scout,
         memory=memory,
         lookback_bars=cfg.lookback_bars,
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,

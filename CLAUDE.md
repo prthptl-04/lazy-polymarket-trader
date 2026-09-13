@@ -345,26 +345,27 @@ Overridden content is **internal use only**. Its vendored SKILL.md must carry
 clone stays gitignored, and it must never enter a distributed artifact or the
 public GitHub mirror. The override covers local use, not publication.
 
-## 20. Agent Reach sits behind the scrape gate (2026-09-12)
+## 20. Scraping is Playwright, and it stays gated (2026-09-12)
 
-`Panniantong/Agent-Reach` (MIT) gives read access to ~15 external platforms.
-Its upstream SKILL.md instructs agents to call `agent-reach`, `curl`,
-`gh search`, and `mcporter` **directly** — inside this codebase that is a
-scrape-gate bypass (rule #8, category POLY-004). That instruction is void here.
+Agent Reach and Scrapling are removed. Agent Reach needed a dozen backend CLIs
+that never passed the trust gate, so this rule's predecessor refused to install
+them and it fetched nothing. Scrapling's import failed on a missing dependency,
+so it fetched nothing either. Two scraping stacks that scrape nothing are worse
+than one that works.
 
-- All access goes through `research_agent.agent_reach.AgentReachFetcher`,
-  which routes every target through `OrchestrationManager.request_scrape`
-  before any subprocess starts. No specialist invokes the CLI directly.
-- `install` / `update` / `uninstall` are refused by the wrapper.
-  `agent-reach install --env=auto` pulls ~12 unvetted third-party CLIs that
-  never passed the trust gate. Install backends by hand, after review.
-- **Never on the hot path** (#14, #16). Each call is a seconds-scale
-  subprocess. Research and offline analysis only.
-- Platform session cookies live in Agent Reach's own config outside this repo.
-  Never read, echo, or persist them (#5, #17). The wrapper truncates stderr to
-  200 chars because backend errors can echo cookie-bearing URLs.
-- Scraped sentiment is research input, not a signal. Anything reaching a trade
-  still passes `OutcomeGrader.evaluate`.
+`research_agent.playwright_fetcher.PlaywrightFetcher` is the only sanctioned
+scraper:
+
+- Every URL routes through `OrchestrationManager.request_scrape` BEFORE a
+  browser launches. A blocked target costs no browser at all.
+- Headed (`headless=False`) by default - the reason to use a browser rather
+  than an HTTP client is pages that behave differently for automation.
+- A rendered 4xx/5xx body is NOT content. `PageResult.ok` requires a 2xx, so an
+  error page cannot reach a seat as research.
+- Never on the hot path (#14, #16). A page load is seconds.
+- Scraped text is narrative context. It never becomes a number in
+  `roundtable.corroboration.compare` - a figure lifted off a web page is a
+  rumour with a citation.
 
 ## 21. Memory
 

@@ -9,7 +9,6 @@ dependencies = [
     "py-clob-client>=0.17.0",
     "browser-use>=0.1.0",
     "python-dotenv>=1.0.0",
-    "scrapling>=0.4.8",
     "fastapi>=0.136.3",
     "uvicorn>=0.46.0",
     "polymarket-us>=0.1.2",

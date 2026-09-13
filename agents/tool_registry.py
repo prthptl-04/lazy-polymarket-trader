@@ -205,9 +205,9 @@ REGISTRY: dict[str, AgentToolset] = {
                 ),
             ),
             Tool(
-                name="research_agent.ScraplingFetcher",
+                name="research_agent.PlaywrightFetcher",
                 kind="python",
-                location="research_agent/scrapling_fetcher.py",
+                location="research_agent/playwright_fetcher.py",
                 purpose=(
                     "Trust-gated Scrapling (BSD-3) wrapper. fetch_static for plain HTML/JSON, "
                     "fetch_dynamic for Cloudflare-protected pages. Every URL passes "

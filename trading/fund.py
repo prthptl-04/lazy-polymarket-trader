@@ -99,6 +99,7 @@ class FundLoop:
     crypto_watchlist: Sequence[str] = ()
     kill_switch: Any = None
     position_book: Any = None
+    scout: Any = None
     memory: Any = None
     lookback_bars: int = 60
     max_candidates_per_cycle: int = 5
@@ -148,6 +149,12 @@ class FundLoop:
         if not universe:
             self._emit(report)
             return report
+
+        # Size against what the account actually holds. A config bankroll that
+        # drifts from the real balance either over-sizes into a rejection or
+        # leaves capital idle; the wallet is the truth.
+        if equity_usd and hasattr(self.pipeline, "bankroll_usd"):
+            self.pipeline.bankroll_usd = equity_usd
 
         held = {h.symbol: h for h in holdings}
 
@@ -343,9 +350,19 @@ class FundLoop:
     # ---------- helpers ----------
 
     def _universe_for(self, session: Session) -> list[str]:
-        if session.equities_open:
+        """Configured watchlist if one exists, otherwise the scout screens the
+        whole tape. A configured list is an override, not the normal path."""
+        if not session.equities_open:
+            return list(self.crypto_watchlist)
+        if self.equity_watchlist:
             return list(self.equity_watchlist)
-        return list(self.crypto_watchlist)
+        if self.scout is None:
+            return []
+        try:
+            return [c.symbol for c in self.scout.scan(limit=self.max_candidates_per_cycle * 2)]
+        except Exception as e:
+            logger.exception("scout scan failed")
+            return []
 
     def _portfolio_notes(
         self, symbol: str, held: dict[str, Holding], moment: datetime

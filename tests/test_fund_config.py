@@ -133,9 +133,21 @@ def test_summary_shape(tmp_path):
 
 # ---------------- wiring ----------------
 
-def test_fund_not_built_without_a_watchlist(tmp_path):
+def test_fund_is_built_without_a_watchlist_because_the_scout_finds_candidates(tmp_path):
+    """An empty watchlist is the normal case now — the scout screens the tape."""
     cfg = load_config(tmp_path / "absent.toml")
-    assert build_fund(config=cfg, anthropic_client=object()) is None
+    sched = build_fund(config=cfg, anthropic_client=object())
+    assert sched is not None
+    assert sched.fund.scout is not None
+    assert sched.fund.equity_watchlist == ()
+
+
+def test_a_configured_watchlist_overrides_the_scout(tmp_path):
+    from trading.fund_config import FundConfig
+    sched = build_fund(config=FundConfig(equity_watchlist=("AAPL",)),
+                       anthropic_client=object())
+    assert sched.fund.scout is None
+    assert sched.fund.equity_watchlist == ("AAPL",)
 
 
 def test_fund_not_built_without_a_client(tmp_path, monkeypatch):
