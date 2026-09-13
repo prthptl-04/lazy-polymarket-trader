@@ -65,10 +65,18 @@ ed25519 API key pair, so the user was right — **no funder address needed**.
 need no creds; order paths refuse without them rather than failing deep in the
 SDK.
 
-**Needed from the user:** `POLYMARKET_KEY_ID` and `POLYMARKET_SECRET_KEY` in
-`.env`. The existing 88-char `POLYMARKET_PRIVATE_KEY` is very likely the
-SECRET_KEY (88 chars = base64 of a 64-byte ed25519 key, and the SDK pulls in
-pynacl) — but the KEY_ID is missing either way. Confirm and move it.
+**Credentials in place and VERIFIED live 2026-09-12.** `account.balances`,
+`portfolio.positions` and `orders.list` all authenticate. Parsers were
+corrected against the real response shapes (my initial guesses were wrong):
+- balances is `{"balances":[{currentBalance, buyingPower, assetNotional,...}]}`
+  — **equity = currentBalance + assetNotional**, because open positions are
+  carried separately from cash. Reading currentBalance alone would report a
+  fully-invested account as near-empty and trip the kill-switch.
+- positions returns `{}` (not `[]`) when empty.
+
+**Current wallet: $0.247 cash, no open positions.** Far below any tradable
+size — `max_position_usd` is $10 and Kelly would size to ~$0. Fund it before
+expecting Polymarket activity.
 
 The old wallet vars stay valid for the CLOB path; they are simply unused by
 this adapter.

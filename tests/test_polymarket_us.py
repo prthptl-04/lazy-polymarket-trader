@@ -118,3 +118,32 @@ async def test_balances_fall_back_to_cash_for_equity():
     v = PolymarketUSVenue(client=_client(balances={"availableBalance": "250.0"}))
     acct = await v.account()
     assert acct.cash_usd == 250.0 and acct.equity_usd == 250.0
+
+
+# ---------------- shapes verified against the live API 2026-09-12 ----------------
+
+@pytest.mark.asyncio
+async def test_account_parses_the_real_balances_envelope():
+    live = {"balances": [{"currentBalance": 0.247, "currency": "USD",
+                          "buyingPower": 0.247, "assetNotional": 0,
+                          "displayedCash": 0.247, "availableToWithdraw": 0.247}]}
+    acct = await PolymarketUSVenue(client=_client(balances=live)).account()
+    assert acct.cash_usd == pytest.approx(0.247)
+    assert acct.equity_usd == pytest.approx(0.247)
+
+
+@pytest.mark.asyncio
+async def test_equity_includes_open_position_value():
+    """currentBalance alone would report a fully-invested account as empty."""
+    live = {"balances": [{"currentBalance": 10.0, "buyingPower": 10.0,
+                          "assetNotional": 90.0}]}
+    acct = await PolymarketUSVenue(client=_client(balances=live)).account()
+    assert acct.cash_usd == pytest.approx(10.0)
+    assert acct.equity_usd == pytest.approx(100.0)
+
+
+@pytest.mark.asyncio
+async def test_empty_positions_dict_is_handled():
+    """Live API returns positions as {} (not []) when there are none."""
+    live = {"positions": {}, "nextCursor": "", "eof": True, "availablePositions": []}
+    assert await PolymarketUSVenue(client=_client(positions=live)).positions() == []

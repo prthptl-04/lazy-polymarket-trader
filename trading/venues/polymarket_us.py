@@ -93,13 +93,25 @@ class PolymarketUSVenue:
         return out
 
     async def account(self) -> AccountSnapshot:
+        """Verified against the live API 2026-09-12:
+        {"balances": [{"currentBalance", "buyingPower", "assetNotional", ...}]}
+
+        Equity is cash + assetNotional — open positions are carried separately
+        from the cash balance, so reading currentBalance alone would report a
+        fully-invested account as nearly empty and trip the kill-switch.
+        """
         try:
             raw = await asyncio.to_thread(self.client.account.balances)
         except Exception as e:
             raise VenueError(f"balances failed: {redact(e)}") from None
-        cash = _num(_first(raw, "availableBalance", "available", "cash")) or 0.0
-        equity = _num(_first(raw, "totalValue", "equity", "portfolioValue")) or cash
-        return AccountSnapshot(equity_usd=equity, buying_power_usd=cash,
+
+        rows = raw.get("balances") if isinstance(raw, dict) else None
+        row = rows[0] if isinstance(rows, list) and rows else (raw if isinstance(raw, dict) else {})
+
+        cash = _num(_first(row, "currentBalance", "displayedCash", "availableBalance")) or 0.0
+        buying_power = _num(_first(row, "buyingPower")) or cash
+        equity = cash + (_num(_first(row, "assetNotional")) or 0.0)
+        return AccountSnapshot(equity_usd=equity, buying_power_usd=buying_power,
                                cash_usd=cash, venue=self.name)
 
     # ---------- writes ----------
@@ -161,10 +173,15 @@ def _build_client() -> Any:
 # ---- response shapes are not contractually pinned; read defensively ----
 
 def _rows(raw: Any) -> list[dict]:
+    """Live API returns positions as {} when empty and availablePositions
+    alongside, so a plain `.get("positions")` is not enough."""
     if isinstance(raw, dict):
-        for key in ("positions", "data", "results", "items"):
-            if isinstance(raw.get(key), list):
-                return raw[key]
+        for key in ("positions", "availablePositions", "orders", "data", "results", "items"):
+            val = raw.get(key)
+            if isinstance(val, list):
+                return val
+            if isinstance(val, dict) and val:
+                return list(val.values())
         return []
     return raw if isinstance(raw, list) else []
 
