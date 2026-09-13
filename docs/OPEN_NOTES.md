@@ -65,7 +65,7 @@ across restarts is unsolved and is the real blocker on unattended autonomy.
 
 ## 🟡 Deferred — decided, not yet built
 
-### Polymarket: US adapter done, CLOB path still separate
+### Polymarket US — adapter done, wallet unfunded
 `trading/venues/polymarket_us.py` implements `VenueAdapter` and is **verified
 live** (2026-09-12: auth works, balance $0.247, no positions). Parsers were
 corrected against real response shapes.
@@ -74,21 +74,20 @@ Still open:
 - **Wallet is $0.247** — below any tradable size (`max_position_usd` is $10,
   Kelly sizes to ~0). Fund it before expecting activity.
 - `markets.bbo` shape unverified — needs a live market slug to test against.
-- The old on-chain CLOB path (`trading/polymarket_client.py`, `live_market/`)
-  is a *different product* and still runs outside the venue interface. It
-  works; it will drift. Not urgent now that Polymarket US is the live path.
+- CLOB path **deleted** (`54b568b`) at the user's direction.
 
-### Market data — DECIDED, Massive purchased 2026-09-12
+### Market data — DONE for bars, fundamentals still open
 User subscribed to **Massive $29/mo stocks**. MCP server registered
 (`massive` → https://mcp.massive.com/, project scope) and awaiting the same
 post-restart authentication as robinhood-trading.
 
-**Next session, after both MCPs are live:**
-1. Enumerate Massive's tools; confirm daily OHLCV bars and the fundamentals
-   add-on (income statement / balance sheet / cash flow, current AND prior
-   period — Piotroski needs both years).
-2. Write `trading/market_data.py::MassiveProvider` against the verified shapes.
-3. Set `provider = "massive"` in `config/fund.toml`.
+**Done:** `trading/massive_provider.py` verified live — equity and crypto bars
+both work (AAPL 30 bars, BTC 30 bars).
+
+**Still open:** fundamentals are NOT_ENTITLED on the \$29 plan, so Altman and
+Piotroski report NOT AVAILABLE. Cheapest fix is SEC EDGAR's free public XBRL
+API (`data.sec.gov`, no key) routed through the rule-#8 trust gate — same data
+Robinhood's `get_sec_filing_facts` returns, but reachable from the daemon.
 
 **Two channels, do not confuse them:** the MCP connection belongs to the
 Claude Code session and is for discovery. The fund runs as its own process and
@@ -197,3 +196,6 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Polymarket US venue adapter (API-key auth, no funder address) | `9823f1a` |
 | Polymarket parsers corrected against live API | `2c94471` |
 | Dashboard header balance pills | `769725c` |
+| Polymarket on-chain CLOB path removed (~4,400 lines) | `54b568b` |
+| MassiveProvider — equity + crypto bars, verified live | `e32ebe9` |
+| Corroborator seat + deterministic fact cross-check | `e32ebe9` |
