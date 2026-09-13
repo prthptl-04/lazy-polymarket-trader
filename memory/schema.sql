@@ -149,3 +149,32 @@ CREATE TABLE IF NOT EXISTS llm_costs (
 
 CREATE INDEX IF NOT EXISTS idx_llm_costs_mode ON llm_costs (mode);
 CREATE INDEX IF NOT EXISTS idx_llm_costs_created ON llm_costs (created);
+
+-- Closed positions. `PositionBook.closed` was an in-memory list, so the paper
+-- record — equity curve, win rate, profit factor, every per-venue figure on the
+-- dashboard — reset to empty on every restart. thesis_outcomes survives but
+-- carries only the return, not the size, the venue, the plan it was opened
+-- under, or why it ended.
+CREATE TABLE IF NOT EXISTS closed_trades (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol          TEXT NOT NULL,
+    asset_class     TEXT,
+    thesis_id       TEXT,
+    venue           TEXT,
+    mode            TEXT,                 -- paper | live, from the venue that filled
+    reason          TEXT,                 -- stop | target | flatten | manual
+    entry_price     REAL NOT NULL,
+    exit_price      REAL NOT NULL,
+    quantity        REAL NOT NULL,
+    stop            REAL,
+    target          REAL,
+    atr             REAL,
+    realized_return REAL NOT NULL,
+    realized_usd    REAL NOT NULL,
+    held_seconds    REAL,
+    opened_at       REAL,
+    closed_at       REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_closed_symbol ON closed_trades (symbol);
+CREATE INDEX IF NOT EXISTS idx_closed_at ON closed_trades (closed_at);

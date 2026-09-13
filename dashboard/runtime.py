@@ -14,8 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from dashboard.ws_hub import WebSocketHub
-from finance.pnl import equity_curve_from_trades
-from finance.risk_metrics import max_drawdown, sharpe_ratio
+from finance.risk_metrics import max_drawdown
 from memory.store import MemoryStore
 
 
@@ -160,17 +159,30 @@ class DashboardRuntime:
         return self.memory.recent_audit_events(limit=limit)
 
     def risk_metrics(self) -> dict:
-        trades = self.memory.recent_trades(limit=10_000)
-        curve = equity_curve_from_trades(trades, outcomes={},
-                                         starting_bankroll=self.starting_bankroll_usd)
-        returns = [
-            (curve[i] - curve[i - 1]) / max(1e-9, curve[i - 1])
-            for i in range(1, len(curve))
-        ]
+        """Drawdown over the REALISED equity curve.
+
+        This used to build its curve from `trade_log` with `outcomes={}` — and
+        `finance.pnl` additionally skips every `paper=True` row — so both figures
+        were identically 0.0 forever, printed as measurements. A 0.0% drawdown
+        reads as "never lost", which is the most flattering lie this dashboard
+        could tell.
+
+        Sharpe is gone rather than fixed. Annualising trade-indexed returns at
+        252 periods assumes a period is a day; here a period is a closed trade
+        of arbitrary length, so the number was meaningless independently of the
+        empty input.
+        """
+        closed = self._closed_trades()
+        curve, running = [self.starting_bankroll_usd], self.starting_bankroll_usd
+        for c in closed:
+            running += c.get("realized_usd", 0.0)
+            curve.append(round(running, 4))
         return {
-            "max_drawdown_pct": round(max_drawdown(curve) * 100, 3),
-            "sharpe": round(sharpe_ratio(returns), 3),
-            "trade_count": len(trades),
+            "max_drawdown_pct": round(max_drawdown(curve) * 100, 3) if closed else None,
+            "trade_count": len(closed),
+            # Says why the number is absent instead of showing a zero that looks
+            # like an answer.
+            "reason": None if closed else "no closed trades yet",
         }
 
     # ---------- round table ----------
@@ -328,7 +340,7 @@ class DashboardRuntime:
         recorded have no venue and are counted only in the fund-wide view —
         silently filing them under the broker would invent a history.
         """
-        closed = list(getattr(self.position_book, "closed", []) or [])
+        closed = self._closed_trades()
         if venue is not None:
             closed = [
                 c for c in closed
@@ -359,6 +371,26 @@ class DashboardRuntime:
             "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else None,
             "equity_curve": curve,
         }
+
+    def _closed_trades(self) -> list[dict]:
+        """The record, from the durable ledger.
+
+        Preferring the store over `position_book.closed` is what makes the paper
+        record survive a restart — the in-memory list is empty on every boot,
+        and a fund that forgets last week's losses on a redeploy is a fund
+        grading itself on a fresh start it did not earn.
+
+        The in-memory list is the fallback for a runtime with no store attached
+        (tests, mostly), and for the window before the first close is written.
+        """
+        rows: list[dict] = []
+        try:
+            rows = self.memory.closed_trades(limit=10_000)
+        except Exception:
+            rows = []
+        if rows:
+            return rows
+        return list(getattr(self.position_book, "closed", []) or [])
 
     def lessons(self, limit: int = 20) -> list[dict]:
         """What the fund has learned from its losses."""
@@ -860,12 +892,22 @@ class DashboardRuntime:
         Split deliberately: `applied` is machinery that runs today, `flagged` is
         a recommendation. Printing a recommendation as though it were enforced
         would make the dashboard describe a fund that does not exist.
+
+        The value is read back off the PIPELINE — the object that actually
+        multiplies by it — not re-derived here. A displayed enforcement that is
+        computed separately from the enforcing code drifts the moment one of
+        them changes, which is exactly how this panel came to claim a fitted
+        shrink was governing sizing while the constant was.
         """
         from trading.pipeline import CONFIDENCE_SHRINK
-        used = shrink if shrink is not None else CONFIDENCE_SHRINK
+        pipeline = getattr(getattr(self.fund_scheduler, "fund", None), "pipeline", None)
+        in_force = getattr(pipeline, "confidence_shrink", None)
+        fitted = shrink is not None and in_force is not None and abs(in_force - shrink) < 1e-9
+        used = in_force if in_force is not None else CONFIDENCE_SHRINK
         applied = [
             f"stated confidence scaled by {used:.2f} before sizing"
-            + (" (fitted)" if shrink is not None else " (pessimistic default — not yet fittable)")
+            + (" (fitted from resolved outcomes)" if fitted
+               else " (pessimistic default — not yet fittable)")
         ]
         flagged = []
         if score and score.samples:

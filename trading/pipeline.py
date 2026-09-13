@@ -35,6 +35,7 @@ not been verified for it. Skipping is the honest behaviour until it has.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
@@ -45,6 +46,8 @@ from roundtable.types import Candidate, Thesis
 from trading.venues.base import OrderAck, OrderRequest
 from verification.criteria import DEFAULT_CRITERIA, VerifiedOutcomeCriteria
 from verification.outcome_grader import DirectionalTrade, GradeResult, OutcomeGrader
+
+logger = logging.getLogger(__name__)
 
 
 # How much of the committee's stated confidence to believe. 1.0 would take it
@@ -74,7 +77,13 @@ class PipelineResult:
 
     @property
     def submitted(self) -> bool:
+        """The venue took the order. NOT the same as having traded."""
         return self.outcome == "submitted"
+
+    @property
+    def filled(self) -> bool:
+        """The order actually traded. This is what may touch the book."""
+        return self.submitted and self.ack is not None and self.ack.is_filled
 
     def as_dict(self) -> dict:
         return {
@@ -90,6 +99,7 @@ class PipelineResult:
             "grade_reason": self.grade.reason if self.grade else None,
             "rejected_rule": self.grade.rejected_rule if self.grade else None,
             "accepted": self.ack.accepted if self.ack else None,
+            "filled": self.ack.is_filled if self.ack else None,
             "venue_error": self.ack.error if self.ack else None,
             "notes": list(self.notes),
         }
@@ -310,6 +320,53 @@ class ThesisPipeline:
             )
         except Exception:
             pass    # audit failure must not block or crash a trade decision
+        self._log_trade(result)
+
+    def _log_trade(self, result: PipelineResult) -> None:
+        """Write the graded decision to `trade_log`.
+
+        This table is what rule #13 counts. Nothing in the fund path wrote it —
+        `log_trade` had one caller, the removed CLOB Executor — so the
+        50-graded-paper-trade condition was unreachable by construction and the
+        progress bar read 0/50 no matter how long the fund ran.
+
+        Every trade that REACHED the grader is written, passed or failed: a
+        graded-and-rejected trade is evidence about the grader, and the live
+        gate already filters on `grade_pass` itself.
+
+        `paper` is read off the venue that actually took the order, never off
+        PAPER_TRADING — during a config drift the env can say paper while a live
+        adapter fills, and the ledger must record what happened rather than what
+        was configured.
+        """
+        if result.grade is None or result.trade is None:
+            return              # never reached the grader; nothing to grade-log
+        try:
+            self.memory.log_trade(
+                agent_id="fund",
+                market_id=result.symbol,
+                side=result.trade.side,
+                size=result.size.size_usd if result.size else 0.0,
+                price=result.trade.entry,
+                paper=self._is_paper(result),
+                grade_pass=bool(result.grade.passed),
+                grade_reason=result.grade.reason,
+            )
+        except Exception:
+            logger.exception("could not write the trade ledger for %s", result.symbol)
+
+    def _is_paper(self, result: PipelineResult) -> bool:
+        """Which side of the house took this order.
+
+        Unknown resolves to LIVE, matching trading.live_gate: counting an
+        unattributable fill as paper would let it pad the 50-trade bar that
+        exists to gate live trading.
+        """
+        name = result.ack.venue if result.ack else None
+        for adapter in getattr(self.router, "adapters", []):
+            if adapter.name == name:
+                return self.router.mode_of(adapter) == "paper"
+        return False
 
 
 def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None) -> dict:

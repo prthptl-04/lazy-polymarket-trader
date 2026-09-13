@@ -54,6 +54,7 @@ def build_candidate(
     sentiment_notes: Sequence[str] = (),
     technical_notes: Sequence[str] = (),
     portfolio_notes: Sequence[str] = (),
+    corroboration_notes: Sequence[str] = (),
     lessons: Sequence[str] = (),
     budget_notes: Sequence[str] = (),
     stop_multiplier: float = 2.0,
@@ -107,6 +108,7 @@ def build_candidate(
         sentiment_notes=tuple(sentiment_notes),
         technical_notes=tuple(technical_notes),
         portfolio_notes=tuple(portfolio_notes),
+        corroboration_notes=tuple(corroboration_notes),
         lessons=tuple(lessons),
         budget_notes=tuple(budget_notes),
     )

@@ -46,6 +46,14 @@ class ManagedPosition:
     entry_price: float
     plan: ExitPlan
     thesis_id: Optional[str] = None
+    # What the committee actually staked. Without these on the position, the
+    # outcome row is written with NULL signal/confidence, and
+    # fit_confidence_shrink discards 100% of rows at any sample size while
+    # blaming the sample size — which is how a disconnected feedback loop looks
+    # exactly like one that is merely waiting for data.
+    signal: Optional[str] = None
+    confidence: Optional[float] = None
+    venue: Optional[str] = None
     opened_at: float = field(default_factory=time.time)
 
     def unrealized_return(self, price: float) -> float:
@@ -101,6 +109,9 @@ class PositionBook:
         entry_price: float,
         plan: ExitPlan,
         thesis_id: Optional[str] = None,
+        signal: Optional[str] = None,
+        confidence: Optional[float] = None,
+        venue: Optional[str] = None,
     ) -> ManagedPosition:
         """Register a fill. Adding to an existing position averages the entry
         and keeps the ORIGINAL plan — a stop should not drift looser because we
@@ -118,6 +129,7 @@ class PositionBook:
         position = ManagedPosition(
             symbol=symbol, asset_class=asset_class, quantity=quantity,
             entry_price=entry_price, plan=plan, thesis_id=thesis_id,
+            signal=signal, confidence=confidence, venue=venue,
         )
         self.positions[symbol] = position
         return position
@@ -146,8 +158,18 @@ class PositionBook:
             "realized_usd": position.quantity * (exit_price - position.entry_price)
             * (1 if position.plan.direction == "long" else -1),
             "held_seconds": time.time() - position.opened_at,
+            # The plan is recorded with the outcome, not just the outcome. Stop
+            # placement can only be judged against the stop that was set, and
+            # after the position is popped there is nowhere else to read it.
+            "stop": position.plan.stop,
+            "target": position.plan.target,
+            "atr": position.plan.atr,
+            "venue": position.venue,
+            "opened_at": position.opened_at,
+            "closed_at": time.time(),
         }
         self.closed.append(record)
+        self._persist_closed(record)
         self._record_outcome(position, realized, reason)
         return record
 
@@ -235,10 +257,25 @@ class PositionBook:
 
     # ---------- internals ----------
 
+    def _persist_closed(self, record: dict) -> None:
+        """Durability. `self.closed` is a list in a process that restarts."""
+        if self.memory is None:
+            return
+        try:
+            self.memory.record_closed_trade(record)
+        except Exception:
+            logger.exception("failed to persist the closed trade for %s",
+                             record.get("symbol"))
+
     def _record_outcome(
         self, position: ManagedPosition, realized: float, reason: ExitReason
     ) -> None:
-        """Write the thesis verdict so calibration has something to score."""
+        """Write the thesis verdict so calibration has something to score.
+
+        `signal` and `confidence` are what the committee staked; without them
+        the row cannot be scored for calibration and the confidence shrink stays
+        a guess forever.
+        """
         if self.memory is None or not position.thesis_id:
             return
         try:
@@ -246,6 +283,8 @@ class PositionBook:
                 position.thesis_id,
                 position.symbol,
                 realized_return=realized,
+                signal=position.signal,
+                confidence=position.confidence,
                 correct=realized > 0,
                 notes=f"closed on {reason}",
             )

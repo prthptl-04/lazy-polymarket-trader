@@ -25,6 +25,7 @@ from typing import Any, Optional
 from cache.gemini_backend import GeminiBackend
 from cache.cost_ledger import CostLedger
 from cache.llm_router import LlmRouter
+from roundtable.corroborator import Corroborator
 from roundtable.engine import RoundTable
 from roundtable.postmortem import Postmortem
 from trading.fund import FundLoop
@@ -38,7 +39,7 @@ from trading.position_book import PositionBook
 from trading.discovery import MarketScout
 from trading.sec_edgar import SecEdgarFundamentals
 from trading.pdt import DayTradeTracker
-from trading.pipeline import ThesisPipeline
+from trading.pipeline import CONFIDENCE_SHRINK, ThesisPipeline
 from trading.mcp_client import McpSession
 from trading.venues.paper import PaperVenue
 from trading.venues.robinhood import MCP_URL, RobinhoodVenue
@@ -127,6 +128,8 @@ def build_fund(
         quote_source=quote_source,
     )
 
+    data_provider = build_data_provider(cfg, trading_venue)
+
     kill_switch = DailyLossKillSwitch(max_daily_loss_usd=cfg.max_daily_loss_usd)
     pdt = DayTradeTracker(account_equity_usd=cfg.account_equity_usd)
     # Rule #13 in the fund's own path. Without this a live venue would trade
@@ -156,17 +159,39 @@ def build_fund(
     # not a switch, and the operator should be the one to turn it on.
     router.set_mode_enabled("robinhood", "live", False)
 
+    # Close the calibration loop. The shrink maps stated confidence onto a
+    # probability before Kelly sizes anything; until now it was a pessimistic
+    # constant and the fitted value was computed for display only, so the
+    # dashboard described a feedback loop that was connected at neither end.
+    #
+    # Fitted ONCE at build, not per trade: a shrink that moves mid-run makes two
+    # trades in the same cycle size differently for reasons unrelated to either
+    # thesis. The clamp in fit_confidence_shrink still bounds it.
+    shrink = _fit_shrink(memory)
     pipeline = ThesisPipeline(
         router=router,
         grader=OutcomeGrader(criteria),
         criteria=criteria,
         bankroll_usd=cfg.bankroll_usd,
         memory=memory,
+        confidence_shrink=shrink.shrink if shrink.usable else CONFIDENCE_SHRINK,
     )
+    logger.info("confidence shrink: %s", shrink.reason)
 
     # Blocker #2: without this the fund opens positions whose stops are never
     # checked. FundLoop only enforces exits when a position_book is attached.
     position_book = PositionBook(memory=memory)
+
+    # The second fact set. Robinhood's quote source is genuinely independent of
+    # the Massive-backed data provider, which is what makes the comparison worth
+    # anything — corroborating a provider against itself would agree every time.
+    corroborator = (
+        Corroborator(primary=data_provider, secondary=robinhood)
+        if robinhood is not None else None
+    )
+    if corroborator is None:
+        logger.info("no secondary quote source; the Corroborator seat will be "
+                    "told every figure is single-sourced")
 
     fund = FundLoop(
         router=router,
@@ -174,7 +199,8 @@ def build_fund(
         cost_ledger=cost_ledger,
         pipeline=pipeline,
         round_table=RoundTable(client=client, router=llm_router, memory=memory),
-        data=build_data_provider(cfg, trading_venue),
+        data=data_provider,
+        corroborator=corroborator,
         equity_watchlist=cfg.equity_watchlist,
         crypto_watchlist=cfg.crypto_watchlist,
         kill_switch=kill_switch,
@@ -196,6 +222,21 @@ def build_fund(
     scheduler.llm_router = llm_router
     scheduler.robinhood = robinhood
     return scheduler
+
+
+def _fit_shrink(memory: Any):
+    """Fit the confidence→probability shrink from resolved outcomes.
+
+    Refuses by default: any failure, or too few rows, returns an unusable fit
+    and the pessimistic constant stands. Sizing must never be loosened by an
+    exception.
+    """
+    from roundtable.calibration import ShrinkFit, fit_confidence_shrink
+    try:
+        return fit_confidence_shrink(memory.resolved_outcomes(limit=1000))
+    except Exception:
+        logger.exception("could not fit the confidence shrink; keeping the constant")
+        return ShrinkFit(None, 0, None, None, "fit failed; pessimistic constant stands")
 
 
 def _robinhood_quotes(memory: Any) -> tuple[Optional[Any], Optional[Any]]:

@@ -8,7 +8,7 @@ Routes:
   GET  /api/orders       open orders
   GET  /api/trades       recent trades (memory.trade_log)
   GET  /api/audit        recent audit events
-  GET  /api/risk         max-drawdown / sharpe / trade_count
+  GET  /api/risk         max-drawdown over realised closes (null until one exists)
   GET  /api/code-graph   Cytoscape.js elements (regenerated on demand)
   POST /api/start        START the autonomous loop
   POST /api/stop         STOP the autonomous loop

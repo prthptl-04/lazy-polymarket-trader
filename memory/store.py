@@ -275,6 +275,37 @@ class MemoryStore:
         ).fetchall()
         return [dict(zip(cols, r)) for r in rows]
 
+    # ---------- closed positions ----------
+
+    CLOSED_COLUMNS = ("symbol", "asset_class", "thesis_id", "venue", "mode", "reason",
+                      "entry_price", "exit_price", "quantity", "stop", "target", "atr",
+                      "realized_return", "realized_usd", "held_seconds",
+                      "opened_at", "closed_at")
+
+    def record_closed_trade(self, record: dict) -> None:
+        """Persist one closed position. Unknown keys are ignored so the caller
+        can hand over the whole record it already built."""
+        values = [record.get(c) for c in self.CLOSED_COLUMNS]
+        self._conn.execute(
+            "INSERT INTO closed_trades (symbol, asset_class, thesis_id, venue, mode, "
+            "reason, entry_price, exit_price, quantity, stop, target, atr, "
+            "realized_return, realized_usd, held_seconds, opened_at, closed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            values,
+        )
+        self._conn.commit()
+
+    def closed_trades(self, limit: int = 1000) -> list[dict]:
+        """Oldest first — the equity curve is built by walking them in order."""
+        rows = self._conn.execute(
+            "SELECT symbol, asset_class, thesis_id, venue, mode, reason, entry_price, "
+            "exit_price, quantity, stop, target, atr, realized_return, realized_usd, "
+            "held_seconds, opened_at, closed_at "
+            "FROM closed_trades ORDER BY closed_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(zip(self.CLOSED_COLUMNS, r)) for r in rows]
+
     def get_deliberation(self, thesis_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT thesis_id, symbol, asset_class, status, signal, confidence, "

@@ -50,10 +50,21 @@ def test_pnl_reports_the_starting_bankroll(client):
 
 
 def test_risk_keys(client):
+    """Sharpe is gone on purpose: annualising trade-indexed returns at 252
+    periods treats a closed trade of arbitrary length as a day."""
     c, _ = client
     body = c.get("/api/risk").json()
-    for k in ("max_drawdown_pct", "sharpe", "trade_count"):
+    for k in ("max_drawdown_pct", "trade_count", "reason"):
         assert k in body
+    assert "sharpe" not in body
+
+
+def test_risk_reports_no_drawdown_as_absent_not_as_zero(client):
+    """0.0% drawdown reads as "never lost" — the most flattering lie available."""
+    c, _ = client
+    body = c.get("/api/risk").json()
+    assert body["max_drawdown_pct"] is None
+    assert body["reason"] == "no closed trades yet"
 
 
 def test_start_412s_without_a_scheduler(client):

@@ -131,6 +131,19 @@ class OrderAck:
     venue: Optional[str] = None
     raw: Optional[dict] = None
 
+    @property
+    def is_filled(self) -> bool:
+        """Did this order actually trade?
+
+        `accepted` means the venue TOOK the order; a resting limit order is
+        accepted and has not traded. Treating the two as the same thing opens a
+        position in the book for an order sitting unfilled on the venue — with
+        a real stop, against inventory that does not exist — and, worse on the
+        way out, marks a position closed in our books while it is still open at
+        the broker. Every book mutation must read this, never `accepted`.
+        """
+        return self.accepted and self.status == "filled"
+
 
 @dataclass(frozen=True)
 class VenuePosition:

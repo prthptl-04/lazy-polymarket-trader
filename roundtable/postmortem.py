@@ -63,6 +63,7 @@ class Postmortem:
         realized_return: float,
         thesis: Optional[dict],
         exit_reason: str = "stop",
+        plan: Optional[dict] = None,
     ) -> list[Finding]:
         """Findings for one closed position. Empty when nothing is learnable."""
         findings: list[Finding] = []
@@ -127,16 +128,61 @@ class Postmortem:
                 f"{loss_pct:.1f}%. Confidence that high needs evidence that complete.",
             ))
 
-        # 5. A target that was never plausible.
+        # 5. A stop that was plausibly too tight — but ONLY where the arithmetic
+        #    can show it.
+        #
+        #    This used to fire on EVERY stopped-out bullish position with the
+        #    text "the stop may have been sized to noise". It knew nothing of
+        #    the kind: not the ATR multiple, not the post-exit path. And because
+        #    these lines are injected into every subsequent deliberation's
+        #    evidence block, a run of ordinary stop-outs taught the whole
+        #    committee to widen stops — turning a planned 2R loss into a 6R one
+        #    on the strength of something the fund never observed.
+        #
+        #    A stop at 2×ATR that was hit is a stop working. The two cases that
+        #    are genuinely learnable:
+        #      - the stop sat inside one ATR, i.e. inside a normal day's range;
+        #      - the loss overshot the planned stop, i.e. a gap or slippage,
+        #        which is a sizing assumption broken rather than a thesis wrong.
         if exit_reason == "stop" and consensus_signal == "bullish":
-            findings.append(Finding(
-                "stopped_out",
-                f"{symbol}: stopped out for {loss_pct:.1f}%. If the thesis was a "
-                "multi-week view, the stop may have been sized to noise rather than "
-                "to the level that would actually invalidate it.",
-            ))
+            finding = self._stop_quality(symbol, loss_pct, plan)
+            if finding is not None:
+                findings.append(finding)
 
         return findings
+
+    @staticmethod
+    def _stop_quality(symbol: str, loss_pct: float, plan: Optional[dict]) -> Optional[Finding]:
+        """A finding only where the numbers support one. Silence otherwise —
+        this module's own contract is that arithmetic produces a finding only
+        when one exists."""
+        if not plan:
+            return None
+        entry, stop, atr = plan.get("entry"), plan.get("stop"), plan.get("atr")
+        if not entry or not stop or not atr or atr <= 0:
+            return None
+
+        distance = abs(entry - stop)
+        multiple = distance / atr
+        planned_loss_pct = distance / entry * 100
+
+        if multiple < 1.0:
+            return Finding(
+                "stop_inside_noise",
+                f"{symbol}: the stop sat {multiple:.1f}×ATR from entry — inside a "
+                f"normal day's range. It was reached for {loss_pct:.1f}%, which the "
+                "tape would have done whether or not the thesis was wrong.",
+            )
+        # A 25% overshoot is past rounding and into a gap or a bad fill.
+        if loss_pct > planned_loss_pct * 1.25:
+            return Finding(
+                "stop_overshot",
+                f"{symbol}: lost {loss_pct:.1f}% against a planned "
+                f"{planned_loss_pct:.1f}% stop at {multiple:.1f}×ATR. The exit did "
+                "not happen where the plan assumed, so the position was sized "
+                "against a risk that was never the real one.",
+            )
+        return None
 
     def record(self, findings: list[Finding], *, symbol: str) -> int:
         """Persist findings as lessons every seat will read. Returns the count."""
@@ -155,9 +201,10 @@ class Postmortem:
         return written
 
     def run(self, *, symbol: str, realized_return: float,
-            thesis: Optional[dict], exit_reason: str = "stop") -> list[Finding]:
+            thesis: Optional[dict], exit_reason: str = "stop",
+            plan: Optional[dict] = None) -> list[Finding]:
         findings = self.analyse(symbol=symbol, realized_return=realized_return,
-                                thesis=thesis, exit_reason=exit_reason)
+                                thesis=thesis, exit_reason=exit_reason, plan=plan)
         self.record(findings, symbol=symbol)
         return findings
 

@@ -101,6 +101,7 @@ class FundLoop:
     kill_switch: Any = None
     position_book: Any = None
     cost_ledger: Any = None                  # cache.cost_ledger.CostLedger
+    corroborator: Any = None                 # roundtable.corroborator.Corroborator
     scout: Any = None
     memory: Any = None
     postmortem: Any = None
@@ -211,6 +212,7 @@ class FundLoop:
             return False
 
         sentiment_notes = await self._news_notes(symbol)
+        corroboration_notes = await self._corroboration_notes(symbol)
         financials = await self.data.get_financials(symbol)
         current_fin, prior_fin = financials if financials else (None, None)
 
@@ -226,6 +228,7 @@ class FundLoop:
             financials=current_fin,
             prior_financials=prior_fin,
             sentiment_notes=sentiment_notes,
+            corroboration_notes=corroboration_notes,
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
             lessons=recent_lesson_lines(self.memory),
             budget_notes=self._budget_notes(),
@@ -254,7 +257,9 @@ class FundLoop:
         # position opened without this entry would ride through its stop.
         if (
             self.position_book is not None
-            and result.submitted
+            # `filled`, not `submitted`: an accepted resting limit order has not
+            # traded, and extended-hours candidates are ALWAYS limit orders.
+            and result.filled
             and result.trade is not None
             and result.trade.is_entry
             and result.size is not None
@@ -266,8 +271,36 @@ class FundLoop:
                 entry_price=built.exit_plan.entry,
                 plan=built.exit_plan,
                 thesis_id=thesis.thesis_id,
+                # Carried so the outcome can be scored against what was staked.
+                signal=thesis.consensus.signal if thesis.consensus else None,
+                confidence=thesis.consensus.confidence if thesis.consensus else None,
+                venue=result.ack.venue if result.ack else None,
             )
         return True
+
+    async def _corroboration_notes(self, symbol: str) -> tuple[str, ...]:
+        """Cross-check the primary provider's figures against a second source.
+
+        The Corroborator seat has been voting on an EMPTY corroboration block:
+        the module was written and tested and never wired, so `build_candidate`
+        had no parameter to pass it through. A seat reasoning from nothing is
+        worse than an absent seat — it adds apparent independence to the tally.
+
+        Off the hot path by construction (one provider round-trip per candidate
+        on a multi-minute cycle), and `scrape=False` keeps a browser out of it
+        per rules #16 and #20.
+        """
+        if self.corroborator is None:
+            return ()
+        try:
+            report = await self.corroborator.run(symbol, scrape=False)
+        except Exception:
+            logger.exception("corroboration failed for %s", symbol)
+            # Silence, not a reassuring note: the seat must not read a failed
+            # cross-check as a clean one.
+            return ("Corroboration unavailable — this cycle could not build a "
+                    "second fact set. Treat every figure as single-sourced.",)
+        return tuple(report.evidence_lines())
 
     async def _news_notes(self, symbol: str) -> tuple[str, ...]:
         """Headlines for the Sentiment seat.
@@ -318,7 +351,7 @@ class FundLoop:
                     ),
                     moment,
                 )
-                if ack.accepted:
+                if ack.is_filled:
                     record = self.position_book.close(
                         signal.symbol, signal.price, reason=signal.reason
                     )
@@ -329,9 +362,13 @@ class FundLoop:
                 else:
                     # The position stays open and will be retried next tick.
                     # Silently dropping a failed stop would be the worst
-                    # possible outcome here, so it goes in the report.
+                    # possible outcome here, so it goes in the report. An
+                    # ACCEPTED but unfilled exit lands here too — it is resting
+                    # at the venue, and the position is still ours until it
+                    # trades.
                     report.errors.append(
-                        f"EXIT FAILED {signal.symbol} ({signal.reason}): {ack.error}"
+                        f"EXIT FAILED {signal.symbol} ({signal.reason}): "
+                        f"{ack.error or f'accepted but unfilled (status={ack.status})'}"
                     )
             except Exception as e:
                 report.errors.append(
@@ -370,6 +407,11 @@ class FundLoop:
                 realized_return=record["realized_return"],
                 thesis=thesis,
                 exit_reason=record.get("reason", "stop"),
+                # The plan the position was opened under. Stop quality can only
+                # be judged against the stop that was actually set.
+                plan={"entry": record.get("entry_price"),
+                      "stop": record.get("stop"),
+                      "atr": record.get("atr")},
             )
         except Exception:
             logger.exception("post-mortem failed for %s", record.get("symbol"))
@@ -398,10 +440,13 @@ class FundLoop:
                     ),
                     moment,
                 )
-                if ack.accepted:
+                if ack.is_filled:
                     closed.append(holding.symbol)
                 else:
-                    report.errors.append(f"flatten {holding.symbol}: {ack.error}")
+                    report.errors.append(
+                        f"flatten {holding.symbol}: "
+                        f"{ack.error or f'accepted but unfilled (status={ack.status})'}"
+                    )
             except Exception as e:
                 report.errors.append(f"flatten {holding.symbol}: {type(e).__name__}: {e}")
         return closed
