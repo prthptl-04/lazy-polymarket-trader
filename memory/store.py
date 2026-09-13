@@ -23,21 +23,41 @@ class MemoryStore:
         self._migrate()
         self._conn.commit()
 
-    # Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS`
-    # is a NO-OP on an existing database, so a column added to schema.sql alone
-    # never appears on a live file — and the first write would fail with
-    # "no such column" inside a caller that catches Exception, losing the row
-    # silently. Every added column belongs in BOTH places.
-    _ADDED_COLUMNS: dict[str, dict[str, str]] = {
-        "closed_trades": {
-            "planned_entry": "REAL", "planned_exit": "REAL",
-            "entry_fill_source": "TEXT", "exit_fill_source": "TEXT",
-            "adv_usd": "REAL", "spread_bps_at_entry": "INTEGER",
-        },
-        "trade_log": {
-            "filled": "INTEGER NOT NULL DEFAULT 0", "session": "TEXT", "venue": "TEXT",
-        },
-    }
+    # Columns added after a table first shipped, as LITERAL statements.
+    #
+    # `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already has the
+    # table, so a column added to schema.sql alone never appears on a live file
+    # — and the first write fails with "no such column" inside a caller that
+    # catches Exception, losing the row silently. Every added column belongs in
+    # BOTH places.
+    #
+    # Written out rather than interpolated. SQLite cannot parameterise an
+    # identifier, so a generic migrator needs an f-string inside execute — which
+    # is POLY-008's shape, and the scanner is right that the pattern is one
+    # refactor away from taking a caller's string. These are fixed statements;
+    # there is nothing to inject into.
+    _TABLE_INFO = (
+        ("closed_trades", "PRAGMA table_info(closed_trades)"),
+        ("trade_log", "PRAGMA table_info(trade_log)"),
+    )
+    _MIGRATIONS = (
+        ("closed_trades", "planned_entry",
+         "ALTER TABLE closed_trades ADD COLUMN planned_entry REAL"),
+        ("closed_trades", "planned_exit",
+         "ALTER TABLE closed_trades ADD COLUMN planned_exit REAL"),
+        ("closed_trades", "entry_fill_source",
+         "ALTER TABLE closed_trades ADD COLUMN entry_fill_source TEXT"),
+        ("closed_trades", "exit_fill_source",
+         "ALTER TABLE closed_trades ADD COLUMN exit_fill_source TEXT"),
+        ("closed_trades", "adv_usd",
+         "ALTER TABLE closed_trades ADD COLUMN adv_usd REAL"),
+        ("closed_trades", "spread_bps_at_entry",
+         "ALTER TABLE closed_trades ADD COLUMN spread_bps_at_entry INTEGER"),
+        ("trade_log", "filled",
+         "ALTER TABLE trade_log ADD COLUMN filled INTEGER NOT NULL DEFAULT 0"),
+        ("trade_log", "session", "ALTER TABLE trade_log ADD COLUMN session TEXT"),
+        ("trade_log", "venue", "ALTER TABLE trade_log ADD COLUMN venue TEXT"),
+    )
 
     def _migrate(self) -> None:
         """Additive only: never drops, never rewrites, safe on every boot.
@@ -46,16 +66,12 @@ class MemoryStore:
         fail at startup, where someone is watching, rather than at the first
         close, where the failure is caught and logged and the trade is gone.
         """
-        for table, columns in self._ADDED_COLUMNS.items():
-            existing = {
-                row[1] for row in
-                self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-            }
-            if not existing:
-                continue            # table not created yet; schema.sql owns it
-            for name, decl in columns.items():
-                if name not in existing:
-                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        present: dict[str, set] = {}
+        for table, pragma in self._TABLE_INFO:
+            present[table] = {row[1] for row in self._conn.execute(pragma).fetchall()}
+        for table, column, statement in self._MIGRATIONS:
+            if present.get(table) and column not in present[table]:
+                self._conn.execute(statement)
         self._conn.commit()
 
     def put(self, agent_id: str, key: str, value: Any) -> None:
