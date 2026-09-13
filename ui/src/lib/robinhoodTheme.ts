@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 /**
- * Robinhood dark mode: pitch black, flat, borderless.
+ * Robinhood Gold: pitch black, flat, borderless, metallic.
  *
  * Same mechanism as the Polymarket theme — an attribute on <html> plus an
  * inline body background, restored on unmount — but the opposite instinct.
@@ -12,7 +12,10 @@ import { useEffect } from "react";
  */
 
 export const RH_BLACK = "#000000";
-export const RH_GREEN = "#00C805";
+/** Robinhood Gold. Gains, active states and every interactive edge. */
+export const RH_GOLD = "#FFD700";
+export const RH_GOLD_DEEP = "#B8860B";     // rich gold — gradient tail
+export const RH_CHAMPAGNE = "#D4AF37";     // muted gold — secondary/error text
 export const RH_WHITE = "#FFFFFF";
 /** Node outline from the spec. Decorative: 1.66:1 on black, so anything
  *  actually interactive takes the accent on hover/focus instead. */
@@ -26,7 +29,8 @@ export function useRobinhoodTheme(active: boolean) {
 
     root.dataset.venueTheme = "robinhood";
     for (const [k, v] of Object.entries({
-      "--rh-black": RH_BLACK, "--rh-green": RH_GREEN,
+      "--rh-black": RH_BLACK, "--rh-gold": RH_GOLD,
+      "--rh-gold-deep": RH_GOLD_DEEP, "--rh-champagne": RH_CHAMPAGNE,
       "--rh-white": RH_WHITE, "--rh-hairline": RH_HAIRLINE,
     })) root.style.setProperty(k, v);
     document.body.style.background = RH_BLACK;

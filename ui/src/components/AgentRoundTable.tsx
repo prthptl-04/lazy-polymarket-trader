@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Avatar } from "./Avatar";
 import { usePoll, type Agent } from "../lib/api";
 
 /**
@@ -54,14 +55,16 @@ export function AgentRoundTable({
             </g>
           );
         })}
-        <circle className="rt-hub" cx={cx} cy={cy} r={34}
+        <circle className="rt-hub gold-hub" cx={cx} cy={cy} r={34}
                 fill="rgba(45,82,243,0.13)" stroke="rgba(45,82,243,0.45)" />
       </svg>
 
       {/* Centre: the Chair, where consensus resolves into an order. */}
       <div className="absolute flex flex-col items-center justify-center text-center"
            style={{ left: cx - 34, top: cy - 34, width: 68, height: 68 }}>
-        <div className="text-[17px] leading-none">{chair?.icon ?? "🏛"}</div>
+        <div className="rounded-full overflow-hidden w-[26px] h-[26px] mb-0.5">
+          <Avatar seed={chair?.name ?? "Chair"} size={26} />
+        </div>
         <div className="text-[8px] text-white/55 mt-1 leading-tight px-1">Trade<br/>Execution</div>
       </div>
 
@@ -73,10 +76,14 @@ export function AgentRoundTable({
             style={{ left: x - 24, top: y - 24, width: 48, height: 48 }}
             animate={live ? { scale: [1, 1.09, 1] } : { scale: 1 }}
             transition={live ? { duration: 1.1, repeat: Infinity } : undefined}>
-            <div className={`rt-node w-12 h-12 rounded-full flex items-center justify-center text-[17px]
+            <div className={`rt-node relative w-12 h-12 rounded-full overflow-hidden
               border glass-plain ${live ? "rt-node-live border-hood-green/60 bg-hood-green/15"
                                         : "border-white/15 bg-white/[0.07]"}`}>
-              {agent.icon}
+              {/* Deterministic from the seat's own name, so a face never moves
+                  between sessions — the ring is read by position AND by who. */}
+              <Avatar seed={agent.name} size={46} className="w-full h-full object-cover" />
+              <span className="absolute -bottom-0.5 -right-0.5 text-[10px] leading-none
+                               rounded-full px-[3px] py-[1px] bg-black/70">{agent.icon}</span>
             </div>
             <div className="absolute left-1/2 -translate-x-1/2 top-[52px] w-max max-w-[150px]
                             opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20

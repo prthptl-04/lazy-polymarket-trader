@@ -95,20 +95,39 @@ export function EquityArea({
   );
 }
 
-/** Robinhood's signature: a stark unfilled neon stroke. */
+/**
+ * Robinhood's signature: a stark unfilled stroke, no grid, no axes.
+ *
+ * `gradient` paints the stroke itself from a linearGradient rather than a flat
+ * colour — Recharts takes `stroke="url(#id)"` like any SVG. The id is derived
+ * from the stops, so two sparklines with different metals do not collide in the
+ * document's single defs namespace.
+ */
 export function Sparkline({
-  values, colour = "#00c805", markers = [], height = 230,
-}: { values: number[]; colour?: string; markers?: Marker[]; height?: number }) {
+  values, colour = "#00c805", markers = [], height = 230, gradient,
+}: {
+  values: number[]; colour?: string; markers?: Marker[]; height?: number;
+  gradient?: [string, string];
+}) {
   const short = tooShort(values, height);
   if (short) return short;
   const data = values.map((v, i) => ({ i, v }));
+  const gid = gradient ? `stroke-${gradient.join("").replace(/#/g, "")}` : null;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 14, right: 10, bottom: 0, left: -18 }}>
+        {gid && (
+          <defs>
+            <linearGradient id={gid} x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={gradient![0]} />
+              <stop offset="100%" stopColor={gradient![1]} />
+            </linearGradient>
+          </defs>
+        )}
         <XAxis dataKey="i" hide />
         <YAxis domain={["auto", "auto"]} hide />
         <Tooltip content={<GlassTooltip />} cursor={{ stroke: "rgba(255,255,255,0.12)" }} />
-        <Line type="monotone" dataKey="v" stroke={colour} strokeWidth={2}
+        <Line type="monotone" dataKey="v" stroke={gid ? `url(#${gid})` : colour} strokeWidth={2}
               dot={false} isAnimationActive={false} />
         {markers.map((m, k) => (
           <ReferenceDot key={k} x={m.x} y={m.y} ifOverflow="extendDomain"

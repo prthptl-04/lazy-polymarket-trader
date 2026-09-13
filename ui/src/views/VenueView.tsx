@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { AgentDialogue } from "../components/AgentDialogue";
 import { LiveFeed } from "../components/LiveFeed";
@@ -8,7 +9,7 @@ import { EquityArea, Sparkline, type Marker } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import { AgentRoundTable } from "../components/AgentRoundTable";
 import { usePolymarketTheme } from "../lib/polymarketTheme";
-import { useRobinhoodTheme } from "../lib/robinhoodTheme";
+import { RH_GOLD as GOLD, RH_GOLD_DEEP as GOLD_DEEP, useRobinhoodTheme } from "../lib/robinhoodTheme";
 import {
   post, usePoll, type Balances, type FundStatus, type PaperProgress,
   type Position, type Record_,
@@ -53,33 +54,47 @@ export function VenueView({ venue }: { venue: Venue }) {
 
   return (
     <div className="p-5 space-y-5">
-      {/* ---------- execution, centred above the split ---------- */}
+      {/* ---------- §1 execution, full width above the split ---------- */}
       <GlassCard liquid className="p-5">
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-5">
+          <div className="flex items-center gap-2.5 lg:w-[230px]">
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: colour }} />
             <h1 className="text-[13px] font-semibold uppercase tracking-[0.16em] text-white/70">
               {title} · Execution
             </h1>
           </div>
-          <div className="flex items-center gap-3">
+
+          <SessionToggle venue={venue} on={on} onDone={refreshSessions} />
+
+          {/* Scheduler state and market session read horizontally beside the
+              switch — the switch gates THIS venue, the scheduler runs the
+              cycle, and conflating the two is how you stop a venue and think
+              you stopped the fund. */}
+          <div className="flex items-center gap-6 lg:ml-2">
+            <Readout label="Scheduler" value={fund?.state ?? "stopped"}
+                     tone={fund?.state === "running" ? "text-hood-green" : "text-white/45"} />
+            <Readout label="Session" value={fund?.session ?? "—"}
+                     tone={fund?.equities_open ? "text-hood-green" : "text-white/45"} />
+            <Readout label="Cycles" value={String(fund?.metrics?.cycles ?? 0)} />
+          </div>
+
+          <div className="flex items-center gap-2 lg:ml-auto">
             <button onClick={async () => { await post("/api/start"); void refresh(); }}
-              className="px-10 py-2.5 rounded-2xl text-[13px] font-bold tracking-wide
+              className="gold-shimmer px-8 py-2.5 rounded-2xl text-[13px] font-bold tracking-wide
                          bg-gradient-to-r from-green-400 to-green-600 text-black
                          hover:brightness-110 transition">
               GO
             </button>
             <button onClick={async () => { await post("/api/stop"); void refresh(); }}
-              className="px-10 py-2.5 rounded-2xl text-[13px] font-bold tracking-wide
+              className="px-8 py-2.5 rounded-2xl text-[13px] font-bold tracking-wide
                          bg-gradient-to-r from-red-500 to-red-700 hover:brightness-110 transition">
               STOP
             </button>
-            <VenueSwitch venue={venue} on={on} onDone={refreshSessions} />
           </div>
-          <div className="text-[11px] text-white/35">
-            {fund?.state ?? "stopped"} · {fund?.session ?? "—"} ·
-            {" "}GO starts the cycle; it does not bypass a single gate.
-          </div>
+        </div>
+        <div className="text-[11px] text-white/35 mt-3 lg:pl-[242px]">
+          The switch blocks new positions only. Exits pass. It bypasses no gates —
+          the grader and the rule-#13 live gate still run on every order.
         </div>
       </GlassCard>
 
@@ -102,7 +117,7 @@ export function VenueView({ venue }: { venue: Venue }) {
               <div>
                 <div className="text-[12px] text-white/55">{title} account</div>
                 {wallet?.available ? (
-                  <div className="venue-figure text-5xl font-light tracking-tighter font-mono mt-1">
+                  <div className="venue-figure gold-text text-5xl font-light tracking-tighter font-mono mt-1">
                     {money(wallet.equity_usd)}
                   </div>
                 ) : (
@@ -123,13 +138,14 @@ export function VenueView({ venue }: { venue: Venue }) {
 
             {poly
               ? <EquityArea values={curve} colour={colour} markers={markersFrom(mine, curve)} height={230} />
-              : <Sparkline values={curve} colour={colour} markers={markersFrom(mine, curve)} />}
+              : <Sparkline values={curve} colour={GOLD} gradient={[GOLD, GOLD_DEEP]}
+                           markers={markersFrom(mine, curve)} />}
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pt-4 border-t border-white/[0.07]">
               <Stat label="Positions" value={mine.length} />
               <Stat label="Open risk"
                     value={money(mine.reduce((a, p) => a + Math.abs(p.entry - p.stop) * p.quantity, 0))}
-                    sub="if every stop hits" />
+                    sub="max loss if all stops hit" />
               <Stat label="Buying power" value={wallet?.available ? money(wallet.cash_usd) : "—"} />
               <Stat label="Cycles" value={fund?.metrics?.cycles ?? 0} />
             </div>
@@ -211,9 +227,24 @@ export function VenueView({ venue }: { venue: Venue }) {
                     value={`${paper?.seats_calibrated ?? 0}/${paper?.seats_scored ?? 0}`}
                     sub="self-improvement" />
             </div>
+            {/* Rule #13's bar, as a bar. A count reads as trivia; a track that
+                is one fifth full reads as "not yet". */}
+            <div className="mb-4">
+              <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
+                <motion.div className="h-full rounded-full"
+                  style={{ background: poly ? "linear-gradient(90deg,#2d52f3,#00c805)"
+                                            : `linear-gradient(90deg,${GOLD_DEEP},${GOLD})` }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.max(2, paper?.pct_complete ?? 0)}%` }}
+                  transition={{ duration: 0.6, ease: "easeOut" }} />
+              </div>
+            </div>
             {poly
               ? <EquityArea values={paperCurve} colour="#fbbf24" height={180} />
               : <Sparkline values={paperCurve} colour="#fbbf24" height={180} />}
+            <div className="text-[10.5px] text-white/40 mt-1.5 text-center">
+              Prices are live; fills are simulated.
+            </div>
             <div className="text-[11px] text-white/35 mt-3 leading-relaxed border-t border-white/[0.07] pt-3">
               Prices are live from the venue; fills are simulated with a pessimistic
               spread cross. A paper record built on synthetic prices would prove
@@ -225,9 +256,10 @@ export function VenueView({ venue }: { venue: Venue }) {
 
           <RoundTableFeed title="Live agent round table" max={420} />
 
-          <GlassCard className="p-4" inert>
+          <GlassCard className={`p-4 ${fund?.router_live_gate?.live_possible ? "" : "gate-locked"}`} inert>
             <PanelTitle right={fund?.router_live_gate?.live_possible
-              ? <Pill tone="good">live possible</Pill> : <Pill tone="warn">paper only</Pill>}>
+              ? <Pill tone="good">live possible</Pill>
+              : <Pill tone="warn">🔒 paper only</Pill>}>
               Live-trading checklist
             </PanelTitle>
             {fund?.router_live_gate ? (
@@ -244,6 +276,15 @@ export function VenueView({ venue }: { venue: Venue }) {
                 ))}
               </div>
             ) : <Empty title="No fund attached." />}
+            {fund?.router_live_gate && !fund.router_live_gate.live_possible && (
+              <div className="flex items-start gap-2 mt-3 pt-3 border-t border-white/[0.08]">
+                <span className="text-[12px] leading-none mt-0.5">🔒</span>
+                <span className="text-[10.5px] text-white/45 leading-relaxed">
+                  The router refuses live orders while any box is unticked — including
+                  closes. &ldquo;It&rsquo;s an exit&rdquo; is not a bypass for the checklist.
+                </span>
+              </div>
+            )}
           </GlassCard>
         </div>
       </div>
@@ -259,18 +300,49 @@ const LABELS: Record<string, string> = {
   operator_approval_lesson: "Operator approval",
 };
 
-function VenueSwitch({ venue, on, onDone }: { venue: string; on: boolean; onDone: () => void }) {
+function Readout({ label, value, tone = "text-white/70" }: {
+  label: string; value: string; tone?: string;
+}) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-[0.14em] text-white/30">{label}</div>
+      <div className={`text-[12px] font-medium mt-0.5 ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+/** GO / STOP for one venue's session. The knob is laid out by `layout`, so the
+ *  spring is the real element moving rather than two states cross-fading. */
+function SessionToggle({ venue, on, onDone }: { venue: string; on: boolean; onDone: () => void }) {
   return (
     <button
+      type="button"
+      aria-pressed={on}
+      aria-label={`${venue} session: ${on ? "GO" : "STOP"}`}
       onClick={async () => {
         await post(`/api/venue-sessions/${venue}/${on ? "stop" : "start"}`);
         onDone();
       }}
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px]
-        ${on ? "border-hood-green/40 bg-hood-green/10 text-hood-green"
-             : "border-white/15 bg-white/[0.05] text-white/40"}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-hood-green" : "bg-white/30"}`} />
-      trading {on ? "ON" : "OFF"}
+      className="relative flex items-center gap-1 p-1 rounded-full border border-white/12
+                 bg-white/[0.05] w-[136px] select-none">
+      {(["GO", "STOP"] as const).map((k) => {
+        const active = (k === "GO") === on;
+        return (
+          <span key={k} className="relative flex-1 text-center py-1.5 text-[11px] font-bold tracking-wide">
+            {active && (
+              <motion.span layoutId={`session-${venue}`}
+                className={`absolute inset-0 rounded-full ${
+                  k === "GO" ? "bg-hood-green/25 border border-hood-green/50"
+                             : "bg-red-500/20 border border-red-400/40"}`}
+                transition={{ type: "spring", stiffness: 480, damping: 36 }} />
+            )}
+            <span className={`relative z-10 ${
+              active ? (k === "GO" ? "text-hood-green" : "text-red-400") : "text-white/35"}`}>
+              {k}
+            </span>
+          </span>
+        );
+      })}
     </button>
   );
 }

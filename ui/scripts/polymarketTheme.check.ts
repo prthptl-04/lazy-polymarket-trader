@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { contrastRatio, type Rgb } from "../src/lib/useDynamicBackground.ts";
 import { ACCENT, ACCENT_EDGE, HEADING, MUTED, PALETTES } from "../src/lib/polymarketTheme.ts";
-import { RH_BLACK, RH_GREEN, RH_HAIRLINE, RH_WHITE } from "../src/lib/robinhoodTheme.ts";
+import { RH_BLACK, RH_CHAMPAGNE, RH_GOLD, RH_GOLD_DEEP, RH_HAIRLINE, RH_WHITE } from "../src/lib/robinhoodTheme.ts";
 
 const hex = (h: string): Rgb => ({
   r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16),
@@ -62,27 +62,36 @@ for (const [name, p] of Object.entries(PALETTES)) {
     `muted ${contrastRatio(hex(MUTED), surface).toFixed(2)}:1  edge ${edge.toFixed(2)}:1`);
 }
 
-// ---- Robinhood: pitch black, one accent ----
+// ---- Robinhood Gold: pitch black, metallic accents ----
 {
   const black = hex(RH_BLACK);
   const white = contrastRatio(hex(RH_WHITE), black);
-  const green = contrastRatio(hex(RH_GREEN), black);
   const hairline = contrastRatio(hex(RH_HAIRLINE), black);
 
   assert.ok(white >= BODY, `robinhood: ticker white is ${white.toFixed(2)}:1`);
-  assert.ok(green >= BODY, `robinhood: accent is ${green.toFixed(2)}:1`);
+  // Every metal in the palette carries text, including the darkest one — the
+  // gradient stroke runs to RH_GOLD_DEEP and the error text is champagne.
+  for (const [name, metal] of Object.entries({
+    gold: RH_GOLD, richGold: RH_GOLD_DEEP, champagne: RH_CHAMPAGNE,
+  })) {
+    const c = contrastRatio(hex(metal), black);
+    assert.ok(c >= BODY, `robinhood: ${name} ${metal} is ${c.toFixed(2)}:1 on black`);
+  }
+  const green = contrastRatio(hex(RH_GOLD), black);
   // The spec's #333 node outline is decoration, not a control boundary — it
   // does NOT clear 3:1, which is why an interactive node takes the accent on
   // hover and focus. Asserted so the fact stays visible rather than becoming
   // an accident.
   assert.ok(hairline < UI_COMPONENT,
     "robinhood: #333 now clears 3:1 — the accent-on-hover rule can be dropped");
-  assert.ok(contrastRatio(hex(RH_GREEN), black) >= UI_COMPONENT,
+  assert.ok(contrastRatio(hex(RH_GOLD), black) >= UI_COMPONENT,
     "robinhood: the hover/focus outline must clear the UI floor");
 
   console.log(
     `robinhood canvas ${RH_BLACK}  ticker ${white.toFixed(2)}:1  ` +
-    `accent ${green.toFixed(2)}:1  node outline ${hairline.toFixed(2)}:1 (decorative)`);
+    `gold ${green.toFixed(2)}:1  rich ${contrastRatio(hex(RH_GOLD_DEEP), black).toFixed(2)}:1  ` +
+    `champagne ${contrastRatio(hex(RH_CHAMPAGNE), black).toFixed(2)}:1  ` +
+    `node outline ${hairline.toFixed(2)}:1 (decorative)`);
 }
 
 console.log("polymarket + robinhood palettes: all checks pass");

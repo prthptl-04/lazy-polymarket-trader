@@ -135,7 +135,7 @@
 [data-surface="light"] [class*="bg-white/30"]     { background-color: rgb(var(--dhan-ink-rgb) / 0.30); }
 
 /* ---------------------------------------------------------------------------
-   Robinhood dark mode — pitch black, flat, borderless.
+   Robinhood Gold — pitch black, flat, borderless, metallic.
 
    The glass is stripped rather than recoloured: no backdrop-filter, no card
    fill, no radius, no shadow. What survives is the hairline row rule, because
@@ -169,20 +169,21 @@
 [data-venue-theme="robinhood"] .text-white { color: var(--rh-white); }
 
 /* The accent: interactive elements, active states, gains. */
-[data-venue-theme="robinhood"] [class*="text-hood-green"] { color: var(--rh-green); }
-[data-venue-theme="robinhood"] [class*="bg-hood-green"] { background-color: rgb(0 200 5 / 0.14); }
-[data-venue-theme="robinhood"] [class*="bg-white/[0.14]"] { background-color: rgb(0 200 5 / 0.16); }
+[data-venue-theme="robinhood"] [class*="text-hood-green"] { color: var(--rh-gold); }
+[data-venue-theme="robinhood"] [class*="bg-hood-green"] { background-color: rgb(255 215 0 / 0.12); }
+[data-venue-theme="robinhood"] [class*="border-hood-green"] { border-color: rgb(255 215 0 / 0.55); }
+[data-venue-theme="robinhood"] [class*="bg-white/[0.14]"] { background-color: rgb(255 215 0 / 0.14); }
 [data-venue-theme="robinhood"] .pm-action,
 [data-venue-theme="robinhood"] .rh-action {
   border-radius: 4px;
-  border: 1px solid var(--rh-green);
+  border: 1px solid var(--rh-gold);
   background-color: transparent;
-  color: var(--rh-green);
+  color: var(--rh-gold);
   transition: background-color 150ms linear;
 }
-[data-venue-theme="robinhood"] .rh-action:hover { background-color: rgb(0 200 5 / 0.12); }
+[data-venue-theme="robinhood"] .rh-action:hover { background-color: rgb(255 215 0 / 0.12); }
 [data-venue-theme="robinhood"] .rh-action:focus-visible {
-  outline: 2px solid var(--rh-green); outline-offset: 2px;
+  outline: 2px solid var(--rh-gold); outline-offset: 2px;
 }
 
 /* Round table: dark circles, thin #333 outline, neon validation path. */
@@ -195,15 +196,90 @@
   border-radius: 9999px !important;
 }
 [data-venue-theme="robinhood"] .rt-node-live {
-  border-color: var(--rh-green) !important;
-  box-shadow: 0 0 10px rgb(0 200 5 / 0.35);
+  border-color: var(--rh-gold) !important;
+  box-shadow: 0 0 10px #FFD700;
 }
 [data-venue-theme="robinhood"] .rt-spoke { stroke: var(--rh-hairline); }
 [data-venue-theme="robinhood"] .rt-pulse {
-  stroke: var(--rh-green);
-  filter: drop-shadow(0 0 8px #00C805);
+  stroke: var(--rh-gold);
+  filter: drop-shadow(0 0 8px #FFD700);
 }
 [data-venue-theme="robinhood"] .rt-hub {
-  fill: #0a0a0a; stroke: var(--rh-green); stroke-width: 1;
-  filter: drop-shadow(0 0 8px rgb(0 200 5 / 0.45));
+  fill: #0a0a0a; stroke: var(--rh-gold); stroke-width: 1;
+  filter: drop-shadow(0 0 10px rgb(255 215 0 / 0.5));
+}
+
+/* ---------------------------------------------------------------------------
+   Section 10 — the metallic sweep.
+
+   One keyframe, two consumers: `.gold-shimmer` sweeps a highlight across a
+   filled surface (the GO control, the hub), `.gold-text` clips the same sweep
+   to the glyphs (the equity figure). Both are decoration over a colour that
+   already carries the contrast on its own, so a browser that refuses the
+   animation loses shine, not legibility.
+   --------------------------------------------------------------------------- */
+@keyframes gold-sweep { from { background-position: -220% 0; } to { background-position: 220% 0; } }
+
+/* A translucent sweep over the button's own gradient washed it olive, because
+   background-image REPLACES rather than overlays. Under Gold the control is
+   struck from metal instead, and the sweep is the highlight moving across it. */
+[data-venue-theme="robinhood"] .gold-shimmer {
+  color: #0a0a0a;
+  background-image: linear-gradient(105deg,
+    #B8860B 0%, #D4AF37 36%, #FFF3B0 50%, #D4AF37 64%, #B8860B 100%);
+  background-size: 220% 100%;
+  animation: gold-sweep 3.6s linear infinite;
+}
+[data-venue-theme="robinhood"] .gold-text {
+  background-image: linear-gradient(100deg,
+    #B8860B 0%, #D4AF37 34%, #FFF6C2 50%, #D4AF37 66%, #B8860B 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: gold-sweep 4.4s linear infinite;
+}
+[data-venue-theme="robinhood"] .gold-edge { border-color: var(--rh-gold) !important; }
+[data-venue-theme="robinhood"] .gold-glow { box-shadow: 0 0 14px rgb(255 215 0 / 0.45); }
+
+/* The gate panel stays dim until every condition is met — the dashboard should
+   not look armed while the router is still refusing live orders. */
+[data-venue-theme="robinhood"] .gate-locked { opacity: 0.55; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-venue-theme="robinhood"] .gold-shimmer,
+  [data-venue-theme="robinhood"] .gold-text { animation: none; }
+  [data-venue-theme="robinhood"] .gold-text { background-position: 50% 0; }
+}
+
+/* A failed quote reads as a warning in every theme; gold is its Robinhood voice. */
+.feed-error { color: rgb(251 191 36 / 0.8); }
+[data-venue-theme="robinhood"] .feed-error { color: var(--rh-champagne); }
+
+/* The hub carries the sweep as a slow pulse — a filter, since it is an SVG
+   circle and there is no box to paint a gradient across. */
+@keyframes hub-pulse {
+  0%, 100% { filter: drop-shadow(0 0 6px rgb(255 215 0 / 0.35)); }
+  50%      { filter: drop-shadow(0 0 16px rgb(255 215 0 / 0.75)); }
+}
+[data-venue-theme="robinhood"] .gold-hub { animation: hub-pulse 3.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  [data-venue-theme="robinhood"] .gold-hub { animation: none; }
+}
+
+/* A seat that failed is not a quiet neutral — the table was thinner than its
+   seat count claims, and it should look wrong. */
+.abstention-error { border-color: rgb(248 113 113 / 0.35); background-color: rgb(248 113 113 / 0.07); }
+.chair-block { background-color: rgb(255 255 255 / 0.04); }
+[data-venue-theme="robinhood"] .chair-block {
+  background-color: rgb(255 215 0 / 0.06);
+  box-shadow: inset 0 0 0 1px rgb(255 215 0 / 0.25);
+}
+
+/* The chrome is sticky. Stripping its glass left it transparent, so scrolled
+   rows read straight through the header — flat cannot mean see-through for the
+   one element that overlaps everything else. */
+[data-venue-theme="robinhood"] header .bg-glass-white,
+[data-venue-theme="robinhood"] header .glass-plain {
+  background-color: var(--rh-black) !important;
+  border-bottom: 1px solid var(--rh-hairline);
 }

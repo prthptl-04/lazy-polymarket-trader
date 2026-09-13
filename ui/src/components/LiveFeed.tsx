@@ -3,44 +3,64 @@ import { Empty, Pill, money, toneOf } from "./primitives";
 import { usePoll, type Feed } from "../lib/api";
 
 /**
- * Live quotes from the venue itself.
+ * Live quotes from the venue itself, four seconds apart.
  *
- * A quote that failed is shown with its reason rather than dropped — a feed
- * that silently shortens looks exactly like a flat book, and those two states
- * call for opposite reactions.
+ * A quote that failed keeps its row and shows the reason. Dropping it would
+ * make a broken feed indistinguishable from a flat book — the two call for
+ * opposite reactions, and only one of them is "do nothing".
+ *
+ * Only held symbols appear: the quote that matters is the one an exit would
+ * fill at, and streaming names the fund does not own is noise on a panel whose
+ * whole job is to be scanned quickly.
  */
 export function LiveFeed({ venue, title }: { venue: string; title: string }) {
   const { data, stale } = usePoll<Feed[]>(`/api/feeds?venue=${venue}`, 4000);
   return (
-    <GlassCard className="p-4" inert>
-      <PanelTitle right={stale ? <Pill tone="warn">stale</Pill> : <Pill tone="good">live</Pill>}>
+    <GlassCard className="p-5" inert>
+      <PanelTitle right={stale ? <Pill tone="warn">stale</Pill> : <Pill tone="good">live · 4s</Pill>}>
         {title}
       </PanelTitle>
       {data?.length ? (
-        <div className="space-y-1.5">
-          {data.map((f) => (
-            <div key={f.symbol}
-                 className="flex items-center justify-between gap-3 rounded-xl
-                            border border-white/[0.06] bg-white/[0.03] px-3 py-2">
-              <span className="text-[12px] font-semibold text-white/85">{f.symbol}</span>
-              {f.reason ? (
-                <span className="text-[10.5px] text-amber-400/70">{f.reason}</span>
-              ) : (
-                <div className="flex items-center gap-3 font-mono text-[11.5px]">
-                  <span className="text-white/40">{money(f.bid)}</span>
-                  <span className="text-white/85">{money(f.last)}</span>
-                  <span className="text-white/40">{money(f.ask)}</span>
-                  {f.spread_bps != null &&
-                    <span className="text-white/25">{f.spread_bps.toFixed(0)}bp</span>}
-                  {f.change_pct != null && (
-                    <span className={`${toneOf(f.change_pct)} w-14 text-right`}>
-                      {f.change_pct > 0 ? "+" : ""}{f.change_pct.toFixed(2)}%
-                    </span>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px] min-w-[460px]">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-white/35">
+                <th className="text-left pb-2">Symbol</th>
+                <th className="text-right pb-2">Bid</th>
+                <th className="text-right pb-2">Last</th>
+                <th className="text-right pb-2">Ask</th>
+                <th className="text-right pb-2">Spread</th>
+                <th className="text-right pb-2">% vs entry</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {data.map((f) => (
+                <tr key={f.symbol} className="border-t border-white/[0.06]">
+                  <td className="py-1.5 font-sans font-semibold text-white/85">{f.symbol}</td>
+                  {f.reason ? (
+                    // Muted gold under the Gold theme, amber elsewhere: an
+                    // unreachable quote is a warning, not a loss.
+                    <td colSpan={5} className="text-right font-sans text-[11px] feed-error">
+                      quote unavailable · {f.reason}
+                    </td>
+                  ) : (
+                    <>
+                      <td className="text-right text-white/45">{money(f.bid)}</td>
+                      <td className="text-right text-white/85">{money(f.last)}</td>
+                      <td className="text-right text-white/45">{money(f.ask)}</td>
+                      <td className="text-right text-white/35">
+                        {f.spread_bps == null ? "—" : `${f.spread_bps.toFixed(0)}bp`}
+                      </td>
+                      <td className={`text-right ${toneOf(f.change_pct)}`}>
+                        {f.change_pct == null ? "—"
+                          : `${f.change_pct > 0 ? "+" : ""}${f.change_pct.toFixed(2)}%`}
+                      </td>
+                    </>
                   )}
-                </div>
-              )}
-            </div>
-          ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <Empty title="No live feed."
