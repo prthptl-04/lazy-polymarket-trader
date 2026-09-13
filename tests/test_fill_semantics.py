@@ -140,3 +140,37 @@ async def test_a_close_without_a_venue_price_is_marked_mid_not_treated_as_free()
                               planned_price=104.5, reason="target")
     assert record["exit_price"] == 104.5
     assert record["exit_fill_source"] == "mid", "an unpriced fill must be excluded, not costed at zero"
+
+
+@pytest.mark.asyncio
+async def test_the_book_holds_the_quantity_the_venue_filled():
+    """A notional order resolves to size_usd/fill, and the fill is never the mid
+    the plan was sized against. Recording size.quantity leaves the book holding
+    more than the venue does, and the exit comes back "cannot sell 5.0: holding
+    4.9925" — a stop that fires cannot execute."""
+    from trading.fund import FundLoop
+
+    venue = PaperVenue(starting_cash_usd=5_000.0)
+    venue.set_quote("AAPL", bid=99.90, ask=100.10)
+    buy = await venue.place_order(OrderRequest(
+        symbol="AAPL", side="buy", asset_class="equity",
+        notional_usd=500.0, client_order_id="b"))
+
+    planned = 500.0 / 100.0                       # size_usd / mid
+    filled = FundLoop._filled_quantity(buy)
+    assert filled is not None and filled < planned
+
+    # The quantity the book must record is the one that can actually be sold.
+    sell = await venue.place_order(OrderRequest(
+        symbol="AAPL", side="sell", asset_class="equity",
+        quantity=filled, client_order_id="s"))
+    assert sell.is_filled, sell.error
+
+    # ...and the planned quantity cannot.
+    venue2 = PaperVenue(starting_cash_usd=5_000.0)
+    venue2.set_quote("AAPL", bid=99.90, ask=100.10)
+    await venue2.place_order(OrderRequest(symbol="AAPL", side="buy",
+        asset_class="equity", notional_usd=500.0, client_order_id="b2"))
+    rejected = await venue2.place_order(OrderRequest(symbol="AAPL", side="sell",
+        asset_class="equity", quantity=planned, client_order_id="s2"))
+    assert not rejected.accepted and "cannot sell" in (rejected.error or "")

@@ -266,10 +266,12 @@ class FundLoop:
             and result.size is not None
         ):
             entry_fill = self._fill_price(result.ack)
+            filled_qty = self._filled_quantity(result.ack)
             self.position_book.open(
                 symbol=symbol,
                 asset_class=asset_class,
-                quantity=result.size.quantity,
+                # What the venue holds, not what the sizer asked for.
+                quantity=filled_qty if filled_qty is not None else result.size.quantity,
                 # The venue's price, not the mid the plan was drawn on.
                 entry_price=entry_fill if entry_fill is not None else built.exit_plan.entry,
                 planned_entry=built.exit_plan.entry,
@@ -447,6 +449,24 @@ class FundLoop:
             "limit_price": round(bid * (1 - through), 4),
             "extended_hours": True,
         }
+
+    @staticmethod
+    def _filled_quantity(ack: Any) -> Optional[float]:
+        """How much the venue actually bought.
+
+        A notional order resolves to `size_usd / fill_price`, and the fill is
+        never the mid the plan was sized against — so the book recording
+        `size.quantity` holds MORE than the venue does. The exit then sells a
+        quantity that does not exist and comes back "cannot sell 5.0: holding
+        4.9925", which means a stop that fires cannot execute. Latent until the
+        fill price was captured; fatal the first time a stop mattered.
+        """
+        raw = getattr(ack, "raw", None) or {}
+        quantity = raw.get("quantity")
+        try:
+            return float(quantity) if quantity is not None else None
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _fill_price(ack: Any) -> Optional[float]:
