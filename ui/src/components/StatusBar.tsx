@@ -5,10 +5,11 @@ import { useState } from "react";
 import { Confirm } from "./Confirm";
 import { useDocumentSurface } from "../lib/useDynamicBackground";
 
-export type ViewKey = "overview" | "polymarket" | "robinhood";
+export type ViewKey = "overview" | "paper" | "polymarket" | "robinhood";
 
 const VIEWS: { key: ViewKey; label: string }[] = [
   { key: "overview", label: "Overview" },
+  { key: "paper", label: "Paper Trading" },
   { key: "polymarket", label: "Polymarket" },
   { key: "robinhood", label: "Robinhood" },
 ];
@@ -147,7 +148,7 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
         {/* left */}
         <div className="flex items-center gap-5">
           <ToggleSwitch
-            label="Paper Trading"
+            label="Paper mode"
             on={!fund?.router_live_gate?.live_possible}
             onChange={() => { /* live flip is the rule-#13 checklist, not a switch */ }}
           />

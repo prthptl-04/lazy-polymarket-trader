@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { LiquidGlassProvider } from "./components/LiquidGlassProvider";
 import { StatusBar, type ViewKey } from "./components/StatusBar";
 import { Overview } from "./views/Overview";
+import { PaperTrading } from "./views/PaperTrading";
 import { VenueView } from "./views/VenueView";
 import "./index.css";
 
@@ -31,6 +32,7 @@ function App() {
           initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18 }}>
           {view === "overview" && <Overview />}
+          {view === "paper" && <PaperTrading />}
           {view === "polymarket" && <VenueView venue="polymarket_us" />}
           {view === "robinhood" && <VenueView venue="robinhood" />}
         </motion.div>

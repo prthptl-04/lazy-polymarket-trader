@@ -2,20 +2,18 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Preflight, type Step } from "../components/Preflight";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
-import { AgentDialogue } from "../components/AgentDialogue";
 import { LiveFeed } from "../components/LiveFeed";
 import { MarketStance } from "../components/MarketStance";
 import { RoundTableFeed } from "../components/RoundTableFeed";
 import { RoundTableThread } from "../components/RoundTableThread";
 import { TradeHistory } from "../components/TradeHistory";
 import { EquityArea, Sparkline, type Marker } from "../components/charts";
-import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
-import { AgentRoundTable } from "../components/AgentRoundTable";
+import { Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import { usePolymarketTheme } from "../lib/polymarketTheme";
 import { RH_GOLD as GOLD, RH_GOLD_DEEP as GOLD_DEEP, useRobinhoodTheme } from "../lib/robinhoodTheme";
 import {
   post, usePoll, type Balances, type EngineState, type FundStatus, type ModeState,
-  type PaperProgress, type Position, type Record_, type VenueModes,
+  type Position, type Record_, type VenueModes,
 } from "../lib/api";
 
 type Venue = "polymarket_us" | "robinhood";
@@ -43,7 +41,6 @@ export function VenueView({ venue }: { venue: Venue }) {
   const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
   const { data: rec } = usePoll<Record_>("/api/record");
-  const { data: paper } = usePoll<PaperProgress>("/api/paper", 10000);
   const { data: positions } = usePoll<Position[]>("/api/positions");
   const { data: modeData, refresh: refreshModes } =
     usePoll<{ modes: VenueModes }>("/api/venue-modes", 8000);
@@ -61,13 +58,12 @@ export function VenueView({ venue }: { venue: Venue }) {
     !!k && (!!modes[k]?.paper?.attached || !!modes[k]?.live?.attached);
   const modeKey = wired(venue) ? venue : Object.keys(modes).find(wired) ?? venue;
   const liveMode: ModeState | undefined = modeKey ? modes[modeKey]?.live : undefined;
-  const paperMode: ModeState | undefined = modeKey ? modes[modeKey]?.paper : undefined;
-  const [preflight, setPreflight] = useState<null | "paper" | "live">(null);
+  const [preflight, setPreflight] = useState<null | "live">(null);
   const systemOn = fund?.state === "running" || fund?.state === "starting";
 
   // The checks the toast walks through. They are READ from live state rather
   // than assumed, so a step that says "on" means the API said so a moment ago.
-  const steps: Step[] = preflight === "live" ? [
+  const steps: Step[] = [
     { label: "Project धन is running", ok: systemOn,
       detail: systemOn ? undefined : "start the system from the top-right control" },
     { label: `${title} engine is connected`, ok: !!engine?.on,
@@ -79,14 +75,6 @@ export function VenueView({ venue }: { venue: Venue }) {
         : `${fund?.router_live_gate?.graded_paper_trades ?? 0}/${fund?.router_live_gate?.required_paper_trades ?? 50} graded paper trades, and the checklist is not complete` },
     { label: "Seats begin acting on live data", ok: true,
       detail: "orders route to the live venue; exits still route to whoever holds the position" },
-  ] : [
-    { label: "Project धन is running", ok: systemOn,
-      detail: systemOn ? undefined : "start the system from the top-right control" },
-    { label: `${title} engine is off`, ok: true, required: false,
-      detail: engine?.on ? "engine is connected — its quotes are real, fills stay simulated"
-                         : "not needed: paper fills are simulated either way" },
-    { label: "Seats begin paper trading", ok: true,
-      detail: "every fill is simulated; the record counts toward the rule-#13 bar" },
   ];
 
   const setMode = async (mode: "paper" | "live", start: boolean) => {
@@ -95,7 +83,6 @@ export function VenueView({ venue }: { venue: Venue }) {
     void refreshModes();
   };
   const curve = rec?.equity_curve ?? [];
-  const paperCurve = paper?.equity_curve ?? [];
   const mine = (positions ?? []).filter((p) =>
     poly ? p.asset_class === "prediction" : p.asset_class !== "prediction");
 
@@ -105,9 +92,9 @@ export function VenueView({ venue }: { venue: Venue }) {
         {preflight && (
           <Preflight
             key={preflight}
-            title={`${title} · ${preflight === "live" ? "going live" : "paper trading"}`}
+            title={`${title} · going live`}
             steps={steps}
-            onComplete={() => void setMode(preflight, true)}
+            onComplete={() => void setMode("live", true)}
             onDismiss={() => setPreflight(null)} />
         )}
       </AnimatePresence>
@@ -147,9 +134,11 @@ export function VenueView({ venue }: { venue: Venue }) {
           account, the feed, the plan and the whole trade record, and the paper
           column is a status rail. Splitting them evenly gave the simulation the
           same visual weight as the money. */}
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-0">
-        {/* ================= LEFT — live (75%) ================= */}
-        <div className="xl:col-span-3 space-y-5 xl:pr-6">
+      {/* One column. Everything simulated moved to the Paper Trading tab —
+          a venue page that showed both was asking you to hold two realities at
+          once while reading numbers that decide real money. */}
+      <div className="grid grid-cols-1">
+        <div className="space-y-5">
           <div className="flex items-center gap-3 px-1">
             <span className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-semibold">
               Live
@@ -206,6 +195,8 @@ export function VenueView({ venue }: { venue: Venue }) {
 
           <LiveFeed venue={venue} title={`${title} live data feed`} />
 
+          {poly && <MarketStance />}
+
           <RoundTableThread title={`${title} live round table · discussion`} />
 
           <RoundTableFeed title="Live agent round table" max={300} />
@@ -248,114 +239,11 @@ export function VenueView({ venue }: { venue: Venue }) {
           <TradeHistory venue={venue} />
         </div>
 
-        {/* ================= RIGHT — paper (25%) =================
-            The border IS the differentiation line the split exists for. */}
-        <div className="xl:col-span-1 space-y-5 xl:pl-6 xl:border-l border-white/[0.09] mt-5 xl:mt-0">
-          <div className="flex items-center gap-3 px-1">
-            <span className="text-[10px] uppercase tracking-[0.16em] text-amber-400/70 font-semibold">
-              Paper
-            </span>
-            <ModeToggle mode="paper" label="Go Paper" state={paperMode} venue={modeKey} page={venue}
-                        gateOpen onSet={(v) => (v ? setPreflight("paper") : setMode("paper", false))} />
-            <span className="h-px flex-1 bg-white/[0.09]" />
-          </div>
-
-          {poly ? <MarketStance /> : (
-            <GlassCard className="p-5" inert>
-              <PanelTitle>Agent round table</PanelTitle>
-              <AgentRoundTable size={250} activeIds={[]} />
-              <div className="text-[11px] text-white/30 text-center mt-2">
-                A pulse travels node → centre when that seat speaks. Hover any node for its mandate.
-              </div>
-            </GlassCard>
-          )}
-
-          <GlassCard className="p-5" inert>
-            <PanelTitle right={<Pill tone="warn">simulated</Pill>}>
-              {title} paper trading engine
-            </PanelTitle>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 mb-4">
-              <Stat label="Graded trades"
-                    value={`${paper?.graded_paper_trades ?? 0}/${paper?.required ?? 50}`}
-                    sub={`${(paper?.pct_complete ?? 0).toFixed(0)}% to the live bar`} />
-              <Stat label="Win rate"
-                    value={paper?.win_rate == null ? "—" : `${paper.win_rate.toFixed(0)}%`} />
-              <Stat label="Realised (paper)" value={signed(paper?.realized_usd)}
-                    tone={toneOf(paper?.realized_usd)} />
-              <Stat label="Seats calibrated"
-                    value={`${paper?.seats_calibrated ?? 0}/${paper?.seats_scored ?? 0}`}
-                    sub="self-improvement" />
-            </div>
-            {/* Rule #13's bar, as a bar. A count reads as trivia; a track that
-                is one fifth full reads as "not yet". */}
-            <div className="mb-4">
-              <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
-                <motion.div className="h-full rounded-full"
-                  style={{ background: poly ? "linear-gradient(90deg,#2d52f3,#00c805)"
-                                            : `linear-gradient(90deg,${GOLD_DEEP},${GOLD})` }}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.max(2, paper?.pct_complete ?? 0)}%` }}
-                  transition={{ duration: 0.6, ease: "easeOut" }} />
-              </div>
-            </div>
-            {poly
-              ? <EquityArea values={paperCurve} colour="#fbbf24" height={180} />
-              : <Sparkline values={paperCurve} colour="#fbbf24" height={180} />}
-            <div className="text-[10.5px] text-white/40 mt-1.5 text-center">
-              Prices are live; fills are simulated.
-            </div>
-            <div className="text-[11px] text-white/35 mt-3 leading-relaxed border-t border-white/[0.07] pt-3">
-              Prices are live from the venue; fills are simulated with a pessimistic
-              spread cross. A paper record built on synthetic prices would prove
-              nothing about live behaviour.
-            </div>
-          </GlassCard>
-
-          <AgentDialogue title="Paper round table · live deliberation" />
-
-          <GlassCard className={`p-4 ${fund?.router_live_gate?.live_possible ? "" : "gate-locked"}`} inert>
-            <PanelTitle right={fund?.router_live_gate?.live_possible
-              ? <Pill tone="good">live possible</Pill>
-              : <Pill tone="warn">🔒 paper only</Pill>}>
-              Live-trading checklist
-            </PanelTitle>
-            {fund?.router_live_gate ? (
-              <div className="space-y-2">
-                {Object.entries(fund.router_live_gate.checks).map(([k, v]) => (
-                  <div key={k} className="flex items-center gap-2.5">
-                    <DrawnCheck checked={v} />
-                    <span className={`text-[11px] ${v ? "text-white/70" : "text-white/35"}`}>
-                      {LABELS[k] ?? k}
-                      {k === "paper_trades_recorded" &&
-                        ` (${fund.router_live_gate!.graded_paper_trades}/${fund.router_live_gate!.required_paper_trades})`}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : <Empty title="No fund attached." />}
-            {fund?.router_live_gate && !fund.router_live_gate.live_possible && (
-              <div className="flex items-start gap-2 mt-3 pt-3 border-t border-white/[0.08]">
-                <span className="text-[12px] leading-none mt-0.5">🔒</span>
-                <span className="text-[10.5px] text-white/45 leading-relaxed">
-                  The router refuses live orders while any box is unticked — including
-                  closes. &ldquo;It&rsquo;s an exit&rdquo; is not a bypass for the checklist.
-                </span>
-              </div>
-            )}
-          </GlassCard>
-        </div>
       </div>
     </div>
   );
 }
 
-const LABELS: Record<string, string> = {
-  env_paper_trading_false: "PAPER_TRADING=false",
-  venue_authenticated: "Venue authenticated",
-  risk_caps_live_appropriate: "Risk caps sized",
-  paper_trades_recorded: "Paper trades on record",
-  operator_approval_lesson: "Operator approval",
-};
 
 /**
  * GO / STOP for one side of one venue.
