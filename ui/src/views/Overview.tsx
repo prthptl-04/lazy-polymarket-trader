@@ -306,7 +306,9 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
   return (
     // data-venue-skin carries the venue's whole design language — ground,
     // typography, accents, controls — scoped to this column.
-    <div data-venue-skin={skin}>
+    // flex column so the chart takes the slack and the stats sit on the floor
+    // of the panel — both venues then line up along the same bottom edge.
+    <div data-venue-skin={skin} className="flex flex-col">
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2 h-2 rounded-full ${dot}`} />
         <span className="text-[12px] text-white/70">{label}</span>
@@ -318,11 +320,10 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
         </Pill>
       </div>
       <EngineButton venue={venue} label={engineLabel} state={engine} onDone={onEngine} />
-      {/* Headline figure in the venue's own voice: Robinhood's is the thin
-          white ticker, Polymarket's the ordinary panel number. */}
-      <div className={hood
-        ? "venue-figure font-mono mb-1"
-        : "font-mono text-3xl font-light tracking-tighter text-white/90 mb-1"}>
+      {/* One size for both. Robinhood's 80px ticker is right on a page that is
+          nothing but that number; in a two-up panel it just shouted over the
+          other venue. */}
+      <div className="font-mono text-3xl font-light tracking-tighter text-white/90 mb-1">
         {money(shown.invested)}
       </div>
 
@@ -330,12 +331,28 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
           totals, not a series — so it is labelled rather than passed off as
           the account's equity history. Polymarket draws it as a gradient area,
           Robinhood as a bare sparkline with no grid and no axes. */}
-      {hood
-        ? <Sparkline values={fundRec?.equity_curve ?? []} colour="#FFD700"
-                     gradient={["#FFD700", "#B8860B"]} height={300} />
-        : <EquityArea values={fundRec?.equity_curve ?? []} colour={colour} height={300} />}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4 mt-5 pt-4
+      <div className="text-[10px] text-white/30 mb-2 leading-relaxed">
+        {live
+          ? <>Figures above are {label}&rsquo;s own ledger ({broker!.trades ?? 0} trades in
+              the window). Fund paper record at this venue:{" "}
+              {fundRec?.closed ?? 0} closed, {signed(fundRec?.realized_usd)} realised.
+              The curve is the fund&rsquo;s.</>
+          : <>Fund paper record. {broker && !broker.available
+              ? `${label}'s own ledger is unreachable: ${broker.reason}`
+              : `${label} exposes no realised ledger to read.`}</>}
+      </div>
+
+      {/* Bled to the panel edges and stretched into whatever height is left —
+          the chart is the thing worth the space. */}
+      <div className="flex-1 min-h-[280px] -mx-4">
+        {hood
+          ? <Sparkline values={fundRec?.equity_curve ?? []} colour="#FFD700"
+                       gradient={["#FFD700", "#B8860B"]} height="100%" />
+          : <EquityArea values={fundRec?.equity_curve ?? []} colour={colour} height="100%" />}
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4 mt-auto pt-4
                       border-t border-white/[0.07]">
         <Stat label="Realised P&L" value={signed(shown.realized)}
               tone={toneOf(shown.realized)} />
@@ -352,16 +369,6 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
         <Stat label="Cycles run" value={cycles} sub="fund-wide" />
       </div>
 
-      <div className="text-[10px] text-white/30 mt-3 leading-relaxed">
-        {live
-          ? <>Figures above are {label}&rsquo;s own ledger ({broker!.trades ?? 0} trades in
-              the window). Fund paper record at this venue:{" "}
-              {fundRec?.closed ?? 0} closed, {signed(fundRec?.realized_usd)} realised.
-              The curve is the fund&rsquo;s.</>
-          : <>Fund paper record. {broker && !broker.available
-              ? `${label}'s own ledger is unreachable: ${broker.reason}`
-              : `${label} exposes no realised ledger to read.`}</>}
-      </div>
     </div>
   );
 }

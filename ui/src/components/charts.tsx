@@ -7,7 +7,7 @@ import { Empty, money } from "./primitives";
 /** One point is not a line. Recharts happily renders a lone dot in an empty
  *  frame, which reads as a broken chart rather than as "nothing has closed
  *  yet" — so say which it is. */
-function tooShort(values: number[], height: number) {
+function tooShort(values: number[], height: number | string) {
   if (values.length >= 2) return null;
   return (
     <div style={{ height }} className="flex items-center justify-center">
@@ -64,7 +64,7 @@ function markerShape(tone: Marker["tone"], label: string, accent = "#2d52f3") {
 
 export function EquityArea({
   values, colour = "#2d52f3", markers = [], height = 190,
-}: { values: number[]; colour?: string; markers?: Marker[]; height?: number }) {
+}: { values: number[]; colour?: string; markers?: Marker[]; height?: number | string }) {
   const short = tooShort(values, height);
   if (short) return short;
   const data = values.map((v, i) => ({ i, v }));
@@ -106,7 +106,7 @@ export function EquityArea({
 export function Sparkline({
   values, colour = "#00c805", markers = [], height = 230, gradient,
 }: {
-  values: number[]; colour?: string; markers?: Marker[]; height?: number;
+  values: number[]; colour?: string; markers?: Marker[]; height?: number | string;
   gradient?: [string, string];
 }) {
   const short = tooShort(values, height);
