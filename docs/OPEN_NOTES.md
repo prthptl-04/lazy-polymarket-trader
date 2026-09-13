@@ -10,45 +10,31 @@
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. Data architecture — VERIFIED 2026-09-12, but MCP ≠ daemon
-Both MCP servers authenticated and enumerated. Ground truth:
+### 1. Robinhood MCP — auth flow not yet run (user, one-time)
+**The old blocker's premise was wrong.** "MCP-only" was read as "only Claude
+Code can reach it"; MCP over HTTP is JSON-RPC plus OAuth, and any client can
+hold a session. `trading/mcp_client.py` gives the fund its own OAuth client
+with PKCE and file-backed token storage, so the daemon no longer depends on a
+Claude Code session.
 
-| Need | Source | Status |
-|---|---|---|
-| Equity bars | Robinhood `get_equity_historicals` / Massive `/v2/aggs` | ✅ both |
-| **Crypto bars** | Massive `/v2/aggs/ticker/X:BTCUSD/...` | ✅ **entitled on the $29 stocks plan** |
-| market_cap, shares_outstanding | Robinhood `get_equity_fundamentals` | ✅ free |
-| Balance sheet (Altman + Piotroski) | Robinhood `get_sec_filing_facts` | ✅ free, 2 yrs per 10-K |
-| Massive `/stocks/financials/v1/*` | — | ❌ **NOT_ENTITLED** on the $29 plan |
+**What the user has to do, once:**
 
-Verified Altman/Piotroski inputs all present in one 10-K call: Assets,
-Liabilities, AssetsCurrent, LiabilitiesCurrent,
-RetainedEarningsAccumulatedDeficit, OperatingIncomeLoss (EBIT), NetIncomeLoss,
-NetCashProvidedByUsedInOperatingActivities, LongTermDebtNoncurrent — **current
-AND prior year**, which is what Piotroski needs. Revenue/GrossProfit need the
-company-specific tag (Apple uses
-RevenueFromContractWithCustomerExcludingAssessedTax, not Revenues).
+    python scripts_mcp_auth.py robinhood
 
-**No further spend needed.** Crypto works; fundamentals are free via SEC facts.
+A browser opens, you approve, tokens land in
+`~/.config/lazy-fund/mcp-tokens.json` (0600, gitignored).
 
-**THE CATCH:** all Robinhood access is MCP, which is bound to a Claude Code
-session. The fund daemon is a separate process and **cannot reach it**. So:
-- Bars for the daemon → Massive REST + `MASSIVE_API_KEY` (entitled). Build
-  `MassiveProvider` next.
-- Fundamentals for the daemon → no path yet. Options: (a) SEC EDGAR's free
-  public XBRL API (`data.sec.gov`, no key) routed through the rule-#8 trust
-  gate, or (b) Massive's $29 fundamentals add-on. (a) is free; prefer it.
-- Robinhood MCP stays useful for interactive research in-session, and is how
-  order placement will work if the daemon question (blocker #4) resolves that way.
+**The one fact that decides unattended running:** whether Robinhood issues a
+**refresh token**. The script prints it explicitly.
+- Refresh token issued → one-time step; the daemon renews itself. Blocker gone.
+- No refresh token → a human must re-authenticate on Robinhood's expiry
+  schedule, and the scheduler should surface that rather than dying at 3am.
 
-Agentic account confirmed: `854969722` (nickname "Agentic",
-`agentic_allowed: true`, limited_margin), linked crypto account present.
+Until the flow is run this is unknown, and it should not be guessed.
 
-### 2. MCP auth is desktop-interactive OAuth
-Robinhood requires a desktop browser to authenticate and open the agentic
-account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
-across restarts is unsolved and is the real blocker on unattended autonomy.
-→ *Decide the approach before Phase 5.*
+Also to do on first connect: `McpSession.discover_tools()` against the live
+server, then correct `trading/venues/robinhood.py::TOOL_NAMES` — Robinhood does
+not publish its schema, so that map is still best-effort.
 
 ---
 
@@ -216,3 +202,4 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Per-venue trading sessions (independent start/stop) | `b56025a` |
 | Post-mortem: a lesson written on every loss | `ddb8ade` |
 | News + publisher sentiment into the Sentiment seat | this commit |
+| Daemon could not hold an MCP session (own OAuth client) | this commit |

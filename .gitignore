@@ -31,3 +31,7 @@ build/
 # UI skill clones — we vendor the adapted SKILL.md only.
 .claude/skills/gsap-src/
 .claude/skills/uiux-src/
+
+# MCP OAuth tokens (bearer credentials for a brokerage account)
+mcp-tokens.json
+.config/
