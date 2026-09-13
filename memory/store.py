@@ -261,10 +261,16 @@ class MemoryStore:
         return {r[0]: dict(zip(cols, r)) for r in rows}
 
     def recent_llm_costs(self, limit: int = 50) -> list[dict]:
+        # Column list written out rather than interpolated. It was a local
+        # literal either way, but an f-string in a SQL call is the shape the
+        # vulnerability scanner is looking for (POLY-008), and it is right to:
+        # the pattern is one refactor away from taking a caller's string.
         cols = ["id", "provider", "model", "mode", "thesis_id", "input_tokens",
                 "output_tokens", "cache_read", "cache_write", "cost_usd", "created"]
         rows = self._conn.execute(
-            f"SELECT {', '.join(cols)} FROM llm_costs ORDER BY created DESC LIMIT ?",
+            "SELECT id, provider, model, mode, thesis_id, input_tokens, "
+            "output_tokens, cache_read, cache_write, cost_usd, created "
+            "FROM llm_costs ORDER BY created DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [dict(zip(cols, r)) for r in rows]
