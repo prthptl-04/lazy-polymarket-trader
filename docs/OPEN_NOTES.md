@@ -10,18 +10,17 @@
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. Correct `TOOL_NAMES` against the 73 verified tools
-`trading/venues/robinhood.py::TOOL_NAMES` is still the best-effort guess.
-`scripts_mcp_auth.py robinhood` enumerated the real surface — 73 tools —
-so the map can now be corrected against ground truth and the adapter wired to
-the live session. Mechanical, not a blocker on the auth question.
+### 1. Robinhood adapter is wired but NOT yet in build_fund
+`trading/venues/robinhood.py` is verified against the live server and read
+paths work end to end (agentic account ••••9722, $500 equity, live AAPL and
+BTC quotes). What remains is construction: `dashboard/fund_wiring.build_fund`
+still creates a `PaperVenue` and never a `RobinhoodVenue`, and nothing opens
+the long-lived MCP session for the daemon.
 
-Verified working from the daemon with NO browser and NO callback:
-`get_accounts`, `get_portfolio`, `get_equity_positions`. Agentic account
-••••9722 (limited_margin, active), 0 equity positions.
+That is deliberate for now — wiring it means the fund can place real orders,
+and that should be its own reviewed commit alongside the rule-#13 checklist.
 
-Note `get_portfolio` requires `account_number` — several tools do, and the
-adapter must resolve the agentic account once and pass it through.
+**No order has ever been placed by this code.** Only reads have been exercised.
 
 ---
 
@@ -190,4 +189,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Post-mortem: a lesson written on every loss | `ddb8ade` |
 | News + publisher sentiment into the Sentiment seat | this commit |
 | Daemon could not hold an MCP session (own OAuth client) | `5dbb643` |
-| Robinhood OAuth completed; refresh token issued | this commit |
+| Robinhood OAuth completed; refresh token issued | `fdbf796` |
+| Robinhood adapter verified against the live tool surface | this commit |

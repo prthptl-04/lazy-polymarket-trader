@@ -1,31 +1,36 @@
-"""Robinhood Agentic Trading adapter, over MCP.
+"""Robinhood Agentic Trading adapter, over the fund's own MCP session.
 
-Endpoint: https://agent.robinhood.com/mcp/trading
+Tool names and schemas verified against the live server 2026-09-12 (73 tools).
+No longer guesses.
 
-**Read this before trusting the tool names below.** Robinhood's public support
-article documents the *capabilities* (portfolio queries, order placement, read
-access to positions/balances/watchlists) but does NOT publish the MCP tool
-names or their parameter schemas — those are only discoverable from an
-authenticated session. So `TOOL_NAMES` here is a best-effort map, deliberately
-kept in ONE place, with `discover_tools()` to reconcile it against the live
-server. Expect to correct it on first connection; that is a config change, not
-a rewrite.
+Three things the schema makes you get right, each of which would fail at the
+venue rather than in a test:
 
-Authentication is browser OAuth on a **desktop device** (Robinhood's words),
-which a 24/7 daemon cannot perform headlessly. The operational consequence:
-the MCP session is established interactively and its transport handed to this
-adapter. We never read, store, or log the credential — the transport owns it
-(CLAUDE.md #5, #17).
+**Two account identifiers, one account.** Equity tools take `account_number`;
+crypto tools take `rhs_account_number`. They are different strings on the same
+account, and passing the wrong one is rejected by the server. The adapter
+resolves both once, from the single `agentic_allowed` account, and routes each
+call to the right one.
 
-Safety boundary worth restating: Robinhood confines agent trading to a
-dedicated Agentic account, with read-only access to the rest of the portfolio.
-That is a real boundary, and it is the one place the fund's capital lives.
+**Every numeric field is a string.** `quantity`, `dollar_amount`, `limit_price`
+are `"100.00"`, not `100.0`. A float silently fails validation upstream.
+
+**Notional is not universally allowed.** For equities `dollar_amount` is valid
+only with `type=market`; for crypto it works with any type. The adapter refuses
+the combination rather than letting the venue reject it, so the reason lands in
+the cycle report instead of in a stack trace.
+
+The account boundary is Robinhood's, not ours: agent trading is confined to the
+dedicated Agentic account with read-only access to the rest of the portfolio.
+The adapter refuses to act on any account where `agentic_allowed` is false.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol
+from typing import Any, Optional
 
 from trading.venues.base import (
     AccountSnapshot,
@@ -38,237 +43,262 @@ from trading.venues.base import (
     redact,
 )
 
-
-class MCPTransport(Protocol):
-    """Minimal surface we need from an MCP client session.
-
-    Injectable so tests never open a socket and so the concrete client library
-    stays swappable. Whatever implements this owns the OAuth credential.
-    """
-
-    async def call_tool(self, name: str, arguments: dict) -> Any: ...
-
-    async def list_tools(self) -> list[Any]: ...
-
-
-# Single source of truth for the tool surface. Correct against discover_tools().
-TOOL_NAMES: dict[str, str] = {
-    "quote": "get_quote",
-    "place_order": "place_order",
-    "cancel_order": "cancel_order",
-    "positions": "get_positions",
-    "account": "get_account",
-}
+logger = logging.getLogger(__name__)
 
 MCP_URL = "https://agent.robinhood.com/mcp/trading"
 
-# Robinhood Agentic supports stocks and crypto. It explicitly does NOT let an
-# agent transfer, stake, or lend — those need the human. Prediction markets are
-# announced as "coming soon"; until they land, Polymarket stays venue #3.
-SUPPORTED: frozenset[str] = frozenset({"equity", "crypto"})
+# Verified against the live tool list.
+TOOL_NAMES = {
+    "accounts": "get_accounts",
+    "portfolio": "get_portfolio",
+    "equity_positions": "get_equity_positions",
+    "crypto_positions": "get_crypto_positions",
+    "equity_quotes": "get_equity_quotes",
+    "crypto_quotes": "get_crypto_quotes",
+    "place_equity": "place_equity_order",
+    "place_crypto": "place_crypto_order",
+    "cancel_equity": "cancel_equity_order",
+    "cancel_crypto": "cancel_crypto_order",
+}
+
+# Our vocabulary -> Robinhood's.
+_EQUITY_TIF = {"day": "gfd", "gtc": "gtc", "ioc": "gfd"}
+_CRYPTO_TIF = {"day": "gtc", "gtc": "gtc", "ioc": "gtc"}
+
+
+@dataclass
+class RobinhoodAccount:
+    account_number: str          # equity tools
+    rhs_account_number: str      # crypto tools
+    crypto_account_number: str = ""
+    account_type: str = ""
 
 
 @dataclass
 class RobinhoodVenue:
-    """VenueAdapter over the Robinhood Trading MCP server."""
+    """VenueAdapter over Robinhood's MCP server."""
 
-    transport: MCPTransport
+    session: Any                                  # McpSession
     name: str = "robinhood"
-    tool_names: dict[str, str] = field(default_factory=lambda: dict(TOOL_NAMES))
-
-    # ---------- discovery ----------
-
-    async def discover_tools(self) -> list[str]:
-        """Enumerate the live tool surface so TOOL_NAMES can be corrected."""
-        try:
-            tools = await self.transport.list_tools()
-        except Exception as e:
-            raise VenueError(f"tool discovery failed: {redact(e)}") from None
-        names = []
-        for t in tools:
-            name = getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
-            if name:
-                names.append(str(name))
-        return names
-
-    async def verify_tool_map(self) -> dict[str, bool]:
-        """Which of our assumed tool names actually exist on the server.
-
-        Call this once at startup. A False here means orders would fail at the
-        worst possible moment, so the scheduler should refuse to go live until
-        the map is clean.
-        """
-        available = set(await self.discover_tools())
-        return {key: (tool in available) for key, tool in self.tool_names.items()}
-
-    # ---------- VenueAdapter ----------
+    supported: tuple[AssetClass, ...] = ("equity", "crypto")
+    _account: Optional[RobinhoodAccount] = field(default=None, init=False)
 
     def supports(self, asset_class: AssetClass) -> bool:
-        return asset_class in SUPPORTED
+        return asset_class in self.supported
+
+    # ---------- account ----------
+
+    async def account_ids(self) -> RobinhoodAccount:
+        """Resolve (and cache) the agentic account's two identifiers.
+
+        Refuses anything where `agentic_allowed` is false — that is Robinhood's
+        boundary between the funded agent account and the rest of the portfolio,
+        and it is the only thing standing between a bug and the user's main
+        holdings.
+        """
+        if self._account is not None:
+            return self._account
+        data = await self.session.call(TOOL_NAMES["accounts"], {})
+        accounts = ((data or {}).get("data") or {}).get("accounts") or []
+        agentic = next((a for a in accounts if a.get("agentic_allowed")), None)
+        if agentic is None:
+            raise VenueError(
+                "no agentic-enabled Robinhood account — agent trading is confined "
+                "to the dedicated Agentic account and none was found"
+            )
+        self._account = RobinhoodAccount(
+            account_number=str(agentic["account_number"]),
+            rhs_account_number=str(agentic.get("rhs_account_number")
+                                   or agentic["account_number"]),
+            crypto_account_number=str(agentic.get("rhc_account_number") or ""),
+            account_type=str(agentic.get("type") or ""),
+        )
+        return self._account
+
+    async def account(self) -> AccountSnapshot:
+        ids = await self.account_ids()
+        data = await self.session.call(
+            TOOL_NAMES["portfolio"], {"account_number": ids.account_number})
+        pf = (data or {}).get("data") or data or {}
+        equity = _num(pf.get("total_value")) or 0.0
+        cash = _num(pf.get("buying_power"))
+        if cash is None:
+            cash = _num(pf.get("cash")) or 0.0
+        return AccountSnapshot(equity_usd=equity, buying_power_usd=cash,
+                               cash_usd=cash, venue=self.name)
+
+    # ---------- reads ----------
+
+    async def positions(self) -> list[VenuePosition]:
+        ids = await self.account_ids()
+        out: list[VenuePosition] = []
+        for tool, params, asset in (
+            (TOOL_NAMES["equity_positions"], {"account_number": ids.account_number}, "equity"),
+            (TOOL_NAMES["crypto_positions"], {"rhs_account_number": ids.rhs_account_number}, "crypto"),
+        ):
+            try:
+                data = await self.session.call(tool, params)
+            except Exception as e:
+                # One asset class failing must not hide the other.
+                logger.warning("robinhood %s failed: %s", tool, redact(e))
+                continue
+            for p in _rows(data, "positions"):
+                qty = _num(p.get("quantity"))
+                if not qty:
+                    continue
+                out.append(VenuePosition(
+                    symbol=str(p.get("symbol") or p.get("currency_code") or ""),
+                    asset_class=asset, quantity=qty,
+                    avg_price=_num(p.get("average_buy_price")
+                                   or p.get("average_cost")) or 0.0,
+                    venue=self.name,
+                ))
+        return out
 
     async def get_quote(self, symbol: str) -> Quote:
-        payload = await self._call("quote", {"symbol": symbol})
+        crypto = "-" in symbol or symbol.upper() in _CRYPTO_SYMBOLS
+        tool = TOOL_NAMES["crypto_quotes" if crypto else "equity_quotes"]
+        try:
+            data = await self.session.call(tool, {"symbols": [symbol]})
+        except Exception as e:
+            raise VenueError(f"quote failed for {symbol!r}: {redact(e)}") from None
+        rows = _rows(data, "results", "quotes")
+        if not rows:
+            raise VenueError(f"no quote returned for {symbol!r}")
+        # Verified shapes differ: equity nests under "quote", crypto is flat.
+        q = rows[0].get("quote") if isinstance(rows[0].get("quote"), dict) else rows[0]
+        # Robinhood's own guidance: a zero bid or ask means the book is
+        # unavailable, not that the price is zero. Treating 0 as a price would
+        # produce a spread of 20000bps and a nonsense midpoint.
         return Quote(
             symbol=symbol,
-            bid=_as_float(payload, "bid_price", "bid"),
-            ask=_as_float(payload, "ask_price", "ask"),
-            last=_as_float(payload, "last_trade_price", "last", "price"),
+            bid=_positive(q.get("bid_price") or q.get("bid")),
+            ask=_positive(q.get("ask_price") or q.get("ask")),
+            last=_positive(q.get("mark_price") or q.get("last_trade_price")
+                           or q.get("price")),
         )
 
-    async def place_order(self, request: OrderRequest) -> OrderAck:
-        if not self.supports(request.asset_class):
-            return OrderAck(
-                accepted=False, client_order_id=request.client_order_id,
-                status="rejected", venue=self.name,
-                error=(
-                    f"robinhood agentic does not support {request.asset_class!r} "
-                    "(stocks and crypto only)"
-                ),
-            )
-        args: dict[str, Any] = {
-            "symbol": request.symbol,
-            "side": request.side,
-            "type": request.order_type,
-            "time_in_force": request.time_in_force,
-            "client_order_id": request.client_order_id,
-        }
-        if request.quantity is not None:
-            args["quantity"] = request.quantity
-        else:
-            args["amount_usd"] = request.notional_usd
-        if request.limit_price is not None:
-            args["limit_price"] = request.limit_price
-        if request.extended_hours:
-            args["extended_hours"] = True
+    # ---------- writes ----------
 
+    async def place_order(self, request: OrderRequest) -> OrderAck:
         try:
-            payload = await self._call("place_order", args)
+            ids = await self.account_ids()
         except VenueError as e:
-            return OrderAck(
-                accepted=False, client_order_id=request.client_order_id,
-                status="rejected", error=str(e), venue=self.name,
-            )
-        venue_id = _as_str(payload, "id", "order_id", "orderId")
+            return self._reject(request, str(e))
+
+        crypto = request.asset_class == "crypto"
+        payload, error = self._build_payload(request, ids, crypto)
+        if error:
+            return self._reject(request, error)
+
+        tool = TOOL_NAMES["place_crypto" if crypto else "place_equity"]
+        try:
+            data = await self.session.call(tool, payload)
+        except Exception as e:
+            return self._reject(request, redact(e))
+
+        body = (data or {}).get("data") or data or {}
+        order_id = body.get("id") or body.get("order_id")
         return OrderAck(
-            accepted=True,
-            client_order_id=request.client_order_id,
-            venue_order_id=venue_id,
-            status=_map_status(_as_str(payload, "state", "status")),
+            accepted=bool(order_id), client_order_id=request.client_order_id,
+            venue_order_id=str(order_id) if order_id else None,
+            status="open" if order_id else "rejected",
             venue=self.name,
-            raw=payload if isinstance(payload, dict) else None,
+            error=None if order_id else f"no order id in response: {str(body)[:160]}",
         )
 
     async def cancel_order(self, venue_order_id: str) -> bool:
         try:
-            await self._call("cancel_order", {"order_id": venue_order_id})
+            ids = await self.account_ids()
         except VenueError:
             return False
-        return True
-
-    async def positions(self) -> list[VenuePosition]:
-        payload = await self._call("positions", {})
-        rows = _as_rows(payload, "positions")
-        out: list[VenuePosition] = []
-        for row in rows:
-            qty = _as_float(row, "quantity", "shares")
-            if not qty:
-                continue
-            out.append(VenuePosition(
-                symbol=str(_as_str(row, "symbol", "instrument") or ""),
-                asset_class="crypto" if _as_str(row, "type") == "crypto" else "equity",
-                quantity=qty,
-                avg_price=_as_float(row, "average_buy_price", "avg_price") or 0.0,
-                venue=self.name,
-            ))
-        return out
-
-    async def account(self) -> AccountSnapshot:
-        payload = await self._call("account", {})
-        return AccountSnapshot(
-            equity_usd=_as_float(payload, "equity", "portfolio_value") or 0.0,
-            buying_power_usd=_as_float(payload, "buying_power") or 0.0,
-            cash_usd=_as_float(payload, "cash") or 0.0,
-            venue=self.name,
-        )
-
-    # ---------- internals ----------
-
-    async def _call(self, key: str, arguments: dict) -> Any:
-        tool = self.tool_names.get(key)
-        if tool is None:
-            raise VenueError(f"no tool mapped for {key!r}")
-        try:
-            return await self.transport.call_tool(tool, arguments)
-        except Exception as e:
-            # redact() because MCP errors echo the request, which can carry the
-            # OAuth bearer token.
-            raise VenueError(f"{tool} failed: {redact(e)}") from None
-
-
-# ---------- tolerant payload readers ----------
-#
-# The schema is unverified, so every read tries several plausible key names and
-# returns None rather than raising. A missing field must not crash the loop.
-
-def _unwrap(payload: Any) -> Any:
-    """MCP results often arrive wrapped in a content envelope."""
-    if isinstance(payload, dict):
-        for key in ("structuredContent", "content", "result", "data"):
-            inner = payload.get(key)
-            if isinstance(inner, dict):
-                return inner
-    return payload
-
-
-def _as_float(payload: Any, *keys: str) -> Optional[float]:
-    obj = _unwrap(payload)
-    if not isinstance(obj, dict):
-        return None
-    for k in keys:
-        if k in obj and obj[k] is not None:
+        # We do not know which book the id belongs to, so try equity then crypto.
+        for tool, params in (
+            (TOOL_NAMES["cancel_equity"],
+             {"account_number": ids.account_number, "order_id": venue_order_id}),
+            (TOOL_NAMES["cancel_crypto"],
+             {"rhs_account_number": ids.rhs_account_number, "order_id": venue_order_id}),
+        ):
             try:
-                return float(obj[k])
-            except (TypeError, ValueError):
+                await self.session.call(tool, params)
+                return True
+            except Exception:
                 continue
-    return None
+        return False
+
+    # ---------- payload ----------
+
+    def _build_payload(
+        self, request: OrderRequest, ids: RobinhoodAccount, crypto: bool
+    ) -> tuple[dict, Optional[str]]:
+        """Returns (payload, error). Every numeric is a STRING — a float fails
+        validation at the venue, which is a worse place to find out."""
+        payload: dict[str, Any] = {
+            "symbol": request.symbol,
+            "side": request.side,
+            "type": request.order_type,
+        }
+        payload["rhs_account_number" if crypto else "account_number"] = (
+            ids.rhs_account_number if crypto else ids.account_number)
+
+        if request.quantity is not None:
+            payload["quantity"] = _s(request.quantity)
+        else:
+            if not crypto and request.order_type != "market":
+                # Robinhood rejects this; catching it here puts the reason in
+                # the cycle report instead of a stack trace.
+                return {}, ("Robinhood allows dollar_amount on equities only with "
+                            "type=market; pass a quantity for a limit order")
+            payload["dollar_amount"] = _s(request.notional_usd)
+
+        if request.order_type in ("limit", "stop_limit"):
+            if request.limit_price is None:
+                return {}, "limit order requires limit_price"
+            payload["limit_price"] = _s(request.limit_price)
+
+        payload["time_in_force"] = (
+            _CRYPTO_TIF if crypto else _EQUITY_TIF).get(request.time_in_force, "gfd" if not crypto else "gtc")
+
+        if request.extended_hours and not crypto:
+            payload["extended_hours"] = True
+        return payload, None
+
+    def _reject(self, request: OrderRequest, reason: str) -> OrderAck:
+        return OrderAck(accepted=False, client_order_id=request.client_order_id,
+                        status="rejected", venue=self.name, error=reason)
 
 
-def _as_str(payload: Any, *keys: str) -> Optional[str]:
-    obj = _unwrap(payload)
-    if not isinstance(obj, dict):
+_CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "XRP", "LTC", "ADA", "AVAX", "LINK", "DOT"}
+
+
+def _s(v: Any) -> str:
+    """Robinhood wants decimal strings, not floats."""
+    return f"{float(v):.8f}".rstrip("0").rstrip(".") if v is not None else ""
+
+
+def _positive(v: Any) -> Optional[float]:
+    """A zero bid/ask means the book is unavailable, per Robinhood's guidance."""
+    n = _num(v)
+    return n if n and n > 0 else None
+
+
+def _num(v: Any) -> Optional[float]:
+    if isinstance(v, dict):
+        v = v.get("amount") or v.get("value")
+    try:
+        return float(v)
+    except (TypeError, ValueError):
         return None
-    for k in keys:
-        if k in obj and obj[k] is not None:
-            return str(obj[k])
-    return None
 
 
-def _as_rows(payload: Any, *keys: str) -> list[dict]:
-    obj = _unwrap(payload)
-    if isinstance(obj, list):
-        return [r for r in obj if isinstance(r, dict)]
-    if isinstance(obj, dict):
-        for k in keys:
-            val = obj.get(k)
-            if isinstance(val, list):
-                return [r for r in val if isinstance(r, dict)]
+def _rows(data: Any, *keys: str) -> list[dict]:
+    body = (data or {}).get("data") if isinstance(data, dict) else None
+    for src in (body, data):
+        if isinstance(src, dict):
+            for k in keys:
+                v = src.get(k)
+                if isinstance(v, list):
+                    return v
+        if isinstance(src, list):
+            return src
     return []
-
-
-_STATUS_MAP: dict[str, str] = {
-    "queued": "accepted",
-    "confirmed": "open",
-    "unconfirmed": "pending",
-    "partially_filled": "partially_filled",
-    "filled": "filled",
-    "cancelled": "cancelled",
-    "canceled": "cancelled",
-    "rejected": "rejected",
-    "failed": "rejected",
-}
-
-
-def _map_status(raw: Optional[str]) -> str:
-    if not raw:
-        return "accepted"
-    return _STATUS_MAP.get(raw.lower(), "accepted")

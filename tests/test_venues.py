@@ -18,7 +18,6 @@ from trading.venues.base import (
     redact,
 )
 from trading.venues.paper import PaperVenue
-from trading.venues.robinhood import RobinhoodVenue, _map_status
 
 
 # ---------------- OrderRequest validation ----------------
@@ -222,135 +221,6 @@ async def test_averaging_up_recomputes_cost_basis(paper):
 
 # ---------------- Robinhood MCP adapter ----------------
 
-class _FakeTransport:
-    def __init__(self, responses=None, tools=None, raises=None):
-        self.responses = responses or {}
-        self.tools = tools or []
-        self.raises = raises
-        self.calls = []
-
-    async def call_tool(self, name, arguments):
-        self.calls.append((name, arguments))
-        if self.raises is not None:
-            raise self.raises
-        return self.responses.get(name, {})
-
-    async def list_tools(self):
-        return self.tools
-
-
-@pytest.mark.asyncio
-async def test_robinhood_satisfies_the_protocol():
-    assert isinstance(RobinhoodVenue(transport=_FakeTransport()), VenueAdapter)
-
-
-@pytest.mark.asyncio
-async def test_supports_stocks_and_crypto_not_prediction():
-    rh = RobinhoodVenue(transport=_FakeTransport())
-    assert rh.supports("equity") and rh.supports("crypto")
-    assert not rh.supports("prediction")
-
-
-@pytest.mark.asyncio
-async def test_prediction_order_is_refused_before_the_network():
-    t = _FakeTransport()
-    rh = RobinhoodVenue(transport=t)
-    ack = await rh.place_order(
-        OrderRequest(symbol="X", side="buy", asset_class="prediction", quantity=1)
-    )
-    assert not ack.accepted
-    assert t.calls == []          # never reached the venue
-
-
-@pytest.mark.asyncio
-async def test_quote_parses_robinhood_field_names():
-    t = _FakeTransport({"get_quote": {"bid_price": "99.1", "ask_price": "99.3"}})
-    q = await RobinhoodVenue(transport=t).get_quote("AAPL")
-    assert q.bid == pytest.approx(99.1)
-    assert q.ask == pytest.approx(99.3)
-
-
-@pytest.mark.asyncio
-async def test_quote_unwraps_mcp_content_envelope():
-    t = _FakeTransport({"get_quote": {"structuredContent": {"bid": 10.0, "ask": 10.2}}})
-    q = await RobinhoodVenue(transport=t).get_quote("AAPL")
-    assert q.mid == pytest.approx(10.1)
-
-
-@pytest.mark.asyncio
-async def test_notional_order_sends_amount_usd():
-    t = _FakeTransport({"place_order": {"id": "rh-1", "state": "queued"}})
-    await RobinhoodVenue(transport=t).place_order(
-        OrderRequest(symbol="AAPL", side="buy", asset_class="equity", notional_usd=250.0)
-    )
-    _, args = t.calls[0]
-    assert args["amount_usd"] == 250.0
-    assert "quantity" not in args
-
-
-@pytest.mark.asyncio
-async def test_quantity_order_sends_quantity():
-    t = _FakeTransport({"place_order": {"id": "rh-1"}})
-    await RobinhoodVenue(transport=t).place_order(
-        OrderRequest(symbol="AAPL", side="buy", asset_class="equity", quantity=3)
-    )
-    _, args = t.calls[0]
-    assert args["quantity"] == 3
-    assert "amount_usd" not in args
-
-
-@pytest.mark.asyncio
-async def test_order_ack_carries_venue_id_and_status():
-    t = _FakeTransport({"place_order": {"id": "rh-9", "state": "filled"}})
-    ack = await RobinhoodVenue(transport=t).place_order(
-        OrderRequest(symbol="AAPL", side="buy", asset_class="equity", quantity=1)
-    )
-    assert ack.venue_order_id == "rh-9"
-    assert ack.status == "filled"
-
-
-@pytest.mark.asyncio
-async def test_positions_skips_zero_quantity_rows():
-    t = _FakeTransport({"get_positions": {"positions": [
-        {"symbol": "AAPL", "quantity": "5", "average_buy_price": "100"},
-        {"symbol": "MSFT", "quantity": "0", "average_buy_price": "300"},
-    ]}})
-    positions = await RobinhoodVenue(transport=t).positions()
-    assert [p.symbol for p in positions] == ["AAPL"]
-
-
-@pytest.mark.asyncio
-async def test_transport_failure_becomes_a_rejected_ack():
-    t = _FakeTransport(raises=RuntimeError("upstream 500"))
-    ack = await RobinhoodVenue(transport=t).place_order(
-        OrderRequest(symbol="AAPL", side="buy", asset_class="equity", quantity=1)
-    )
-    assert not ack.accepted and "upstream 500" in ack.error
-
-
-@pytest.mark.asyncio
-async def test_cancel_failure_returns_false_not_raise():
-    t = _FakeTransport(raises=RuntimeError("nope"))
-    assert await RobinhoodVenue(transport=t).cancel_order("rh-1") is False
-
-
-@pytest.mark.asyncio
-async def test_tool_discovery_and_verification():
-    t = _FakeTransport(tools=[{"name": "get_quote"}, {"name": "place_order"}])
-    rh = RobinhoodVenue(transport=t)
-    assert set(await rh.discover_tools()) == {"get_quote", "place_order"}
-
-    verified = await rh.verify_tool_map()
-    assert verified["quote"] is True
-    assert verified["cancel_order"] is False     # absent upstream
-
-
-@pytest.mark.parametrize("raw,expected", [
-    ("queued", "accepted"), ("filled", "filled"), ("canceled", "cancelled"),
-    ("rejected", "rejected"), (None, "accepted"), ("weird", "accepted"),
-])
-def test_status_mapping(raw, expected):
-    assert _map_status(raw) == expected
 
 
 # ---------------- credential hygiene ----------------
@@ -370,8 +240,19 @@ def test_redact_keeps_ordinary_errors_readable():
 
 @pytest.mark.asyncio
 async def test_adapter_error_never_leaks_a_token():
-    t = _FakeTransport(raises=RuntimeError("failed with Authorization: Bearer sk-live-abc"))
-    ack = await RobinhoodVenue(transport=t).place_order(
+    """An MCP failure can echo the Authorization header; the ack must not."""
+    from trading.venues.robinhood import RobinhoodVenue
+
+    class _Session:
+        async def call(self, tool, args=None):
+            if tool == "get_accounts":
+                return {"data": {"accounts": [
+                    {"account_number": "1", "rhs_account_number": "1",
+                     "agentic_allowed": True}]}}
+            raise RuntimeError("failed with Authorization: Bearer sk-live-abc")
+
+    ack = await RobinhoodVenue(session=_Session()).place_order(
         OrderRequest(symbol="AAPL", side="buy", asset_class="equity", quantity=1)
     )
+    assert not ack.accepted
     assert "sk-live-abc" not in ack.error

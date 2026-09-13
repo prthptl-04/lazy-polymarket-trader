@@ -17,13 +17,13 @@ from trading.venues.base import (
     VenuePosition,
 )
 from trading.venues.paper import PaperVenue
-from trading.venues.robinhood import MCP_URL, TOOL_NAMES, MCPTransport, RobinhoodVenue
+from trading.venues.robinhood import MCP_URL, TOOL_NAMES, RobinhoodAccount, RobinhoodVenue
 from trading.venues.router import RouteDecision, VenueRouter
 
 __all__ = [
     "AccountSnapshot",
     "AssetClass",
-    "MCPTransport",
+    "RobinhoodAccount",
     "MCP_URL",
     "OrderAck",
     "OrderRequest",
