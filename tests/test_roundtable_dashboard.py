@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from dashboard.runtime import build_runtime
 from dashboard.server import create_app
 from memory.store import MemoryStore
-from trading.autonomous_loop import WatchedMarket
 
 
 class _StubClient:
@@ -46,8 +45,6 @@ def _payload(signals, consensus=None, failed=()):
 def client(tmp_path):
     store = MemoryStore(db_path=str(tmp_path / "d.db"))
     rt = build_runtime(
-        polymarket_client=_StubClient(),
-        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
         memory=store,
     )
     return TestClient(create_app(rt)), store

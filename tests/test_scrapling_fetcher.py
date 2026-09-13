@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from agents.orchestration_manager import OrchestrationManager
-from live_market.scrapling_fetcher import ScraplingFetcher
+from research_agent.scrapling_fetcher import ScraplingFetcher
 from memory.store import MemoryStore
 from web_scraper.authenticator import GitHubAuthenticator
 

@@ -71,9 +71,6 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_risk() -> dict:
         return runtime.risk_metrics()
 
-    @app.get("/api/feeds")
-    def api_feeds() -> dict:
-        return runtime.feeds()
 
     # ---------- round table ----------
 
@@ -120,32 +117,20 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
 
     @app.post("/api/start")
     async def api_start() -> dict:
-        has_fund = runtime.fund_scheduler is not None
-        if runtime.loop.strategy is None and not has_fund:
-            raise HTTPException(
-                status_code=412,
-                detail="nothing to start: no strategy on runtime.loop and no fund scheduler",
-            )
-        if runtime.loop.strategy is not None:
-            await runtime.loop.start()
-        if has_fund:
-            await runtime.fund_scheduler.start()
+        if runtime.fund_scheduler is None:
+            raise HTTPException(status_code=412, detail="no fund scheduler attached")
+        await runtime.fund_scheduler.start()
         runtime.memory.record_audit_event(
-            actor="user", action="loop_start",
-            target="fund_scheduler" if has_fund else "autonomous_loop",
-            details={"watched": [w.market_id for w in runtime.watched]},
+            actor="user", action="loop_start", target="fund_scheduler",
         )
         return runtime.status()
 
     @app.post("/api/stop")
     async def api_stop() -> dict:
-        # Stop the fund first: it is the thing that can open new positions.
         if runtime.fund_scheduler is not None:
             await runtime.fund_scheduler.stop()
-        await runtime.loop.stop()
         runtime.memory.record_audit_event(
-            actor="user", action="loop_stop",
-            target="fund_scheduler" if runtime.fund_scheduler else "autonomous_loop",
+            actor="user", action="loop_stop", target="fund_scheduler",
         )
         return runtime.status()
 
@@ -446,13 +431,13 @@ function renderFund(f) {
 }
 
 async function refreshAll() {
-  const [status, pnl, positions, risk, audit, feeds, fund, balances] = await Promise.all([
+  const [status, pnl, positions, risk, audit, fund, balances] = await Promise.all([
     fetchJSON('/api/status'), fetchJSON('/api/pnl'), fetchJSON('/api/positions'),
-    fetchJSON('/api/risk'), fetchJSON('/api/audit?limit=40'), fetchJSON('/api/feeds'),
+    fetchJSON('/api/risk'), fetchJSON('/api/audit?limit=40'),
     fetchJSON('/api/fund'), fetchJSON('/api/balances'),
   ]);
   renderStatus(status); renderPnl(pnl); renderPositions(positions);
-  renderRisk(risk); renderAudit(audit); renderFeeds(feeds); renderFund(fund);
+  renderRisk(risk); renderAudit(audit); renderFund(fund);
   renderBalances(balances);
 }
 

@@ -272,15 +272,8 @@ def test_scorecard_route_is_empty_before_any_outcomes(tmp_path):
     from fastapi.testclient import TestClient
     from dashboard.runtime import build_runtime
     from dashboard.server import create_app
-    from trading.autonomous_loop import WatchedMarket
-
-    class _Stub:
-        def post_order(self, o): return {"orderID": "x"}
-        def cancel_order(self, i): return {"ok": True}
 
     rt = build_runtime(
-        polymarket_client=_Stub(),
-        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
         memory=MemoryStore(db_path=str(tmp_path / "s.db")),
     )
     body = TestClient(create_app(rt)).get("/api/scorecard").json()
@@ -295,11 +288,6 @@ def test_scorecard_route_reports_seats_once_resolved(tmp_path):
     from fastapi.testclient import TestClient
     from dashboard.runtime import build_runtime
     from dashboard.server import create_app
-    from trading.autonomous_loop import WatchedMarket
-
-    class _Stub:
-        def post_order(self, o): return {"orderID": "x"}
-        def cancel_order(self, i): return {"ok": True}
 
     store = MemoryStore(db_path=str(tmp_path / "s.db"))
     store.save_deliberation(
@@ -311,8 +299,6 @@ def test_scorecard_route_reports_seats_once_resolved(tmp_path):
                                 signal="bullish", confidence=70.0, correct=False)
 
     rt = build_runtime(
-        polymarket_client=_Stub(),
-        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
         memory=store,
     )
     body = TestClient(create_app(rt)).get("/api/scorecard").json()

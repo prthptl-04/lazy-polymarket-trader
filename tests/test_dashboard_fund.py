@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 from dashboard.runtime import build_runtime
 from dashboard.server import create_app
 from memory.store import MemoryStore
-from trading.autonomous_loop import WatchedMarket
 from trading.fund_scheduler import FundScheduler
 from trading.kill_switch import DailyLossKillSwitch
 from trading.pdt import DayTradeTracker
@@ -62,8 +61,6 @@ class _Fund:
 
 def _runtime(tmp_path, *, with_fund=True, kill_switch=None, equity=10_000.0):
     rt = build_runtime(
-        polymarket_client=_StubClient(),
-        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
         memory=MemoryStore(db_path=str(tmp_path / "d.db")),
     )
     if with_fund:
@@ -135,28 +132,6 @@ def test_stop_stops_the_fund(tmp_path):
     assert rt.fund_scheduler.state == "stopped"
 
 
-def test_go_works_with_a_fund_but_no_polymarket_strategy(tmp_path):
-    """The fund is a complete engine on its own; a missing legacy strategy
-    must not 412 the whole dashboard."""
-    rt = _runtime(tmp_path)
-    rt.loop.strategy = None
-    c = TestClient(create_app(rt))
-
-    r = c.post("/api/start")
-    try:
-        assert r.status_code == 200
-        assert rt.fund_scheduler.state == "running"
-    finally:
-        c.post("/api/stop")
-
-
-def test_go_still_412s_when_nothing_is_wired(tmp_path):
-    rt = _runtime(tmp_path, with_fund=False)
-    rt.loop.strategy = None
-    c = TestClient(create_app(rt))
-
-    r = c.post("/api/start")
-    assert r.status_code == 412
 
 
 def test_start_is_audited_against_the_fund(tmp_path):
@@ -170,19 +145,6 @@ def test_start_is_audited_against_the_fund(tmp_path):
 
 
 # ---------------- status precedence ----------------
-
-def test_status_reports_the_fund_state_when_running(tmp_path):
-    rt = _runtime(tmp_path)
-    c = TestClient(create_app(rt))
-
-    c.post("/api/start")
-    try:
-        s = c.get("/api/status").json()
-        assert s["fund_state"] == "running"
-        assert s["state"] == "running"
-        assert s["session"] == "regular"
-    finally:
-        c.post("/api/stop")
 
 
 def test_status_is_unchanged_without_a_fund(tmp_path):

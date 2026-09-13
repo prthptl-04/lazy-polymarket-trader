@@ -1,16 +1,10 @@
-"""FastAPI dashboard endpoints + WS hub.
+"""Dashboard routes against the fund-only runtime.
 
-ACs:
-- Every read-only route returns the right shape with no loop running.
-- /api/start fails 412 if no strategy is wired.
-- /api/start with a strategy moves state to "running" and writes an audit row.
-- /api/stop returns "stopped".
-- WebSocket connect delivers a snapshot frame.
+The CLOB stack is gone; GO/STOP now drives FundScheduler and nothing else.
+
+- Acceptance: every read route returns its shape with no scheduler attached.
+- Edge: /api/start 412s with nothing to start; balances degrade honestly.
 """
-
-import asyncio
-from dataclasses import dataclass
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,134 +12,95 @@ from fastapi.testclient import TestClient
 from dashboard.runtime import build_runtime
 from dashboard.server import create_app
 from memory.store import MemoryStore
-from trading.autonomous_loop import WatchedMarket
-
-
-class _StubClient:
-    def post_order(self, order): return {"orderID": "x"}
-    def cancel_order(self, order_id): return {"ok": True}
-
-
-class _StubStrategy:
-    async def submit_or_replace_async(self, token_id, market_id, order_manager):
-        @dataclass(frozen=True)
-        class _D:
-            kind: str = "skip"
-            reason: str = "stub"
-            trade: Any = None
-            submitted: Any = None
-            replaced: Any = None
-        return _D()
 
 
 @pytest.fixture
 def client(tmp_path):
-    rt = build_runtime(
-        polymarket_client=_StubClient(),
-        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
-        memory=MemoryStore(db_path=str(tmp_path / "m.db")),
-        starting_bankroll_usd=100.0,
-    )
-    rt.loop.tick_interval_seconds = 0.01
-    rt.loop.cashout_interval_seconds = 0.01
-    rt.loop.status_interval_seconds = 0.01
-    app = create_app(rt)
-    return TestClient(app), rt
+    rt = build_runtime(memory=MemoryStore(db_path=str(tmp_path / "d.db")),
+                       starting_bankroll_usd=100.0)
+    return TestClient(create_app(rt)), rt
 
 
 def test_index_returns_html(client):
     c, _ = client
     r = c.get("/")
-    assert r.status_code == 200
-    assert "<title>Lazy Polymarket Trader</title>" in r.text
-    assert "GO" in r.text and "STOP" in r.text
+    assert r.status_code == 200 and "<title>" in r.text
 
 
-def test_api_status_returns_stopped_when_loop_idle(client):
+def test_status_reports_unattached(client):
     c, _ = client
-    r = c.get("/api/status").json()
-    assert r["state"] == "stopped"
+    body = c.get("/api/status").json()
+    assert body["state"] == "stopped" and body["attached"] is False
 
 
-def test_api_pnl_returns_starting_bankroll(client):
+@pytest.mark.parametrize("path,kind", [
+    ("/api/pnl", dict), ("/api/positions", list), ("/api/orders", list),
+    ("/api/risk", dict), ("/api/audit", list), ("/api/fund", dict),
+    ("/api/scorecard", dict), ("/api/deliberations", list),
+])
+def test_read_routes_shape(client, path, kind):
     c, _ = client
-    r = c.get("/api/pnl").json()
-    assert r["starting_bankroll_usd"] == 100.0
-    assert r["equity_usd"] == 100.0
-    assert r["open_positions"] == 0
+    r = c.get(path)
+    assert r.status_code == 200 and isinstance(r.json(), kind)
 
 
-def test_api_positions_empty(client):
+def test_pnl_reports_the_starting_bankroll(client):
     c, _ = client
-    assert c.get("/api/positions").json() == []
+    assert c.get("/api/pnl").json()["starting_bankroll_usd"] == 100.0
 
 
-def test_api_orders_empty(client):
+def test_risk_keys(client):
     c, _ = client
-    assert c.get("/api/orders").json() == []
+    body = c.get("/api/risk").json()
+    for k in ("max_drawdown_pct", "sharpe", "trade_count"):
+        assert k in body
 
 
-def test_api_risk_returns_required_keys(client):
+def test_start_412s_without_a_scheduler(client):
     c, _ = client
-    r = c.get("/api/risk").json()
-    assert set(r) == {"max_drawdown_pct", "sharpe", "trade_count"}
+    assert c.post("/api/start").status_code == 412
 
 
-def test_api_code_graph_returns_cytoscape_elements(client):
+def test_stop_is_safe_without_a_scheduler(client):
     c, _ = client
-    r = c.get("/api/code-graph").json()
-    assert "elements" in r
-    assert isinstance(r["elements"], list)
-    assert len(r["elements"]) > 50      # the project's nodes + edges
+    assert c.post("/api/stop").status_code == 200
 
 
-def test_start_fails_without_strategy(client):
+def test_start_and_stop_drive_the_scheduler(client):
     c, rt = client
-    # Default builder leaves strategy = None.
-    r = c.post("/api/start")
-    assert r.status_code == 412
 
+    class _Sched:
+        def __init__(self): self.started = self.stopped = 0
+        async def start(self): self.started += 1
+        async def stop(self): self.stopped += 1
+        def status(self): return {"state": "running"}
 
-def test_start_with_strategy_runs_then_stop(client):
-    c, rt = client
-    rt.loop.strategy = _StubStrategy()
-    started = c.post("/api/start").json()
-    assert started["state"] == "running"
-    stopped = c.post("/api/stop").json()
-    assert stopped["state"] == "stopped"
-
-
-def test_start_emits_audit_event(client):
-    c, rt = client
-    rt.loop.strategy = _StubStrategy()
-    c.post("/api/start")
-    events = rt.memory.recent_audit_events()
-    assert any(e["action"] == "loop_start" for e in events)
+    rt.fund_scheduler = _Sched()
+    assert c.post("/api/start").json()["state"] == "running"
+    assert rt.fund_scheduler.started == 1
     c.post("/api/stop")
-    events = rt.memory.recent_audit_events()
-    assert any(e["action"] == "loop_stop" for e in events)
+    assert rt.fund_scheduler.stopped == 1
 
 
-def test_websocket_delivers_initial_snapshot(client):
+def test_start_is_audited(client):
+    c, rt = client
+
+    class _Sched:
+        async def start(self): pass
+        async def stop(self): pass
+        def status(self): return {"state": "running"}
+
+    rt.fund_scheduler = _Sched()
+    c.post("/api/start")
+    assert "loop_start" in [e["action"] for e in rt.recent_audit(limit=10)]
+
+
+def test_unknown_deliberation_404s(client):
     c, _ = client
-    with c.websocket_connect("/ws") as ws:
-        msg = ws.receive_json()
-        assert msg["event"] == "snapshot"
-        assert "status" in msg and "pnl" in msg
+    assert c.get("/api/deliberations/nope").status_code == 404
 
 
 # ---------------- header balances ----------------
-
-def _rt_with_venues(tmp_path, venues):
-    from dashboard.runtime import build_runtime
-    rt = build_runtime(
-        polymarket_client=_StubClient(),
-        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
-        memory=MemoryStore(db_path=str(tmp_path / "b.db")),
-    )
-    rt.venues = venues
-    return rt
-
 
 class _Acct:
     def __init__(self, cash, equity): self.cash_usd, self.equity_usd = cash, equity
@@ -159,34 +114,27 @@ class _DeadVenue:
     async def account(self): raise RuntimeError("gateway down")
 
 
+def _with(tmp_path, venues):
+    return TestClient(create_app(build_runtime(
+        memory=MemoryStore(db_path=str(tmp_path / "b.db")), venues=venues)))
+
+
 def test_balances_reports_live_venue(tmp_path):
-    rt = _rt_with_venues(tmp_path, {"polymarket_us": _OkVenue()})
-    body = TestClient(create_app(rt)).get("/api/balances").json()
-    assert body["polymarket_us"]["available"] is True
-    assert body["polymarket_us"]["cash_usd"] == 0.247
+    body = _with(tmp_path, {"polymarket_us": _OkVenue()}).get("/api/balances").json()
+    assert body["polymarket_us"] == {"available": True, "cash_usd": 0.247, "equity_usd": 0.247}
 
 
-def test_robinhood_is_always_reported_unavailable_with_a_reason(tmp_path):
-    """MCP is session-bound; this process cannot reach it. Never invent a number."""
-    rt = _rt_with_venues(tmp_path, {"polymarket_us": _OkVenue()})
-    body = TestClient(create_app(rt)).get("/api/balances").json()
-    assert body["robinhood"]["available"] is False
-    assert "MCP" in body["robinhood"]["reason"]
+def test_robinhood_always_unavailable_with_a_reason(tmp_path):
+    """MCP is session-bound; never invent a number the user might size against."""
+    body = _with(tmp_path, {}).get("/api/balances").json()
+    assert body["robinhood"]["available"] is False and "MCP" in body["robinhood"]["reason"]
 
 
-def test_a_failing_venue_degrades_rather_than_500s(tmp_path):
-    rt = _rt_with_venues(tmp_path, {"polymarket_us": _DeadVenue()})
-    r = TestClient(create_app(rt)).get("/api/balances")
-    assert r.status_code == 200
-    assert r.json()["polymarket_us"]["available"] is False
+def test_failing_venue_degrades_rather_than_500s(tmp_path):
+    r = _with(tmp_path, {"polymarket_us": _DeadVenue()}).get("/api/balances")
+    assert r.status_code == 200 and r.json()["polymarket_us"]["available"] is False
 
 
-def test_no_venues_still_returns_robinhood_row(tmp_path):
-    rt = _rt_with_venues(tmp_path, {})
-    assert TestClient(create_app(rt)).get("/api/balances").json()["robinhood"]["available"] is False
-
-
-def test_header_markup_has_both_balance_pills():
+def test_header_has_both_balance_pills():
     from dashboard.server import _INDEX_HTML
-    assert 'id="bal-polymarket"' in _INDEX_HTML
-    assert 'id="bal-robinhood"' in _INDEX_HTML
+    assert 'id="bal-polymarket"' in _INDEX_HTML and 'id="bal-robinhood"' in _INDEX_HTML

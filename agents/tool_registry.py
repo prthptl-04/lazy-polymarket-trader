@@ -178,9 +178,9 @@ REGISTRY: dict[str, AgentToolset] = {
         tools=[
             *COMMON_TOOLS,
             Tool(
-                name="trading.polymarket_client.PolymarketClient",
+                name="trading.venues.polymarket_us.PolymarketUSVenue",
                 kind="python",
-                location="trading/polymarket_client.py",
+                location="trading/venues/polymarket_us.py",
                 purpose="CLOB REST wrapper. Prefer this for market data and order placement.",
             ),
             Tool(
@@ -205,9 +205,9 @@ REGISTRY: dict[str, AgentToolset] = {
                 ),
             ),
             Tool(
-                name="live_market.ScraplingFetcher",
+                name="research_agent.ScraplingFetcher",
                 kind="python",
-                location="live_market/scrapling_fetcher.py",
+                location="research_agent/scrapling_fetcher.py",
                 purpose=(
                     "Trust-gated Scrapling (BSD-3) wrapper. fetch_static for plain HTML/JSON, "
                     "fetch_dynamic for Cloudflare-protected pages. Every URL passes "
