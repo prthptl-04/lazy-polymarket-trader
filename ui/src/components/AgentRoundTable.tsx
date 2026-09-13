@@ -38,11 +38,12 @@ export function AgentRoundTable({
           const live = activeIds.includes(agent.id);
           return (
             <g key={agent.id}>
-              <line x1={x} y1={y} x2={cx} y2={cy}
+              <line className="rt-spoke" x1={x} y1={y} x2={cx} y2={cy}
                     stroke={live ? "rgba(0,200,5,0.5)" : "rgba(255,255,255,0.10)"}
                     strokeWidth={live ? 1.6 : 1} />
               {live && (
                 <motion.line
+                  className="rt-pulse"
                   x1={x} y1={y} x2={cx} y2={cy}
                   stroke="#00c805" strokeWidth={2.4} strokeLinecap="round"
                   initial={{ pathLength: 0, opacity: 0.9 }}
@@ -53,7 +54,8 @@ export function AgentRoundTable({
             </g>
           );
         })}
-        <circle cx={cx} cy={cy} r={34} fill="rgba(45,82,243,0.13)" stroke="rgba(45,82,243,0.45)" />
+        <circle className="rt-hub" cx={cx} cy={cy} r={34}
+                fill="rgba(45,82,243,0.13)" stroke="rgba(45,82,243,0.45)" />
       </svg>
 
       {/* Centre: the Chair, where consensus resolves into an order. */}
@@ -71,8 +73,9 @@ export function AgentRoundTable({
             style={{ left: x - 24, top: y - 24, width: 48, height: 48 }}
             animate={live ? { scale: [1, 1.09, 1] } : { scale: 1 }}
             transition={live ? { duration: 1.1, repeat: Infinity } : undefined}>
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center text-[17px]
-              border glass-plain ${live ? "border-hood-green/60 bg-hood-green/15" : "border-white/15 bg-white/[0.07]"}`}>
+            <div className={`rt-node w-12 h-12 rounded-full flex items-center justify-center text-[17px]
+              border glass-plain ${live ? "rt-node-live border-hood-green/60 bg-hood-green/15"
+                                        : "border-white/15 bg-white/[0.07]"}`}>
               {agent.icon}
             </div>
             <div className="absolute left-1/2 -translate-x-1/2 top-[52px] w-max max-w-[150px]

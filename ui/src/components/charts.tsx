@@ -40,8 +40,10 @@ function GlassTooltip({ active, payload, label }: any) {
  * resizes and data growth. Hand-placed SVG circles drift the moment the axis
  * domain changes — which on a live chart is constantly.
  */
-function markerShape(tone: Marker["tone"], label: string) {
-  const colour = tone === "stop" ? "#f87171" : tone === "target" ? "#00c805" : "#2d52f3";
+function markerShape(tone: Marker["tone"], label: string, accent = "#2d52f3") {
+  // Stop and target are semantic and fixed; an entry marker belongs to whatever
+  // venue owns the chart, so it takes the series colour.
+  const colour = tone === "stop" ? "#f87171" : tone === "target" ? "#00c805" : accent;
   return (props: any) => {
     const { cx, cy } = props;               // pixel coords Recharts computed
     if (cx == null || cy == null) return <g />;
@@ -86,7 +88,7 @@ export function EquityArea({
               fill={`url(#${id})`} isAnimationActive={false} />
         {markers.map((m, k) => (
           <ReferenceDot key={k} x={m.x} y={m.y} ifOverflow="extendDomain"
-                        shape={markerShape(m.tone, m.label)} />
+                        shape={markerShape(m.tone, m.label, colour)} />
         ))}
       </AreaChart>
     </ResponsiveContainer>
@@ -110,7 +112,7 @@ export function Sparkline({
               dot={false} isAnimationActive={false} />
         {markers.map((m, k) => (
           <ReferenceDot key={k} x={m.x} y={m.y} ifOverflow="extendDomain"
-                        shape={markerShape(m.tone, m.label)} />
+                        shape={markerShape(m.tone, m.label, colour)} />
         ))}
       </LineChart>
     </ResponsiveContainer>

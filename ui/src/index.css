@@ -133,3 +133,77 @@
    reading as selected. */
 [data-surface="light"] [class*="bg-white/[0.14]"] { background-color: rgb(var(--dhan-ink-rgb) / 0.13); }
 [data-surface="light"] [class*="bg-white/30"]     { background-color: rgb(var(--dhan-ink-rgb) / 0.30); }
+
+/* ---------------------------------------------------------------------------
+   Robinhood dark mode — pitch black, flat, borderless.
+
+   The glass is stripped rather than recoloured: no backdrop-filter, no card
+   fill, no radius, no shadow. What survives is the hairline row rule, because
+   a borderless table is a wall of digits, and the accent, which is the only
+   colour on the screen.
+   --------------------------------------------------------------------------- */
+[data-venue-theme="robinhood"] body { background: var(--rh-black) !important; }
+
+[data-venue-theme="robinhood"] .bg-glass-white,
+[data-venue-theme="robinhood"] .glass-plain,
+[data-venue-theme="robinhood"] .liquid-glass {
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  border-radius: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+/* Row rules and dividers only — never a box around a panel. */
+[data-venue-theme="robinhood"] [class*="border-t"],
+[data-venue-theme="robinhood"] [class*="border-l"],
+[data-venue-theme="robinhood"] [class*="border-b"] { border-color: var(--rh-hairline); }
+[data-venue-theme="robinhood"] [class*="bg-white/"] { background-color: transparent; }
+
+/* Typography: the price is the page. */
+[data-venue-theme="robinhood"] .venue-figure {
+  font-size: clamp(3.25rem, 6.5vw, 5rem);
+  font-weight: 200;
+  letter-spacing: -0.035em;
+  color: var(--rh-white);
+}
+[data-venue-theme="robinhood"] .text-white { color: var(--rh-white); }
+
+/* The accent: interactive elements, active states, gains. */
+[data-venue-theme="robinhood"] [class*="text-hood-green"] { color: var(--rh-green); }
+[data-venue-theme="robinhood"] [class*="bg-hood-green"] { background-color: rgb(0 200 5 / 0.14); }
+[data-venue-theme="robinhood"] [class*="bg-white/[0.14]"] { background-color: rgb(0 200 5 / 0.16); }
+[data-venue-theme="robinhood"] .pm-action,
+[data-venue-theme="robinhood"] .rh-action {
+  border-radius: 4px;
+  border: 1px solid var(--rh-green);
+  background-color: transparent;
+  color: var(--rh-green);
+  transition: background-color 150ms linear;
+}
+[data-venue-theme="robinhood"] .rh-action:hover { background-color: rgb(0 200 5 / 0.12); }
+[data-venue-theme="robinhood"] .rh-action:focus-visible {
+  outline: 2px solid var(--rh-green); outline-offset: 2px;
+}
+
+/* Round table: dark circles, thin #333 outline, neon validation path. */
+[data-venue-theme="robinhood"] .rt-node {
+  background-color: #0a0a0a !important;
+  border-color: var(--rh-hairline) !important;
+  backdrop-filter: none !important;
+  /* The blanket radius reset above would square the seats off; a ring of
+     rectangles is not a round table. */
+  border-radius: 9999px !important;
+}
+[data-venue-theme="robinhood"] .rt-node-live {
+  border-color: var(--rh-green) !important;
+  box-shadow: 0 0 10px rgb(0 200 5 / 0.35);
+}
+[data-venue-theme="robinhood"] .rt-spoke { stroke: var(--rh-hairline); }
+[data-venue-theme="robinhood"] .rt-pulse {
+  stroke: var(--rh-green);
+  filter: drop-shadow(0 0 8px #00C805);
+}
+[data-venue-theme="robinhood"] .rt-hub {
+  fill: #0a0a0a; stroke: var(--rh-green); stroke-width: 1;
+  filter: drop-shadow(0 0 8px rgb(0 200 5 / 0.45));
+}

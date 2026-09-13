@@ -6,7 +6,9 @@ import { RoundTableFeed } from "../components/RoundTableFeed";
 import { TradeHistory } from "../components/TradeHistory";
 import { EquityArea, Sparkline, type Marker } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
+import { AgentRoundTable } from "../components/AgentRoundTable";
 import { usePolymarketTheme } from "../lib/polymarketTheme";
+import { useRobinhoodTheme } from "../lib/robinhoodTheme";
 import {
   post, usePoll, type Balances, type FundStatus, type PaperProgress,
   type Position, type Record_,
@@ -30,6 +32,7 @@ export function VenueView({ venue }: { venue: Venue }) {
   const poly = venue === "polymarket_us";
   // Repaints the document while this tab is open; restored on unmount.
   usePolymarketTheme(poly);
+  useRobinhoodTheme(!poly);
   const colour = poly ? "#2d52f3" : "#00c805";
   const title = poly ? "Polymarket" : "Robinhood";
 
@@ -95,7 +98,7 @@ export function VenueView({ venue }: { venue: Venue }) {
               <div>
                 <div className="text-[12px] text-white/55">{title} account</div>
                 {wallet?.available ? (
-                  <div className="text-5xl font-light tracking-tighter font-mono mt-1">
+                  <div className="venue-figure text-5xl font-light tracking-tighter font-mono mt-1">
                     {money(wallet.equity_usd)}
                   </div>
                 ) : (
@@ -178,7 +181,15 @@ export function VenueView({ venue }: { venue: Venue }) {
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
 
-          {poly && <MarketStance />}
+          {poly ? <MarketStance /> : (
+            <GlassCard className="p-5" inert>
+              <PanelTitle>Agent round table</PanelTitle>
+              <AgentRoundTable size={320} activeIds={[]} />
+              <div className="text-[11px] text-white/30 text-center mt-2">
+                A pulse travels node → centre when that seat speaks. Hover any node for its mandate.
+              </div>
+            </GlassCard>
+          )}
 
           <GlassCard className="p-5" inert>
             <PanelTitle right={<Pill tone="warn">simulated</Pill>}>
@@ -196,7 +207,9 @@ export function VenueView({ venue }: { venue: Venue }) {
                     value={`${paper?.seats_calibrated ?? 0}/${paper?.seats_scored ?? 0}`}
                     sub="self-improvement" />
             </div>
-            <EquityArea values={paperCurve} colour="#fbbf24" height={180} />
+            {poly
+              ? <EquityArea values={paperCurve} colour="#fbbf24" height={180} />
+              : <Sparkline values={paperCurve} colour="#fbbf24" height={180} />}
             <div className="text-[11px] text-white/35 mt-3 leading-relaxed border-t border-white/[0.07] pt-3">
               Prices are live from the venue; fills are simulated with a pessimistic
               spread cross. A paper record built on synthetic prices would prove
