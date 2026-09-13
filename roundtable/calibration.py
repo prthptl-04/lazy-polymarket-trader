@@ -36,6 +36,12 @@ from finance.risk_metrics import brier_score
 # Below this, a fitted shrink is noise dressed as evidence.
 MIN_SAMPLES_FOR_FIT = 30
 
+# And below this, a SEAT's own score is noise dressed as a verdict on that seat.
+# The fund is long-only and `correct` is `realized > 0`, so every seat that
+# voted bullish is scored on the identical event: per-seat differences at small
+# n are noise by construction, not merely by sample size.
+MIN_SAMPLES_FOR_SEAT_SCORE = 30
+
 # Never let a fit recommend taking stated confidence at face value, and never
 # let it collapse sizing to a coin flip either.
 MIN_SHRINK = 0.1
@@ -54,19 +60,25 @@ class SeatScore:
     abstentions: int = 0
 
     @property
+    def is_scored(self) -> bool:
+        """Enough calls for this seat's own record to mean anything."""
+        return self.samples >= MIN_SAMPLES_FOR_SEAT_SCORE
+
+    @property
     def is_calibrated(self) -> bool:
         """Within 10 points either way. Wider than that is a real bias.
 
-        A seat with NO samples is not calibrated — it is unscored. Returning
-        True there reads as a clean bill of health for a seat that has never
-        been tested, and it inflates any "how many seats are doing well" count.
+        Gated at MIN_SAMPLES_FOR_SEAT_SCORE, not at samples > 0. With the old
+        guard, three resolved theses could have the dashboard announce "5 of 6
+        seats calibrated" — a clean bill of health issued on a handful of coin
+        flips, in the panel about earning the right to trade real money.
         """
-        return self.samples > 0 and abs(self.overconfidence) <= 10.0
+        return self.is_scored and abs(self.overconfidence) <= 10.0
 
     @property
     def beats_a_coin_flip(self) -> bool:
         """Unscored is not better than chance; it is unknown."""
-        return self.samples > 0 and self.brier < 0.25
+        return self.is_scored and self.brier < 0.25
 
     def as_dict(self) -> dict:
         return {
@@ -80,6 +92,8 @@ class SeatScore:
             "abstentions": self.abstentions,
             "calibrated": self.is_calibrated,
             "beats_coin_flip": self.beats_a_coin_flip,
+            "scored": self.is_scored,
+            "min_samples": MIN_SAMPLES_FOR_SEAT_SCORE,
         }
 
 

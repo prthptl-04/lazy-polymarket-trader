@@ -97,11 +97,43 @@ def _seeded(tmp_path):
     return DashboardRuntime(memory=st)
 
 
-def test_the_matrix_blames_the_backer_and_not_the_dissenter(tmp_path):
+def test_per_seat_blame_is_withheld_below_the_sample_bar(tmp_path):
+    """The fund is long-only and `correct` is `realized > 0`, so every bullish
+    seat is scored on the identical event. "The Quant has backed 2 of 2 losses"
+    is a rate at n=2, and it is injected nowhere near a decision until 30."""
     rows = {r["id"]: r for r in _seeded(tmp_path).agent_matrix()}
-    assert rows["quant"]["blamed_losses"] == 1
+    assert rows["quant"]["blamed_losses"] == 0
     assert rows["risk"]["blamed_losses"] == 0
-    assert rows["quant"]["top_failure"]["code"]
+
+
+def test_the_per_trade_attribution_survives_the_gate(tmp_path):
+    """A transcript of ONE displayed trade is not a rate across trades: on this
+    loss, these seats backed it and this one objected. That is how a human reads
+    a post-mortem, and it stays."""
+    row = _seeded(tmp_path).trade_history()[0]
+    assert [b["name"] for b in row["blamed"]] == ["Quantitative Analyst"]
+    assert [v["name"] for v in row["vindicated"]] == ["Risk Manager"]
+
+
+def test_blame_rates_appear_once_the_sample_supports_them(tmp_path):
+    from roundtable.calibration import MIN_SAMPLES_FOR_SEAT_SCORE
+    st = MemoryStore(db_path=str(tmp_path / "many.db"))
+    for i in range(MIN_SAMPLES_FOR_SEAT_SCORE):
+        st.save_deliberation(f"t{i}", "AAPL", "equity", "complete", {
+            "opinions": [
+                {"seat_id": "quant", "seat_name": "Quantitative Analyst",
+                 "signal": "bullish", "confidence": 90, "reasoning": "m", "failed": False},
+                {"seat_id": "risk", "seat_name": "Risk Manager",
+                 "signal": "bearish", "confidence": 65, "reasoning": "s", "failed": False},
+            ],
+            "consensus": {"signal": "bullish", "confidence": 85},
+            "tally": {"bullish": 1, "bearish": 1},
+        }, signal="bullish", confidence=85.0)
+        st.record_thesis_outcome(f"t{i}", "AAPL", realized_return=-0.05,
+                                 signal="bullish", confidence=85.0, correct=False)
+    rows = {r["id"]: r for r in DashboardRuntime(memory=st).agent_matrix()}
+    assert rows["quant"]["blamed_losses"] > 0
+    assert rows["risk"]["blamed_losses"] == 0, "a dissenter is never blamed"
 
 
 def test_overconfidence_is_flagged_not_reported_as_enforced(tmp_path):

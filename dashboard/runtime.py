@@ -330,6 +330,9 @@ class DashboardRuntime:
     # Prediction markets are Polymarket; everything else is the broker.
     VENUE_OF_ASSET = {"prediction": "polymarket_us"}
 
+    # Below this a win/loss ratio describes the exit geometry rather than skill.
+    MIN_TRADES_FOR_RATIOS = 50
+
     def record(self, venue: Optional[str] = None) -> dict:
         """Wins, losses and the equity curve — the 'am I making money' view.
 
@@ -368,8 +371,79 @@ class DashboardRuntime:
             "worst_usd": round(min((c["realized_usd"] for c in closed), default=0.0), 2),
             # Profit factor beats win rate: a 70% win rate with tiny wins and
             # huge losses is a losing strategy that looks like a winning one.
-            "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else None,
+            # Gated. On a 2xATR stop / 3xATR target geometry, 3W/2L returns
+            # PF ~ 2.25 mechanically, with zero skill — and a reader takes 2.25
+            # for an edge. The same record() feeds the Overview, so the guard
+            # lives here rather than in one view.
+            "profit_factor": (
+                round(gross_win / gross_loss, 2)
+                if gross_loss and len(closed) >= self.MIN_TRADES_FOR_RATIOS else None
+            ),
+            "profit_factor_reason": (
+                None if len(closed) >= self.MIN_TRADES_FOR_RATIOS
+                else f"{len(closed)} of {self.MIN_TRADES_FOR_RATIOS} trades — a ratio this "
+                     "early reports the exit geometry, not an edge"
+            ),
+            "concentration": self._concentration(closed, realized),
+            "bridge": self._bridge(closed),
             "equity_curve": curve,
+        }
+
+    @staticmethod
+    def _concentration(closed: list[dict], realized: float) -> dict:
+        """How much of the record is one trade, and how many ran at once."""
+        if not closed:
+            return {"top1_symbol": None, "top1_share_pct": None,
+                    "max_concurrent": 0, "reason": "no closed trades yet"}
+        best = max(closed, key=lambda c: c.get("realized_usd", 0.0))
+        events: list[tuple[float, int]] = []
+        for c in closed:
+            opened, shut = c.get("opened_at"), c.get("closed_at")
+            if opened is None or shut is None:
+                continue
+            events.append((opened, 1))
+            events.append((shut, -1))
+        concurrent = running = 0
+        for _, delta in sorted(events):
+            running += delta
+            concurrent = max(concurrent, running)
+        return {
+            "top1_symbol": best.get("symbol"),
+            # Undefined against a non-positive book: "top trade: 420% of P&L" is
+            # arithmetically true and gets the whole panel discarded.
+            "top1_share_pct": (
+                round(best.get("realized_usd", 0.0) / realized * 100, 1)
+                if realized > 0 else None
+            ),
+            "max_concurrent": concurrent,
+            "reason": None if realized > 0
+                      else "net P&L is not positive — there is no share to attribute",
+        }
+
+    @staticmethod
+    def _bridge(closed: list[dict]) -> dict:
+        """Gross to net: what the mid-to-mid record would have said, what the
+        fills actually cost, and what is left.
+
+        Only rows carrying a VENUE price on both legs enter it. A mid-priced row
+        has planned == fill by construction, so including it contributes a
+        perfectly plausible $0.00 of cost and drags the average toward "trading
+        is free" — the exact fiction this bridge exists to expose.
+        """
+        priced = [c for c in closed
+                  if c.get("entry_fill_source") == "venue"
+                  and c.get("exit_fill_source") == "venue"
+                  and c.get("planned_entry") and c.get("planned_exit")]
+        if not priced:
+            return {"gross_usd": None, "cost_usd": None, "net_usd": None,
+                    "trades_priced": 0, "trades_unpriced": len(closed),
+                    "reason": "no closed trade carries a venue fill price yet"}
+        gross = sum(c["quantity"] * (c["planned_exit"] - c["planned_entry"]) for c in priced)
+        net = sum(c.get("realized_usd", 0.0) for c in priced)
+        return {
+            "gross_usd": round(gross, 4), "cost_usd": round(gross - net, 4),
+            "net_usd": round(net, 4), "trades_priced": len(priced),
+            "trades_unpriced": len(closed) - len(priced), "reason": None,
         }
 
     def _closed_trades(self) -> list[dict]:
@@ -630,6 +704,71 @@ class DashboardRuntime:
             "target": position.plan.target if position else None,
         }
 
+    # ---------- is it luck? ----------
+
+    def edge(self) -> dict:
+        """Expectancy in R, and whether it can be told from chance.
+
+        Below MIN_SAMPLES_FOR_EDGE the scalars are null and the raw R values are
+        returned instead: a list of five numbers is honest, a mean of five
+        numbers with a t-statistic beside it is not. The binomial p-value is
+        reported at any n because it is the test that does not need a big one.
+        """
+        from finance.risk_metrics import (
+            MIN_SAMPLES_FOR_EDGE, binomial_p_value, bootstrap_mean_p5,
+            r_multiples, samples_for_significance, t_statistic,
+        )
+        import statistics
+
+        values, excluded = r_multiples(self._closed_trades())
+        n = len(values)
+        wins = sum(1 for v in values if v > 0)
+        mean = statistics.fmean(values) if values else None
+        # Break-even hit rate for the realised payoff ratio: a 1.5R book only
+        # needs 40%, so 55% is not the achievement it reads as.
+        avg_win = statistics.fmean([v for v in values if v > 0]) if wins else None
+        avg_loss = abs(statistics.fmean([v for v in values if v <= 0])) if n - wins else None
+        p0 = (avg_loss / (avg_win + avg_loss)) if avg_win and avg_loss else None
+
+        enough = n >= MIN_SAMPLES_FOR_EDGE
+        return {
+            "n": n,
+            "excluded": excluded,
+            "r_values": [round(v, 3) for v in values],
+            "mean_r": round(mean, 3) if enough and mean is not None else None,
+            "sd_r": round(statistics.stdev(values), 3) if n >= 2 else None,
+            "t_stat": round(t_statistic(values), 3) if enough and t_statistic(values) else None,
+            "bootstrap_p5_mean_r": (
+                round(bootstrap_mean_p5(values), 3) if bootstrap_mean_p5(values) is not None else None
+            ),
+            "binomial_p": (
+                round(binomial_p_value(wins, n, p0), 4) if p0 and n else None
+            ),
+            "p0": round(p0, 3) if p0 else None,
+            "wins": wins,
+            "n_for_significance": samples_for_significance(values),
+            "verdict": (
+                "no closed trades yet" if n == 0
+                else f"n too small to distinguish from luck — {n} of {MIN_SAMPLES_FOR_EDGE}"
+                if not enough else "estimable"
+            ),
+            "note": (
+                "50 closed trades is the operational bar in rule #13, not a "
+                "statistical one. Significance depends on dispersion, not on a "
+                "round number."
+            ),
+        }
+
+    def seat_agreement(self) -> dict:
+        """Are the seats independent, or one opinion with six voices?"""
+        from roundtable.agreement import pairwise_agreement
+        try:
+            rows = self.memory.recent_deliberations(limit=500)
+        except Exception:
+            return {"pairs": [], "n_deliberations": 0, "mean_kappa": None,
+                    "reason": "deliberations could not be read"}
+        return pairwise_agreement(rows)
+
     # ---------- per-venue statistics ----------
 
     async def venue_stats(self, venue: str) -> dict:
@@ -851,8 +990,22 @@ class DashboardRuntime:
         return rows
 
     def _blame_by_seat(self) -> dict[str, dict]:
-        """Losses each seat backed, and the postmortem code that names why."""
+        """Losses each seat backed, and the postmortem code that names why.
+
+        Gated. The fund is long-only and `correct` is `realized > 0`, so every
+        seat that voted bullish is scored on the IDENTICAL event — per-seat
+        blame rates below the bar are noise by construction. The per-TRADE
+        attribution in `trade_history` is unaffected: that is a transcript of
+        one displayed trade, not a rate computed across trades.
+        """
         from collections import Counter
+        from roundtable.calibration import MIN_SAMPLES_FOR_SEAT_SCORE
+        try:
+            if len(self.memory.resolved_outcomes(limit=MIN_SAMPLES_FOR_SEAT_SCORE)) \
+                    < MIN_SAMPLES_FOR_SEAT_SCORE:
+                return {}
+        except Exception:
+            return {}
         counts: dict[str, Counter] = {}
         totals: dict[str, int] = {}
         notes: dict[str, str] = {}

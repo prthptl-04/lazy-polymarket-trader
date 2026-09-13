@@ -16,6 +16,7 @@ import pytest
 from memory.store import MemoryStore
 from roundtable.calibration import (
     MIN_SAMPLES_FOR_FIT,
+    MIN_SAMPLES_FOR_SEAT_SCORE,
     direction_was_right,
     fit_confidence_shrink,
     score_seats,
@@ -141,18 +142,41 @@ def test_overconfidence_is_stated_minus_realized():
 
 
 def test_well_calibrated_seat_is_flagged_as_such():
-    delibs = [_delib(f"t{i}", [("a", "bullish", 50)]) for i in range(4)]
-    outcomes = {f"t{i}": _outcome(f"t{i}", 0.05 if i < 2 else -0.05) for i in range(4)}
+    n = MIN_SAMPLES_FOR_SEAT_SCORE
+    delibs = [_delib(f"t{i}", [("a", "bullish", 50)]) for i in range(n)]
+    outcomes = {f"t{i}": _outcome(f"t{i}", 0.05 if i % 2 else -0.05) for i in range(n)}
     seat = score_seats(delibs, outcomes).seats[0]
 
     assert seat.hit_rate == pytest.approx(0.5)
     assert seat.is_calibrated is True
 
 
+def test_a_seat_with_a_handful_of_calls_is_neither_calibrated_nor_beating_chance():
+    """The fund is long-only and `correct` is `realized > 0`, so every bullish
+    seat is scored on the IDENTICAL event — small-n differences between seats
+    are noise by construction, not merely by sample size. Four perfect calls
+    used to be enough for the dashboard to announce a seat calibrated."""
+    delibs = [_delib(f"t{i}", [("a", "bullish", 50)]) for i in range(4)]
+    outcomes = {f"t{i}": _outcome(f"t{i}", 0.05 if i < 2 else -0.05) for i in range(4)}
+    seat = score_seats(delibs, outcomes).seats[0]
+
+    assert seat.hit_rate == pytest.approx(0.5)      # the arithmetic still runs
+    assert seat.is_calibrated is False              # ...but it is not a verdict
+    assert seat.is_scored is False
+    assert seat.as_dict()["min_samples"] == MIN_SAMPLES_FOR_SEAT_SCORE
+
+
 def test_beats_a_coin_flip_flag():
+    n = MIN_SAMPLES_FOR_SEAT_SCORE
+    delibs = [_delib(f"t{i}", [("a", "bullish", 90)]) for i in range(n)]
+    outcomes = {f"t{i}": _outcome(f"t{i}", 0.05) for i in range(n)}
+    assert score_seats(delibs, outcomes).seats[0].beats_a_coin_flip is True
+
+
+def test_a_lucky_short_run_does_not_beat_a_coin_flip():
     delibs = [_delib(f"t{i}", [("a", "bullish", 90)]) for i in range(4)]
     outcomes = {f"t{i}": _outcome(f"t{i}", 0.05) for i in range(4)}
-    assert score_seats(delibs, outcomes).seats[0].beats_a_coin_flip is True
+    assert score_seats(delibs, outcomes).seats[0].beats_a_coin_flip is False
 
 
 def test_worst_calibrated_seat_is_identifiable():

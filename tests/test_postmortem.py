@@ -206,10 +206,34 @@ async def test_a_losing_exit_writes_a_lesson_the_next_cycle_reads(tmp_path):
     assert len(report.exits) == 1
     assert "correct_dissent" in report.exits[0]["lessons"]
 
-    # And the lesson is now in what the next candidate shows the seats.
+    # RECORDED — durable, audited, and on the lessons panel for a human.
+    written = " ".join(l.get("lesson", "") for l in store.recent_lessons("*", limit=20))
+    assert "Risk Manager" in written and "was right" in written
+
+    # NOT YET INJECTED. One resolved trade is not a policy. The seats are told
+    # the fund has not learned anything rather than handed a moral from n=1 —
+    # an injected lesson persists and compounds across every future debate,
+    # while a withheld one costs a single cycle of insight.
     lines = recent_lesson_lines(store)
-    assert any("Risk Manager" in l and "was right" in l for l in lines)
-    assert "stop sits inside noise" in " ".join(lines)
+    assert len(lines) == 1 and "too few to generalise" in lines[0]
+    assert "Risk Manager" not in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_lessons_are_injected_once_the_sample_supports_them(tmp_path):
+    """The gate is on evidence, not on the lesson's content."""
+    from roundtable.calibration import MIN_SAMPLES_FOR_FIT
+
+    store = MemoryStore(db_path=str(tmp_path / "many.db"))
+    for i in range(MIN_SAMPLES_FOR_FIT):
+        store.record_thesis_outcome(f"t{i}", "AAPL", realized_return=-0.02,
+                                    signal="bullish", confidence=80.0, correct=False)
+    Postmortem(memory=store).run(
+        symbol="AAPL", realized_return=-0.06,
+        thesis=_thesis([("a", "A", "bullish", 95)], confidence=95.0))
+
+    lines = recent_lesson_lines(store)
+    assert lines and "too few to generalise" not in lines[0]
 
 
 def test_lessons_route_shows_only_trading_lessons(tmp_path):

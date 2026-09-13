@@ -144,3 +144,102 @@ def value_at_risk(returns: Sequence[float], *, alpha: float = 0.05) -> float:
     idx = max(0, min(len(sorted_r) - 1, int(alpha * len(sorted_r))))
     worst = sorted_r[idx]
     return max(0.0, -worst)
+
+
+# ---------------------------------------------------------------------------
+# Is the record distinguishable from luck?
+#
+# Every function here refuses below the sample where it would be noise, and says
+# so, rather than returning a number that reads as evidence. Fifty trades is an
+# operational bar (rule #13); it is not a statistical one — at a realistic
+# sd(R) ≈ 1.2 and a good mean(R) = 0.2, |t| > 2 needs n ≈ 144.
+# ---------------------------------------------------------------------------
+
+import math
+import random
+import statistics
+from typing import Mapping, Optional, Sequence
+
+MIN_SAMPLES_FOR_EDGE = 30
+
+
+def r_multiples(closed: Sequence[Mapping]) -> tuple[list[float], int]:
+    """Realised return per unit of PLANNED risk, and how many rows were skipped.
+
+    Planned risk, from the stop the position was opened under — never the
+    realised move. Dividing by the realised move makes every stopped trade
+    exactly -1R and every target exactly +1.5R: R would have no variance, the
+    t-statistic would be infinite or undefined, and the number would be
+    arithmetically incapable of disagreeing with the exit plan.
+    """
+    values: list[float] = []
+    excluded = 0
+    for row in closed:
+        entry = row.get("planned_entry") or row.get("entry_price")
+        stop = row.get("stop")
+        realized = row.get("realized_return")
+        if not entry or stop is None or realized is None or entry <= 0:
+            excluded += 1
+            continue
+        risk = abs(entry - stop) / entry
+        if risk <= 0:
+            excluded += 1
+            continue
+        values.append(realized / risk)
+    return values, excluded
+
+
+def t_statistic(values: Sequence[float]) -> Optional[float]:
+    """mean / standard error. None below two samples or at zero dispersion —
+    never inf, which prints as an answer."""
+    n = len(values)
+    if n < 2:
+        return None
+    sd = statistics.stdev(values)
+    if sd <= 0:
+        return None
+    return statistics.fmean(values) / (sd / math.sqrt(n))
+
+
+def bootstrap_mean_p5(values: Sequence[float], *, iterations: int = 10_000,
+                      seed: int = 0) -> Optional[float]:
+    """5th percentile of the resampled mean — the one-sided question that
+    matters: is the edge above zero even on a bad draw?
+
+    Seeded, because a go/no-go number that changes on refresh is not a number.
+    """
+    n = len(values)
+    if n < MIN_SAMPLES_FOR_EDGE:
+        return None
+    rng = random.Random(seed)
+    means = [statistics.fmean(rng.choices(values, k=n)) for _ in range(iterations)]
+    means.sort()
+    return means[max(0, int(0.05 * iterations) - 1)]
+
+
+def binomial_p_value(wins: int, n: int, p0: float) -> Optional[float]:
+    """Exact one-sided P(X >= wins) under H0: p = p0.
+
+    Cheap, honest at any n, and the answer to "six wins in eight" is p ≈ 0.10 —
+    nothing. Reported at every sample size precisely because it is the test that
+    does not need a big one.
+    """
+    if n <= 0 or not 0 < p0 < 1 or wins < 0 or wins > n:
+        return None
+    return sum(math.comb(n, k) * p0**k * (1 - p0) ** (n - k)
+               for k in range(wins, n + 1))
+
+
+def samples_for_significance(values: Sequence[float]) -> Optional[int]:
+    """n at which |t| would reach 2, holding the observed mean and dispersion.
+
+    Printed so the page states the statistical bar instead of letting 50 imply
+    it. Meaningless when the observed edge is negative.
+    """
+    if len(values) < 2:
+        return None
+    mean = statistics.fmean(values)
+    sd = statistics.stdev(values)
+    if mean <= 0 or sd <= 0:
+        return None
+    return math.ceil((2 * sd / mean) ** 2)

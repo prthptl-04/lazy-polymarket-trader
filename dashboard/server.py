@@ -140,6 +140,14 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     async def api_venue_stats(venue: str) -> dict:
         return await runtime.venue_stats(venue)
 
+    @app.get("/api/edge")
+    def api_edge() -> dict:
+        return runtime.edge()
+
+    @app.get("/api/seat-agreement")
+    def api_seat_agreement() -> dict:
+        return runtime.seat_agreement()
+
     @app.get("/api/costs")
     def api_costs() -> dict:
         return runtime.costs()

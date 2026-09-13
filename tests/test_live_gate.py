@@ -249,3 +249,50 @@ def test_paper_route_is_served(tmp_path):
     body = TestClient(create_app(build_runtime(
         memory=MemoryStore(db_path=str(tmp_path / "p.db"))))).get("/api/paper").json()
     assert body["required"] == MIN_PAPER_TRADES_FOR_LIVE
+
+
+# ---------------- graduation checklist (display only) ----------------
+
+def test_graduation_items_never_default_to_ok(tmp_path):
+    """A checklist whose unknown boxes render as ticks is the hardcoded
+    preflight repeated one layer down — and this one sits beside a live-money
+    decision. Anything not measurable must read false."""
+    gate = _gate(memory=MemoryStore(db_path=str(tmp_path / "grad.db")))
+    items = gate.graduation()
+    for item in items:
+        if "not measurable" in item["detail"]:
+            assert item["ok"] is False, item["label"]
+    ids = {i["id"] for i in items}
+    assert {"round_trips", "regimes", "stops_fired", "reconciled"} <= ids
+
+
+def test_graduation_does_not_gate_anything(tmp_path):
+    """The blocking set stays the five conditions rule #13 names. A gate that
+    tightens itself past its own documentation is how the documentation stops
+    being believed."""
+    memory = _ready_memory(tmp_path)
+    gate = _gate(memory=memory)
+    # The rule-#13 condition this checklist could plausibly have hijacked is
+    # satisfied...
+    assert gate.status()["checks"]["paper_trades_recorded"] is True
+    # ...while graduation items remain unmet. They inform; they do not block.
+    assert any(not i["ok"] for i in gate.graduation())
+    # status() carries the four conditions that do not depend on an adapter;
+    # venue_authenticated is evaluated per venue inside evaluate(). Five in
+    # total, and graduation adds none of them.
+    assert set(gate.status()["checks"]) == {
+        "env_paper_trading_false", "risk_caps_live_appropriate",
+        "paper_trades_recorded", "operator_approval_lesson",
+    }, "the blocking set must stay the conditions rule #13 names"
+    assert "venue_authenticated" in gate.evaluate(_LiveVenue()).checks
+
+
+def test_the_risk_system_is_untested_until_a_stop_has_fired(tmp_path):
+    m = MemoryStore(db_path=str(tmp_path / "stops.db"))
+    for i in range(6):
+        m.record_closed_trade({"symbol": f"S{i}", "mode": "paper", "reason": "stop",
+                               "entry_price": 100.0, "exit_price": 96.0, "stop": 96.0,
+                               "quantity": 1.0, "realized_return": -0.04,
+                               "realized_usd": -4.0, "closed_at": float(i)})
+    item = next(i for i in _gate(memory=m).graduation() if i["id"] == "stops_fired")
+    assert item["ok"] is True and "6 of 5" in item["detail"]

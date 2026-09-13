@@ -59,7 +59,11 @@ export interface FundStatus {
   kill_switch?: { armed: boolean; tripped: boolean; remaining_usd: number; limit_usd: number } | null;
   pdt?: { pdt_applies: boolean; day_trades_remaining: number } | null;
   router_live_gate?: { live_possible: boolean; checks: Record<string, boolean>;
-    graded_paper_trades: number; required_paper_trades: number } | null;
+    graded_paper_trades: number; required_paper_trades: number;
+    orders?: { orders_graded: number; orders_filled: number;
+               fill_rate_pct: number | null;
+               fill_rate_by_session: Record<string, { graded: number; filled: number }> };
+    graduation?: GraduationItem[] } | null;
   last_cycle?: Record<string, unknown> | null;
 }
 export interface Balances {
@@ -68,7 +72,9 @@ export interface Balances {
 export interface Record_ {
   closed: number; wins: number; losses: number; win_rate: number | null;
   realized_usd: number; best_usd: number; worst_usd: number;
-  profit_factor: number | null; equity_curve: number[];
+  profit_factor: number | null; profit_factor_reason?: string | null;
+  equity_curve: number[];
+  bridge?: Bridge; concentration?: Concentration;
 }
 export interface PaperProgress {
   graded_paper_trades: number; required: number; pct_complete: number;
@@ -180,3 +186,26 @@ export interface VenueStats {
   venue: string; fund: Record_; broker: BrokerRecord | null;
   primary: "broker" | "fund";
 }
+
+export interface Edge {
+  n: number; excluded: number; r_values: number[];
+  mean_r: number | null; sd_r: number | null; t_stat: number | null;
+  bootstrap_p5_mean_r: number | null; binomial_p: number | null;
+  p0: number | null; wins: number; n_for_significance: number | null;
+  verdict: string; note: string;
+}
+export interface SeatAgreement {
+  pairs: { a: string; b: string; n: number; agreement_pct: number;
+           kappa: number | null; reason: string | null; duplicate: boolean }[];
+  n_deliberations: number; mean_kappa: number | null;
+  mean_agreement_pct: number | null; duplicates: unknown[]; reason: string | null;
+}
+export interface Bridge {
+  gross_usd: number | null; cost_usd: number | null; net_usd: number | null;
+  trades_priced: number; trades_unpriced: number; reason: string | null;
+}
+export interface Concentration {
+  top1_symbol: string | null; top1_share_pct: number | null;
+  max_concurrent: number; reason: string | null;
+}
+export interface GraduationItem { id: string; label: string; ok: boolean; detail: string }

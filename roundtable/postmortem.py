@@ -34,6 +34,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from roundtable.calibration import MIN_SAMPLES_FOR_FIT
+
 logger = logging.getLogger(__name__)
 
 # Stated confidence above this on a loss is a calibration fault worth recording.
@@ -215,9 +217,34 @@ def recent_lesson_lines(memory: Any, limit: int = MAX_LESSONS_SHOWN) -> tuple[st
     Goes to the seats as *evidence*, not as a system-prompt edit — the system
     blocks are cache-tagged, so mutating them would discard the prompt cache
     every time the fund learns something.
+
+    GATED ON EVIDENCE. Recording is unchanged — findings are still written,
+    audited and shown to a human on the lessons panel. What is gated is the
+    INJECTION into future deliberations, because the asymmetry is brutal: a
+    lesson that is noise persists and compounds across every subsequent debate,
+    while a lesson withheld costs one cycle of un-learned insight.
+
+    This is not hypothetical. An earlier version of this loop fired "the stop
+    may have been sized to noise" on every stopped-out long, those lines were
+    injected into every later deliberation, and the committee learned to widen
+    stops on evidence the fund had never observed — turning a planned 2R loss
+    into a larger one. Below MIN_SAMPLES_FOR_FIT resolved theses the fund says
+    plainly that it has not learned anything yet.
     """
     if memory is None:
         return ()
+    try:
+        resolved = len(memory.resolved_outcomes(limit=MIN_SAMPLES_FOR_FIT))
+    except Exception:
+        # Cannot establish the sample → inject nothing. The default is "the
+        # fund has not learned anything", never "carry on with the table".
+        return ()
+    if resolved < MIN_SAMPLES_FOR_FIT:
+        return (
+            f"The fund has {resolved} resolved trades — too few to generalise "
+            f"from, so no post-mortem lessons are being applied. Reason from the "
+            f"evidence in front of you.",
+        )
     try:
         rows = memory.recent_lessons("*", limit=limit)
     except Exception:
