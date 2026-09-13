@@ -28,6 +28,9 @@ from trading.fund_config import FundConfig, load_config
 from trading.fund_scheduler import FundScheduler
 from trading.kill_switch import DailyLossKillSwitch
 from trading.market_data import StaticProvider, VenueQuoteProvider
+from trading.massive_provider import MassiveProvider
+from trading.position_book import PositionBook
+from trading.sec_edgar import SecEdgarFundamentals
 from trading.pdt import DayTradeTracker
 from trading.pipeline import ThesisPipeline
 from trading.venues.paper import PaperVenue
@@ -49,6 +52,10 @@ def build_data_provider(config: FundConfig, venue: Any) -> Optional[Any]:
     provider = config.data_provider
     if provider == "static":
         return StaticProvider()
+    if provider == "massive":
+        # Bars from Massive; fundamentals from SEC EDGAR, because Massive's
+        # plan returns NOT_ENTITLED for financial statements.
+        return MassiveProvider(financials=SecEdgarFundamentals())
     if provider in ("", "none"):
         return VenueQuoteProvider(adapter=venue)
     logger.warning(
@@ -98,8 +105,13 @@ def build_fund(
         memory=memory,
     )
 
+    # Blocker #2: without this the fund opens positions whose stops are never
+    # checked. FundLoop only enforces exits when a position_book is attached.
+    position_book = PositionBook(memory=memory)
+
     fund = FundLoop(
         router=router,
+        position_book=position_book,
         pipeline=pipeline,
         round_table=RoundTable(client=client, memory=memory),
         data=build_data_provider(cfg, trading_venue),
@@ -112,11 +124,14 @@ def build_fund(
         resume_max_age_seconds=cfg.resume_max_age_seconds,
     )
 
-    return FundScheduler(
+    scheduler = FundScheduler(
         fund=fund,
         venue=trading_venue,
         cycle_interval_seconds=cfg.cycle_interval_seconds,
     )
+    # Exposed so the dashboard can show open positions and their live stops.
+    scheduler.position_book = position_book
+    return scheduler
 
 
 def _default_client() -> Optional[Any]:

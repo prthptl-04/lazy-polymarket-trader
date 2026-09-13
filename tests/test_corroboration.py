@@ -147,22 +147,25 @@ async def test_a_dead_provider_degrades_to_unverified():
 
 # ---------------- scraping stays narrative ----------------
 
-class _Reach:
-    def __init__(self, approved=True, text="lots of chatter"):
-        self.approved, self.text = approved, text
+class _Browser:
+    """Stands in for PlaywrightFetcher."""
 
-    def search(self, platform, query, limit=5):
+    def __init__(self, approved=True, text="lots of chatter", status=200):
+        self.approved, self.text, self.status = approved, text, status
+
+    def fetch(self, url, **kw):
         class _R: pass
-        r = _R(); r.approved = self.approved
-        r.content_text = self.text
+        r = _R()
+        r.approved, r.status, r.text = self.approved, self.status, self.text
         r.error = "blocked by trust gate"
+        r.ok = self.approved and 200 <= (self.status or 0) < 300 and bool(self.text)
         return r
 
 
 @pytest.mark.asyncio
 async def test_scraped_text_is_a_note_never_a_compared_number():
     c = Corroborator(primary=_Provider(100.0, [99, 100]),
-                     secondary=_Provider(100.1, [99, 100]), reach=_Reach())
+                     secondary=_Provider(100.1, [99, 100]), browser=_Browser(), scrape_urls=("https://x.test/{symbol}",))
     r = await c.run("AAPL", scrape=True)
     assert any("unverified, narrative only" in n for n in r.notes)
     assert {ch.field for ch in r.checks} == {"price", "last_close", "volume", "bar_count"}
@@ -170,14 +173,14 @@ async def test_scraped_text_is_a_note_never_a_compared_number():
 
 @pytest.mark.asyncio
 async def test_a_blocked_scrape_is_reported_not_silent():
-    c = Corroborator(primary=_Provider(100.0, [99, 100]), reach=_Reach(approved=False))
+    c = Corroborator(primary=_Provider(100.0, [99, 100]), browser=_Browser(approved=False), scrape_urls=("https://x.test/{symbol}",))
     r = await c.run("AAPL", scrape=True)
     assert any("scrape gate" in n for n in r.notes)
 
 
 @pytest.mark.asyncio
 async def test_scraping_is_off_by_default():
-    c = Corroborator(primary=_Provider(100.0, [99, 100]), reach=_Reach())
+    c = Corroborator(primary=_Provider(100.0, [99, 100]), browser=_Browser(), scrape_urls=("https://x.test/{symbol}",))
     r = await c.run("AAPL")
     assert not any("narrative" in n for n in r.notes)
 
@@ -192,3 +195,14 @@ def test_seat_is_told_not_to_vote_bearish_on_a_data_fault():
     prompt = SEATS_BY_ID["corroborator"].system_prompt
     assert "not bearish" in prompt
     assert "single-sourced" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_rendered_error_page_is_not_used_as_narrative():
+    """A 403 body is an error page, not research."""
+    c = Corroborator(primary=_Provider(100.0, [99, 100]),
+                     browser=_Browser(status=403, text="Rate Threshold Exceeded"),
+                     scrape_urls=("https://x.test/{symbol}",))
+    r = await c.run("AAPL", scrape=True)
+    assert any("unusable (status 403)" in n for n in r.notes)
+    assert not any("narrative only" in n for n in r.notes)

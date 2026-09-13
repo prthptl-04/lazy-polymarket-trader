@@ -170,3 +170,47 @@ def test_ui_warns_on_the_dangerous_states(tmp_path):
     assert "DAILY LOSS LIMIT TRIPPED" in html
     assert "UNARMED" in html
     assert "Day-trade budget exhausted" in html
+
+
+# ---------------- blocker #2: stops must be enforced on the built fund ----------------
+
+def test_build_fund_attaches_a_position_book(monkeypatch):
+    """Without this the fund opens positions whose stops are never checked."""
+    from dashboard.fund_wiring import build_fund
+    from trading.fund_config import FundConfig
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    sched = build_fund(config=FundConfig(equity_watchlist=("AAPL",), bankroll_usd=1000.0),
+                       anthropic_client=object())
+    assert sched is not None
+    assert sched.fund.position_book is not None
+    assert hasattr(sched.fund.position_book, "check_exits")
+
+
+def test_position_book_is_exposed_on_the_scheduler(monkeypatch):
+    from dashboard.fund_wiring import build_fund
+    from trading.fund_config import FundConfig
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    sched = build_fund(config=FundConfig(crypto_watchlist=("BTC",), bankroll_usd=500.0),
+                       anthropic_client=object())
+    assert sched.position_book is sched.fund.position_book
+
+
+def test_massive_provider_gets_edgar_for_fundamentals():
+    """Massive returns NOT_ENTITLED for financials; EDGAR fills the gap."""
+    from dashboard.fund_wiring import build_data_provider
+    from trading.fund_config import FundConfig
+    from trading.sec_edgar import SecEdgarFundamentals
+
+    p = build_data_provider(FundConfig(data_provider="massive"), venue=None)
+    assert isinstance(p.financials, SecEdgarFundamentals)
+
+
+def test_unknown_provider_falls_back_to_quotes_only():
+    from dashboard.fund_wiring import build_data_provider
+    from trading.fund_config import FundConfig
+    from trading.market_data import VenueQuoteProvider
+
+    p = build_data_provider(FundConfig(data_provider="nonsense"), venue=object())
+    assert isinstance(p, VenueQuoteProvider)

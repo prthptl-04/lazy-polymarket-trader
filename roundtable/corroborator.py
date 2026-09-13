@@ -9,10 +9,14 @@ Sources are deliberately independent. Corroborating a Massive number against
 Massive proves nothing — so the secondary must be a different provider (a
 venue's own quote, a second vendor) or the check is theatre.
 
-Scraping goes through `AgentReachFetcher`, which routes every target through
-the rule-#8 trust gate before any subprocess runs. Scraped text is context for
-a seat to read, never a number fed into `compare` — a figure lifted off a web
-page is not a corroborating source, it is a rumour with a citation.
+Scraping goes through `PlaywrightFetcher` — the only scraper in this codebase
+that actually works (Agent Reach has no backends installed, Scrapling's import
+fails), and it routes every URL through the rule-#8 trust gate before a browser
+launches.
+
+Scraped text is context for a seat to read, never a number fed into `compare`.
+A figure lifted off a web page is not a corroborating source, it is a rumour
+with a citation.
 """
 
 from __future__ import annotations
@@ -38,8 +42,9 @@ class Corroborator:
 
     primary: Any
     secondary: Any = None
-    reach: Any = None
-    scrape_platforms: tuple[str, ...] = ("reddit",)
+    # PlaywrightFetcher. Named `browser` because that is what it is.
+    browser: Any = None
+    scrape_urls: tuple[str, ...] = ()
 
     async def run(self, symbol: str, *, scrape: bool = False) -> CorroborationReport:
         primary_facts = await self._facts(self.primary, symbol)
@@ -52,7 +57,7 @@ class Corroborator:
             secondary_facts = await self._facts(self.secondary, symbol)
             report = compare(symbol, primary_facts, secondary_facts)
 
-        if scrape and self.reach is not None:
+        if scrape and self.browser is not None:
             notes.extend(await self._scrape_notes(symbol))
         report.notes.extend(notes)
         return report
@@ -88,18 +93,25 @@ class Corroborator:
     # ---------- narrative ----------
 
     async def _scrape_notes(self, symbol: str) -> list[str]:
+        """Render the configured pages. Blocking I/O, so off the event loop."""
+        import asyncio
+
         notes: list[str] = []
-        for platform in self.scrape_platforms:
+        for template in self.scrape_urls[:MAX_SCRAPE_NOTES]:
+            url = template.format(symbol=symbol.upper())
             try:
-                result = self.reach.search(platform, symbol, limit=MAX_SCRAPE_NOTES)
+                page = await asyncio.to_thread(self.browser.fetch, url)
             except Exception as e:
-                notes.append(f"{platform}: fetch failed ({type(e).__name__})")
+                notes.append(f"{url}: fetch failed ({type(e).__name__})")
                 continue
-            if not getattr(result, "approved", False):
+            if not page.approved:
                 # The trust gate refused. That is a working gate, not an error.
-                notes.append(f"{platform}: blocked by the scrape gate — {result.error}")
+                notes.append(f"{url}: blocked by the scrape gate — {page.error}")
                 continue
-            text = (result.content_text or "").strip()
-            if text:
-                notes.append(f"{platform} (unverified, narrative only): {text[:400]}")
+            if not page.ok:
+                # Rendered, but a 4xx/5xx body is an error page, not research.
+                notes.append(f"{url}: unusable (status {page.status})")
+                continue
+            notes.append(f"{url} (unverified, narrative only): "
+                         f"{' '.join((page.text or '').split())[:400]}")
         return notes

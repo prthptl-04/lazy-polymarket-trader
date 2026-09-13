@@ -175,8 +175,15 @@ def test_provider_static_is_static():
 
 
 def test_unknown_provider_degrades_to_quotes_only():
-    cfg = FundConfig(equity_watchlist=("AAPL",), data_provider="massive")
+    cfg = FundConfig(equity_watchlist=("AAPL",), data_provider="not-a-vendor")
     assert isinstance(build_data_provider(cfg, venue=object()), VenueQuoteProvider)
+
+
+def test_massive_is_a_real_provider_now():
+    """It used to be the example of an unknown vendor; it is wired as of 52b574d."""
+    from trading.massive_provider import MassiveProvider
+    cfg = FundConfig(equity_watchlist=("AAPL",), data_provider="massive")
+    assert isinstance(build_data_provider(cfg, venue=object()), MassiveProvider)
 
 
 def test_shipped_config_trades_nothing():

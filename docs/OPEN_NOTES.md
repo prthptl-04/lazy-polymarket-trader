@@ -44,18 +44,7 @@ session. The fund daemon is a separate process and **cannot reach it**. So:
 Agentic account confirmed: `854969722` (nickname "Agentic",
 `agentic_allowed: true`, limited_margin), linked crypto account present.
 
-### 2. PositionBook is not wired into `build_fund` — REVISIT THIS
-`FundLoop` enforces stops only when a `position_book` is attached.
-`dashboard/fund_wiring.build_fund` does not construct one, so **a fund built
-from config still has unenforced stops** — the exact hole closed in `66da561`
-is still open on the path the dashboard actually uses.
-
-One line to fix. Left for its own commit so it gets reviewed rather than
-buried. User asked to revisit this explicitly (2026-09-12).
-
-**Do not run live — paper or otherwise — until this is closed.**
-
-### 3. MCP auth is desktop-interactive OAuth
+### 2. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
 account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
 across restarts is unsolved and is the real blocker on unattended autonomy.
@@ -126,16 +115,17 @@ The header shows `RH n/a` because MCP is session-bound. Resolving blocker #3
 (daemon auth) fixes this for free. Until then the pill stays honest rather
 than showing a cached number the user might size against.
 
-### Scraper stack: only Playwright works
+### Scraper stack: Playwright adopted; two dead paths remain
+**Decided:** agents use Playwright. `Corroborator(browser=PlaywrightFetcher(...),
+scrape_urls=(...))` renders narrative context; a 4xx/5xx body is discarded
+rather than passed off as research.
+
+Still to clean up (not urgent, but they are lies in pyproject):
 Checked all four (2026-09-12):
-- **Playwright** — installed, working, gated (`research_agent/playwright_fetcher.py`).
-  Headed by default. **This is the one to use.**
-- `microsoft/playwright-cli` — a codegen/inspection tool, not a runtime. Not adopted.
-- **Agent Reach** — zero backends installed and CLAUDE.md #20 refuses
-  `install --env=auto`. Currently fetches nothing. Either install backends by
-  hand after review, or drop the wrapper.
-- **Scrapling** — declared in pyproject but `import scrapling` fails on a
-  missing `curl_cffi`. Dead weight; fix the dep or remove it.
+- **Agent Reach** — zero backends installed, rule #20 refuses `--env=auto`.
+  Fetches nothing. Drop the wrapper + rule #20, or install backends by hand.
+- **Scrapling** — `import scrapling` fails on a missing `curl_cffi`. Either
+  add the dep or remove it from pyproject.
 
 ### Dashboard token auth
 Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
@@ -214,3 +204,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | SEC EDGAR fundamentals (free, replaces unentitled feed) | this commit |
 | Playwright headed fetcher, trust-gated | this commit |
 | Authenticator 403'd on UA-requiring hosts | this commit |
+| PositionBook wired into build_fund — stops now enforced | this commit |
+| Agents use Playwright for narrative scraping | this commit |
