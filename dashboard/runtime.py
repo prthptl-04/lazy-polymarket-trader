@@ -43,6 +43,8 @@ class DashboardRuntime:
     # The hedge-fund engine. Optional so the Polymarket-era runtime and its
     # tests keep working unchanged while both engines coexist.
     fund_scheduler: Optional[Any] = None
+    # name -> VenueAdapter, for the header balance strip.
+    venues: dict[str, Any] = field(default_factory=dict)
 
     # ---------- snapshot views (read-only, hot-path safe) ----------
 
@@ -194,6 +196,31 @@ class DashboardRuntime:
                 "reason": fit.reason,
             },
         }
+
+    async def balances(self) -> dict:
+        """Per-venue cash for the header.
+
+        Robinhood is reachable only over MCP, which is bound to a Claude Code
+        session — this process cannot call it. Rather than show a stale or
+        invented number, that venue reports `available: False` with the reason,
+        so the header never implies we know a balance we do not.
+        """
+        out: dict[str, dict] = {}
+        for name, venue in (self.venues or {}).items():
+            try:
+                acct = await venue.account()
+                out[name] = {
+                    "available": True,
+                    "cash_usd": round(acct.cash_usd, 4),
+                    "equity_usd": round(acct.equity_usd, 4),
+                }
+            except Exception as e:
+                out[name] = {"available": False, "reason": f"{type(e).__name__}"}
+        out.setdefault("robinhood", {
+            "available": False,
+            "reason": "MCP-only — not reachable from this process",
+        })
+        return out
 
     def feeds(self) -> dict:
         """Connection health for both WebSocket producers."""

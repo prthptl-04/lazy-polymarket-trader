@@ -104,6 +104,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_scorecard() -> dict:
         return runtime.scorecard()
 
+    @app.get("/api/balances")
+    async def api_balances() -> dict:
+        return await runtime.balances()
+
     @app.get("/api/fund")
     def api_fund() -> dict:
         return runtime.fund_status()
@@ -227,6 +231,8 @@ _INDEX_HTML = r"""<!doctype html>
   <header>
     <h1>Lazy Polymarket Trader · dashboard</h1>
     <div class="right">
+      <span id="bal-polymarket" class="pill" title="Polymarket US cash">PM —</span>
+      <span id="bal-robinhood" class="pill" title="Robinhood">RH —</span>
       <span id="state-pill" class="pill stopped">stopped</span>
       <a href="/roundtable" style="color:#58a6ff;text-decoration:none;margin-right:14px">Round Table &rarr;</a>
       <button id="go-btn" class="go">GO</button>
@@ -360,6 +366,23 @@ function renderAudit(rows) {
     return `<div class="row">${t} <span class="actor">${r.actor}</span> · ${r.action}${r.target ? ' → '+r.target : ''}</div>`;
   }).join("");
 }
+function renderBalances(b) {
+  const set = (el, label, v) => {
+    const n = document.getElementById(el);
+    if (!v || !v.available) {
+      n.textContent = label + " n/a";
+      n.title = (v && v.reason) || "unavailable";
+      n.style.color = "var(--muted)";
+      return;
+    }
+    n.textContent = label + " $" + Number(v.cash_usd).toFixed(2);
+    n.title = label + " equity $" + Number(v.equity_usd).toFixed(2);
+    n.style.color = "var(--fg)";
+  };
+  set("bal-polymarket", "PM", b.polymarket_us || b.polymarket);
+  set("bal-robinhood", "RH", b.robinhood);
+}
+
 function renderStatus(s) {
   if (!s) return;
   setStateUI(s.state);
@@ -423,13 +446,14 @@ function renderFund(f) {
 }
 
 async function refreshAll() {
-  const [status, pnl, positions, risk, audit, feeds, fund] = await Promise.all([
+  const [status, pnl, positions, risk, audit, feeds, fund, balances] = await Promise.all([
     fetchJSON('/api/status'), fetchJSON('/api/pnl'), fetchJSON('/api/positions'),
     fetchJSON('/api/risk'), fetchJSON('/api/audit?limit=40'), fetchJSON('/api/feeds'),
-    fetchJSON('/api/fund'),
+    fetchJSON('/api/fund'), fetchJSON('/api/balances'),
   ]);
   renderStatus(status); renderPnl(pnl); renderPositions(positions);
   renderRisk(risk); renderAudit(audit); renderFeeds(feeds); renderFund(fund);
+  renderBalances(balances);
 }
 
 document.getElementById("go-btn").addEventListener("click", async () => {

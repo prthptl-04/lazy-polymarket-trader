@@ -132,3 +132,61 @@ def test_websocket_delivers_initial_snapshot(client):
         msg = ws.receive_json()
         assert msg["event"] == "snapshot"
         assert "status" in msg and "pnl" in msg
+
+
+# ---------------- header balances ----------------
+
+def _rt_with_venues(tmp_path, venues):
+    from dashboard.runtime import build_runtime
+    rt = build_runtime(
+        polymarket_client=_StubClient(),
+        watched=[WatchedMarket(market_id="m1", token_id="tok-a")],
+        memory=MemoryStore(db_path=str(tmp_path / "b.db")),
+    )
+    rt.venues = venues
+    return rt
+
+
+class _Acct:
+    def __init__(self, cash, equity): self.cash_usd, self.equity_usd = cash, equity
+
+
+class _OkVenue:
+    async def account(self): return _Acct(0.247, 0.247)
+
+
+class _DeadVenue:
+    async def account(self): raise RuntimeError("gateway down")
+
+
+def test_balances_reports_live_venue(tmp_path):
+    rt = _rt_with_venues(tmp_path, {"polymarket_us": _OkVenue()})
+    body = TestClient(create_app(rt)).get("/api/balances").json()
+    assert body["polymarket_us"]["available"] is True
+    assert body["polymarket_us"]["cash_usd"] == 0.247
+
+
+def test_robinhood_is_always_reported_unavailable_with_a_reason(tmp_path):
+    """MCP is session-bound; this process cannot reach it. Never invent a number."""
+    rt = _rt_with_venues(tmp_path, {"polymarket_us": _OkVenue()})
+    body = TestClient(create_app(rt)).get("/api/balances").json()
+    assert body["robinhood"]["available"] is False
+    assert "MCP" in body["robinhood"]["reason"]
+
+
+def test_a_failing_venue_degrades_rather_than_500s(tmp_path):
+    rt = _rt_with_venues(tmp_path, {"polymarket_us": _DeadVenue()})
+    r = TestClient(create_app(rt)).get("/api/balances")
+    assert r.status_code == 200
+    assert r.json()["polymarket_us"]["available"] is False
+
+
+def test_no_venues_still_returns_robinhood_row(tmp_path):
+    rt = _rt_with_venues(tmp_path, {})
+    assert TestClient(create_app(rt)).get("/api/balances").json()["robinhood"]["available"] is False
+
+
+def test_header_markup_has_both_balance_pills():
+    from dashboard.server import _INDEX_HTML
+    assert 'id="bal-polymarket"' in _INDEX_HTML
+    assert 'id="bal-robinhood"' in _INDEX_HTML

@@ -72,6 +72,14 @@ def main() -> None:
         for warning in config.warnings:
             print(f"[dashboard]   warning: {warning}")
 
+    # Header balance strip. Best-effort: a venue that cannot be constructed
+    # (missing SDK, missing creds) simply does not appear.
+    try:
+        from trading.venues.polymarket_us import PolymarketUSVenue
+        runtime.venues["polymarket_us"] = PolymarketUSVenue()
+    except Exception as e:
+        print(f"[dashboard] Polymarket US venue unavailable: {type(e).__name__}")
+
     app = create_app(runtime)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
