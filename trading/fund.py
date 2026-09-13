@@ -100,6 +100,7 @@ class FundLoop:
     crypto_watchlist: Sequence[str] = ()
     kill_switch: Any = None
     position_book: Any = None
+    cost_ledger: Any = None                  # cache.cost_ledger.CostLedger
     scout: Any = None
     memory: Any = None
     postmortem: Any = None
@@ -227,6 +228,7 @@ class FundLoop:
             sentiment_notes=sentiment_notes,
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
             lessons=recent_lesson_lines(self.memory),
+            budget_notes=self._budget_notes(),
         )
 
         if not built.prescreen.worth_debating:
@@ -420,6 +422,29 @@ class FundLoop:
         except Exception as e:
             logger.exception("scout scan failed")
             return []
+
+    def _budget_notes(self) -> tuple[str, ...]:
+        """The burn-versus-earn line the seats read before every debate.
+
+        Deliberately not a hard budget cap: refusing to think because a counter
+        crossed a threshold is how a fund stops reacting to a market. It is
+        shown so the seats can be brief when brevity is free and thorough when
+        it is not.
+        """
+        ledger = getattr(self, "cost_ledger", None)
+        if ledger is None:
+            return ()
+        try:
+            earnings = {"paper": self._realized_usd(), "live": None}
+            brief = ledger.brief(ledger.summary(earnings=earnings))
+        except Exception:
+            return ()
+        return tuple(brief.splitlines()) if brief else ()
+
+    def _realized_usd(self) -> Optional[float]:
+        book = getattr(self, "position_book", None)
+        closed = list(getattr(book, "closed", []) or []) if book else []
+        return round(sum(c.get("realized_usd", 0.0) for c in closed), 4) if closed else None
 
     def _portfolio_notes(
         self, symbol: str, held: dict[str, Holding], moment: datetime

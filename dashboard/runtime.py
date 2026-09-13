@@ -598,6 +598,40 @@ class DashboardRuntime:
             "target": position.plan.target if position else None,
         }
 
+    # ---------- model spend ----------
+
+    def costs(self) -> dict:
+        """Burn versus earn, per trading mode.
+
+        Earnings are attributed the only way the books allow: paper mode owns
+        the realised P&L of simulated fills, and live mode's earnings stay
+        `null` until a live venue has actually executed. Reporting an untested
+        mode as $0.00 earned would read as break-even rather than as untried.
+        """
+        from cache.cost_ledger import CostLedger
+
+        ledger = getattr(getattr(self.fund_scheduler, "fund", None), "cost_ledger", None)
+        if ledger is None:
+            router = getattr(getattr(self.fund_scheduler, "llm_router", None), "ledger", None)
+            ledger = router or CostLedger(memory=self.memory)
+
+        live_traded = any(
+            (getattr(self._router(), "opened_at", {}) or {}).values()
+        ) if self._router() else False
+        paper_earned = self.record("robinhood")["realized_usd"] + \
+            self.record("polymarket_us")["realized_usd"]
+
+        summary = ledger.summary(earnings={
+            "paper": paper_earned,
+            "live": 0.0 if live_traded else None,
+        })
+        summary["recent"] = self.memory.recent_llm_costs(limit=12)
+        summary["note"] = (
+            "Live earnings are unknown until a live venue executes; the fund has "
+            "not been permitted to."
+        ) if not live_traded else None
+        return summary
+
     # ---------- venue engines ----------
     #
     # An "engine" is the connection to a venue: authenticated, reachable, and

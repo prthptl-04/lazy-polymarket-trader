@@ -154,3 +154,17 @@ export interface AgentMatrixRow {
   enforced: { applied: string[]; flagged: string[] };
   target: { required_hit_rate: number; gap: number | null; note: string };
 }
+
+export interface ModeSpend {
+  calls: number; input_tokens: number; output_tokens: number;
+  cache_read: number; cache_write: number;
+  burned_usd: number; earned_usd: number | null; net_usd: number | null;
+  cost_per_call_usd: number | null; earn_per_dollar: number | null;
+}
+export interface Costs {
+  modes: { paper: ModeSpend; live: ModeSpend };
+  total_burned_usd: number;
+  pricing: { input_per_mtok: number; output_per_mtok: number; source: string;
+             cache_read_multiplier: number; cache_write_multiplier: number };
+  note: string | null;
+}

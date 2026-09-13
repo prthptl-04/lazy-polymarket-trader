@@ -97,6 +97,8 @@ class LlmRouter:
     client: Any                                    # anthropic.Anthropic
     gemini: Any = None                             # GeminiBackend
     failover_at_remaining: float = FAILOVER_AT_REMAINING
+    # cache.cost_ledger.CostLedger; optional so tests and scripts need no wiring.
+    ledger: Any = None
     limits: RateLimitState = field(default_factory=RateLimitState)
 
     _forced_until: float = 0.0                     # on Gemini until this time
@@ -126,10 +128,12 @@ class LlmRouter:
     def create(self, *, system: str, messages: list[dict], **kwargs) -> tuple[str, str]:
         """Returns (text, provider). Never raises for provider reasons alone."""
         use_gemini, reason = self.should_use_gemini()
+        thesis_id = kwargs.pop("thesis_id", None)
 
         if not use_gemini:
             try:
-                text = self._anthropic(system=system, messages=messages, **kwargs)
+                text = self._anthropic(system=system, messages=messages,
+                                       thesis_id=thesis_id, **kwargs)
                 self._record("anthropic", "Anthropic has headroom")
                 return text, "anthropic"
             except Exception as e:
@@ -144,15 +148,20 @@ class LlmRouter:
 
         text = self.gemini.create(system=system, messages=messages, **kwargs)
         self._record("gemini", reason)
+        # Recorded at zero cost but NOT skipped: a month spent on the free tier
+        # should show as calls made, not as calls that never happened.
+        self._bill("gemini", getattr(self.gemini, "model", "gemini"), None, thesis_id)
         return text, "gemini"
 
     # ---------- internals ----------
 
-    def _anthropic(self, *, system: str, messages: list[dict], **kwargs) -> str:
+    def _anthropic(self, *, system: str, messages: list[dict],
+                   thesis_id: Optional[str] = None, **kwargs) -> str:
         """Call through cached_create, reading rate-limit headers on the way."""
         raw = getattr(self.client.messages, "with_raw_response", None)
         if raw is None:
             response = cached_create(self.client, system=system, messages=messages, **kwargs)
+            self._bill("anthropic", _anthropic_model(), response, thesis_id)
             return _text_of(response)
 
         # `with_raw_response` still routes through cached_create's kwargs shape,
@@ -160,6 +169,7 @@ class LlmRouter:
         shim = _RawShim(self.client)
         response = cached_create(shim, system=system, messages=messages, **kwargs)
         self._read_headers(shim.headers)
+        self._bill("anthropic", _anthropic_model(), response, thesis_id)
         return _text_of(response)
 
     def _read_headers(self, headers: Any) -> None:
@@ -173,6 +183,18 @@ class LlmRouter:
         reset = get("anthropic-ratelimit-tokens-reset") or get("anthropic-ratelimit-requests-reset")
         self.limits.reset_at = _epoch(reset)
         self.limits.last_seen = time.time()
+
+    def _bill(self, provider: str, model: str, response: Any,
+              thesis_id: Optional[str]) -> None:
+        """Charge the ledger. Never raises: a missing cost row is a gap in the
+        accounts, a raised exception here is a lost deliberation."""
+        if self.ledger is None:
+            return
+        try:
+            self.ledger.record(provider=provider, model=model, response=response,
+                               thesis_id=thesis_id)
+        except Exception:
+            logger.exception("could not record model spend")
 
     def _record(self, provider: str, reason: str) -> None:
         self._calls[provider] = self._calls.get(provider, 0) + 1
@@ -193,6 +215,7 @@ class LlmRouter:
             "failover_threshold_pct": round((1 - self.failover_at_remaining) * 100),
             "cooldown_seconds": round(cooling) if cooling else 0,
             "calls": dict(self._calls),
+            "spend": self.ledger.summary() if self.ledger is not None else None,
             "last_provider": self._last_provider,
             "limits": self.limits.as_dict(),
         }

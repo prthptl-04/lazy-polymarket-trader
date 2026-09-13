@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { AgentRoster } from "../components/AgentRoster";
+import { CostMatrix } from "../components/CostMatrix";
 import { AgentScorecard } from "../components/AgentScorecard";
 import { EngineButton } from "../components/EngineButton";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
@@ -151,6 +152,9 @@ export function Overview() {
           </>
         )}
       </GlassCard>
+
+      {/* ---------------- model spend ---------------- */}
+      <CostMatrix />
 
       {/* ---------------- agents ---------------- */}
       <AgentScorecard />

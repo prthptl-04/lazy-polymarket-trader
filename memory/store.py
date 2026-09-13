@@ -232,6 +232,43 @@ class MemoryStore:
             )
         self._conn.commit()
 
+    # ---------- model spend ----------
+
+    def record_llm_cost(self, *, provider: str, model: str | None, mode: str,
+                        thesis_id: str | None = None, input_tokens: int = 0,
+                        output_tokens: int = 0, cache_read: int = 0,
+                        cache_write: int = 0, cost_usd: float = 0.0) -> None:
+        self._conn.execute(
+            """INSERT INTO llm_costs (provider, model, mode, thesis_id, input_tokens,
+                                      output_tokens, cache_read, cache_write,
+                                      cost_usd, created)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (provider, model, mode, thesis_id, input_tokens, output_tokens,
+             cache_read, cache_write, cost_usd, time.time()),
+        )
+        self._conn.commit()
+
+    def llm_cost_summary(self) -> dict[str, dict]:
+        """Totals per mode. Grouped in SQL because this is read on every
+        deliberation and the row count only ever grows."""
+        cols = ["mode", "calls", "input_tokens", "output_tokens",
+                "cache_read", "cache_write", "cost_usd"]
+        rows = self._conn.execute(
+            """SELECT mode, COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                      SUM(cache_read), SUM(cache_write), SUM(cost_usd)
+               FROM llm_costs GROUP BY mode"""
+        ).fetchall()
+        return {r[0]: dict(zip(cols, r)) for r in rows}
+
+    def recent_llm_costs(self, limit: int = 50) -> list[dict]:
+        cols = ["id", "provider", "model", "mode", "thesis_id", "input_tokens",
+                "output_tokens", "cache_read", "cache_write", "cost_usd", "created"]
+        rows = self._conn.execute(
+            f"SELECT {', '.join(cols)} FROM llm_costs ORDER BY created DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(zip(cols, r)) for r in rows]
+
     def get_deliberation(self, thesis_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT thesis_id, symbol, asset_class, status, signal, confidence, "

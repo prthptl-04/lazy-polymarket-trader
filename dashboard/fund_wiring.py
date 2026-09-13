@@ -23,6 +23,7 @@ import os
 from typing import Any, Optional
 
 from cache.gemini_backend import GeminiBackend
+from cache.cost_ledger import CostLedger
 from cache.llm_router import LlmRouter
 from roundtable.engine import RoundTable
 from roundtable.postmortem import Postmortem
@@ -102,7 +103,11 @@ def build_fund(
     # Named distinctly: an earlier version called both of these `router`,
     # so the venue router silently replaced the LLM router and the round
     # table was handed the wrong object entirely.
-    llm_router = LlmRouter(client=client, gemini=gemini)
+    # The ledger asks the venue router which mode is live at record time, so a
+    # flip is picked up by the next model call without threading an argument
+    # through the round table.
+    cost_ledger = CostLedger(memory=memory)
+    llm_router = LlmRouter(client=client, gemini=gemini, ledger=cost_ledger)
     if not gemini.available:
         logger.info("Gemini failover not configured (no GEMINI_API_KEY, no CLI)")
 
@@ -142,6 +147,11 @@ def build_fund(
 
     router = VenueRouter(adapters=adapters, pdt=pdt,
                          kill_switch=kill_switch, live_gate=live_gate)
+    cost_ledger.mode_provider = lambda: (
+        "live" if any(router.mode_of(a) == "live" and router._live_is_permitted(a)
+                      for a in router.adapters)
+        else "paper"
+    )
     # Live starts OFF. A venue that arms itself the moment it is plugged in is
     # not a switch, and the operator should be the one to turn it on.
     router.set_mode_enabled("robinhood", "live", False)
@@ -161,6 +171,7 @@ def build_fund(
     fund = FundLoop(
         router=router,
         position_book=position_book,
+        cost_ledger=cost_ledger,
         pipeline=pipeline,
         round_table=RoundTable(client=client, router=llm_router, memory=memory),
         data=build_data_provider(cfg, trading_venue),

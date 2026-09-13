@@ -129,3 +129,23 @@ CREATE TABLE IF NOT EXISTS thesis_outcomes (
 
 CREATE INDEX IF NOT EXISTS idx_outcomes_symbol ON thesis_outcomes (symbol);
 CREATE INDEX IF NOT EXISTS idx_outcomes_resolved ON thesis_outcomes (resolved_at);
+
+-- Model spend, tagged with the trading mode that caused it. Without the tag the
+-- fund cannot answer the only question that matters about its own token bill:
+-- is the paper engine burning credits it has not yet earned the right to spend?
+CREATE TABLE IF NOT EXISTS llm_costs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider      TEXT NOT NULL,        -- anthropic | gemini
+    model         TEXT,
+    mode          TEXT NOT NULL,        -- paper | live
+    thesis_id     TEXT,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read    INTEGER NOT NULL DEFAULT 0,
+    cache_write   INTEGER NOT NULL DEFAULT 0,
+    cost_usd      REAL NOT NULL DEFAULT 0,
+    created       REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_costs_mode ON llm_costs (mode);
+CREATE INDEX IF NOT EXISTS idx_llm_costs_created ON llm_costs (created);

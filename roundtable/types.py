@@ -53,6 +53,10 @@ class Candidate:
     portfolio_notes: tuple[str, ...] = ()
     corroboration_notes: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
+    # What the committee has spent and earned. In the evidence block rather
+    # than a system prompt, same as lessons: the system prompt carries the
+    # cache tag (rule #2) and must stay byte-identical between deliberations.
+    budget_notes: tuple[str, ...] = ()
 
     @property
     def r_multiple(self) -> Optional[float]:
@@ -89,6 +93,7 @@ class Candidate:
             ("PORTFOLIO", self.portfolio_notes),
             ("CORROBORATION", self.corroboration_notes),
             ("LESSONS FROM PAST LOSSES (apply these)", self.lessons),
+            ("WHAT THIS COMMITTEE COSTS TO RUN", self.budget_notes),
         ):
             if notes:
                 lines.append(f"\n{header}:")
