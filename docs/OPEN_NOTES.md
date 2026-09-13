@@ -10,26 +10,39 @@
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. Robinhood MCP tool names are unverified — READY TO RESOLVE
-Server registered and **authenticated** (2026-09-12): `claude mcp list` shows
-robinhood-trading ✓ Connected, project-scoped in `~/.claude.json`.
+### 1. Data architecture — VERIFIED 2026-09-12, but MCP ≠ daemon
+Both MCP servers authenticated and enumerated. Ground truth:
 
-**Next session's first task** — the tools load at session start, so a session
-begun after authentication will have them:
+| Need | Source | Status |
+|---|---|---|
+| Equity bars | Robinhood `get_equity_historicals` / Massive `/v2/aggs` | ✅ both |
+| **Crypto bars** | Massive `/v2/aggs/ticker/X:BTCUSD/...` | ✅ **entitled on the $29 stocks plan** |
+| market_cap, shares_outstanding | Robinhood `get_equity_fundamentals` | ✅ free |
+| Balance sheet (Altman + Piotroski) | Robinhood `get_sec_filing_facts` | ✅ free, 2 yrs per 10-K |
+| Massive `/stocks/financials/v1/*` | — | ❌ **NOT_ENTITLED** on the $29 plan |
 
-1. `ToolSearch` for the robinhood tools; list the real names + parameters.
-2. Correct `trading/venues/robinhood.py::TOOL_NAMES` against ground truth.
-3. Answer three questions from the tool surface:
-   - Do crypto endpoints exist? (decides whether the weekend rotation is real)
-   - Are historical bars available? (**if yes, the Massive subscription may be
-     unnecessary — check before the user pays for anything**)
-   - Are fundamentals available? (Altman/Piotroski inputs)
-4. Update `SUPPORTED` and the adapter's payload mapping to match.
+Verified Altman/Piotroski inputs all present in one 10-K call: Assets,
+Liabilities, AssetsCurrent, LiabilitiesCurrent,
+RetainedEarningsAccumulatedDeficit, OperatingIncomeLoss (EBIT), NetIncomeLoss,
+NetCashProvidedByUsedInOperatingActivities, LongTermDebtNoncurrent — **current
+AND prior year**, which is what Piotroski needs. Revenue/GrossProfit need the
+company-specific tag (Apple uses
+RevenueFromContractWithCustomerExcludingAssessedTax, not Revenues).
 
-**READ-ONLY ONLY.** This is a live brokerage account. Enumerate tools, and call
-only account/positions/quote reads. Do NOT place, modify or cancel any order —
-not as a test, not to verify the integration, not for one share — without the
-user explicitly naming symbol and size.
+**No further spend needed.** Crypto works; fundamentals are free via SEC facts.
+
+**THE CATCH:** all Robinhood access is MCP, which is bound to a Claude Code
+session. The fund daemon is a separate process and **cannot reach it**. So:
+- Bars for the daemon → Massive REST + `MASSIVE_API_KEY` (entitled). Build
+  `MassiveProvider` next.
+- Fundamentals for the daemon → no path yet. Options: (a) SEC EDGAR's free
+  public XBRL API (`data.sec.gov`, no key) routed through the rule-#8 trust
+  gate, or (b) Massive's $29 fundamentals add-on. (a) is free; prefer it.
+- Robinhood MCP stays useful for interactive research in-session, and is how
+  order placement will work if the daemon question (blocker #4) resolves that way.
+
+Agentic account confirmed: `854969722` (nickname "Agentic",
+`agentic_allowed: true`, limited_margin), linked crypto account present.
 
 ### 2. PositionBook is not wired into `build_fund` — REVISIT THIS
 `FundLoop` enforces stops only when a `position_book` is attached.
@@ -42,7 +55,20 @@ buried. User asked to revisit this explicitly (2026-09-12).
 
 **Do not run live — paper or otherwise — until this is closed.**
 
-### 3. MCP auth is desktop-interactive OAuth
+### 3. TODO — finish Polymarket signup (user)
+`POLYMARKET_PRIVATE_KEY` is set but `POLYMARKET_FUNDER_ADDRESS` is not, and
+`signature_type=3` requires it — so every signed Polymarket call raises.
+Polymarket is venue #3 and is currently non-functional for anything signed.
+
+Also: the key in `.env` is 88 chars. An Ethereum EOA key is 64 hex chars, so
+that is likely a different credential (base64? an API secret?). Verify before
+relying on it.
+
+To finish: complete Polymarket signup, fund the deposit wallet, put the
+**deposit wallet address** in `POLYMARKET_FUNDER_ADDRESS`, and confirm the
+private key is the 64-hex signer. Not blocking the equity/crypto fund.
+
+### 4. MCP auth is desktop-interactive OAuth
 Robinhood requires a desktop browser to authenticate and open the agentic
 account. A 24/7 daemon cannot do this headlessly. Keeping the session alive
 across restarts is unsolved and is the real blocker on unattended autonomy.
