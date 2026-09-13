@@ -33,7 +33,7 @@ export function Overview() {
       <ActiveTradeBanner trade={active} pct={bg.pct} />
 
       {/* ---------------- dual market feed ---------------- */}
-      <GlassCard liquid className="md:col-span-2 xl:col-span-3 p-5">
+      <GlassCard liquid className="col-span-full p-5">
         <PanelTitle right={<Pill>{fund?.session ?? "—"}</Pill>}>
           Dual market · live feed
         </PanelTitle>
@@ -45,7 +45,7 @@ export function Overview() {
             </div>
             <EngineButton venue="polymarket_us" label="Polymarket Engine"
                           state={engineData?.engines?.polymarket_us} onDone={refreshEngines} />
-            <EquityArea values={curve} colour="#2d52f3" />
+            <EquityArea values={curve} colour="#2d52f3" height={320} />
           </div>
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -54,7 +54,7 @@ export function Overview() {
             </div>
             <EngineButton venue="robinhood" label="Robinhood Engine"
                           state={engineData?.engines?.robinhood} onDone={refreshEngines} />
-            <EquityArea values={curve} colour="#00c805" />
+            <EquityArea values={curve} colour="#00c805" height={320} />
           </div>
         </div>
 
@@ -70,38 +70,6 @@ export function Overview() {
           <Stat label="Cycles run" value={fund?.metrics?.cycles ?? 0}
                 sub={fund?.metrics?.submitted ? `${fund.metrics.submitted} orders` : "no orders yet"} />
         </div>
-      </GlassCard>
-
-      {/* ---------------- gates ---------------- */}
-      <GlassCard className="p-5">
-        <PanelTitle>Gates · allowed actions</PanelTitle>
-        {gate ? (
-          <>
-            <div className="space-y-2.5">
-              {Object.entries(gate.checks).map(([k, v]) => (
-                <div key={k} className="flex items-center gap-2.5">
-                  <DrawnCheck checked={v} />
-                  <span className={`text-[12px] ${v ? "text-white/75" : "text-white/40"}`}>
-                    {LABELS[k] ?? k}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 pt-3 border-t border-white/[0.07]">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-white/40">Graded paper trades</span>
-                <span className="font-mono text-white/80">
-                  {gate.graded_paper_trades} / {gate.required_paper_trades}
-                </span>
-              </div>
-              {!gate.live_possible && (
-                <div className="text-[11px] text-amber-400/90 mt-2.5 leading-relaxed">
-                  Live trading blocked. The fund is paper-only until every box is ticked.
-                </div>
-              )}
-            </div>
-          </>
-        ) : <Empty title="No fund attached." hint="Set ANTHROPIC_API_KEY and a watchlist, then restart." />}
       </GlassCard>
 
       {/* ---------------- wallets ---------------- */}
@@ -121,6 +89,40 @@ export function Overview() {
             note={fund?.kill_switch && !fund.kill_switch.armed ? "kill-switch unarmed" : undefined}
             tone={fund?.kill_switch?.tripped ? "text-red-400" : undefined} />
         </div>
+      </GlassCard>
+
+      {/* ---------------- gates ----------------
+          Under the wallets rather than beside the charts: it is a status strip,
+          not a panel that needs a column, and taking its column back is what
+          gives the graphs the width. Laid out horizontally for the same
+          reason. */}
+      <GlassCard className="col-span-full p-5">
+        <PanelTitle right={gate
+          ? <Pill tone={gate.live_possible ? "good" : "warn"}>
+              {gate.graded_paper_trades} / {gate.required_paper_trades} graded
+            </Pill>
+          : undefined}>
+          Gates · allowed actions
+        </PanelTitle>
+        {gate ? (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-5 gap-y-3">
+              {Object.entries(gate.checks).map(([k, v]) => (
+                <div key={k} className="flex items-center gap-2.5">
+                  <DrawnCheck checked={v} />
+                  <span className={`text-[12px] leading-tight ${v ? "text-white/75" : "text-white/40"}`}>
+                    {LABELS[k] ?? k}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {!gate.live_possible && (
+              <div className="text-[11px] text-amber-400/90 mt-4 pt-3 border-t border-white/[0.07]">
+                Live trading blocked. The fund is paper-only until every box is ticked.
+              </div>
+            )}
+          </>
+        ) : <Empty title="No fund attached." hint="Set ANTHROPIC_API_KEY and a watchlist, then restart." />}
       </GlassCard>
 
       {/* ---------------- agents ---------------- */}
