@@ -80,6 +80,7 @@ class RobinhoodVenue:
 
     session: Any                                  # McpSession
     name: str = "robinhood"
+    is_live: bool = True
     supported: tuple[AssetClass, ...] = ("equity", "crypto")
     _account: Optional[RobinhoodAccount] = field(default=None, init=False)
 

@@ -205,6 +205,10 @@ class FundScheduler:
                 "last_cycle_at": self.metrics.last_cycle_at,
             },
             "kill_switch": kill_switch.status(moment) if kill_switch else None,
+            "router_live_gate": (
+                router.live_gate.status()
+                if (router := getattr(getattr(self, "fund", None), "router", None))
+                and getattr(router, "live_gate", None) else None),
             "pdt": pdt.status(moment) if pdt else None,
             "last_cycle": self.last_report.summary() if self.last_report else None,
         }

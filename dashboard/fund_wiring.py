@@ -30,6 +30,7 @@ from trading.fund import FundLoop
 from trading.fund_config import FundConfig, load_config
 from trading.fund_scheduler import FundScheduler
 from trading.kill_switch import DailyLossKillSwitch
+from trading.live_gate import LiveTradingGate
 from trading.market_data import StaticProvider, VenueQuoteProvider
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
@@ -108,7 +109,12 @@ def build_fund(
 
     kill_switch = DailyLossKillSwitch(max_daily_loss_usd=cfg.max_daily_loss_usd)
     pdt = DayTradeTracker(account_equity_usd=cfg.account_equity_usd)
-    router = VenueRouter(adapters=[trading_venue], pdt=pdt, kill_switch=kill_switch)
+    # Rule #13 in the fund's own path. Without this a live venue would trade
+    # for real with PAPER_TRADING=true having no effect at all.
+    live_gate = LiveTradingGate(memory=memory, criteria=criteria,
+                                bankroll_usd=cfg.bankroll_usd)
+    router = VenueRouter(adapters=[trading_venue], pdt=pdt,
+                         kill_switch=kill_switch, live_gate=live_gate)
 
     pipeline = ThesisPipeline(
         router=router,

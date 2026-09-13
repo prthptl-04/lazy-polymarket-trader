@@ -222,6 +222,11 @@ _VENUES_BODY = """
   <div class="panel"><h2>Gates &mdash; what is allowed right now</h2><div id="gates"></div></div>
   <div class="panel"><h2>Seat calibration</h2><div id="score"></div></div>
 </div>
+
+<div class="panel" style="margin-top:16px">
+  <h2>Live-trading checklist &mdash; CLAUDE.md #13</h2>
+  <div id="livegate"></div>
+</div>
 """
 
 _VENUES_JS = """
@@ -274,6 +279,31 @@ async function refresh(){
     $('gates').innerHTML=h;
   } else {
     $('gates').innerHTML='<div class="empty">No fund attached.</div>';
+  }
+
+  const lg = fund && fund.attached && fund.router_live_gate;
+  if(lg){
+    const label = {
+      env_paper_trading_false: 'PAPER_TRADING=false in .env',
+      venue_authenticated: 'venue authenticated',
+      risk_caps_live_appropriate: 'risk caps sized to the bankroll',
+      paper_trades_recorded: 'graded paper trades on record',
+      operator_approval_lesson: 'operator approval recorded',
+    };
+    paint('livegate',
+      '<div class="' + (lg.live_possible ? 'sub' : 'warn') + '">'
+      + (lg.live_possible
+          ? 'All conditions met &mdash; a live venue would be permitted to trade.'
+          : 'LIVE TRADING BLOCKED. The fund is paper-only until every box is ticked.')
+      + '</div><table>'
+      + Object.entries(lg.checks).map(([k,v])=>
+          '<tr><td>'+(label[k]||k)+'</td><td class="num '+(v?'up':'down')+'">'
+          +(v?'yes':'no')+'</td></tr>').join('')
+      + '<tr><td>graded paper trades</td><td class="num">'
+      + lg.graded_paper_trades + ' of ' + lg.required_paper_trades
+      + '</td></tr></table>');
+  } else {
+    paint('livegate', '<div class="empty">No fund attached.</div>');
   }
 
   if(score){

@@ -367,6 +367,31 @@ scraper:
   `roundtable.corroboration.compare` - a figure lifted off a web page is a
   rumour with a citation.
 
-## 21. Memory
+## 21. The live gate lives in the FUND path (2026-09-12)
+
+Rules #4 and #13 were enforced only by `trading/execution.py::Executor`, which
+belonged to the removed Polymarket CLOB path. The fund goes
+`ThesisPipeline -> VenueRouter -> adapter`, so `PAPER_TRADING=true` had **no
+effect on it at all** — attaching a real venue would have placed real orders
+with no gate.
+
+`trading/live_gate.LiveTradingGate` is now the FIRST gate in `VenueRouter`, and
+it applies to closes as well as opens: "it's an exit" is not a bypass for the
+rule-#13 checklist.
+
+- A **paper venue is always allowed** — blocking it would make the 50-paper-trade
+  condition unreachable.
+- An **unknown adapter is treated as LIVE**. Assuming a new venue is harmless is
+  how real money moves by accident. Paper venues declare `is_live = False`.
+- It **refuses by default**. Missing env, missing memory, an exception while
+  counting graded trades — every failure lands on "paper only", because wrongly
+  refusing a live trade costs an opportunity and wrongly allowing one costs
+  money.
+- A `max_position_usd` larger than the bankroll is not a cap, and an unknown
+  bankroll refuses rather than assuming.
+
+The checklist is visible on the dashboard's Venues page.
+
+## 22. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.

@@ -48,6 +48,7 @@ class PolymarketUSVenue:
 
     client: Any = None
     name: str = "polymarket_us"
+    is_live: bool = True
     supported: tuple[AssetClass, ...] = ("prediction",)
 
     def __post_init__(self) -> None:

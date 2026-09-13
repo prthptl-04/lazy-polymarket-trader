@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional
 
 from trading.kill_switch import DailyLossKillSwitch
+from trading.live_gate import LiveTradingGate
 from trading.pdt import DayTradeTracker
 from trading.sessions import Session, session_at
 from trading.venues.base import (
@@ -53,6 +54,7 @@ class VenueRouter:
     adapters: list[VenueAdapter] = field(default_factory=list)
     pdt: Optional[DayTradeTracker] = None
     kill_switch: Optional[DailyLossKillSwitch] = None
+    live_gate: Optional[LiveTradingGate] = None
     # Per-venue trading sessions, toggled from the dashboard. Absent means
     # enabled: a venue you registered but never touched should work.
     enabled: dict[str, bool] = field(default_factory=dict)
@@ -102,6 +104,18 @@ class VenueRouter:
                 allowed=False, gate="venue",
                 reason=f"no registered venue supports {request.asset_class!r}",
             )
+
+        # Rule #13 comes FIRST and applies to exits too. Every other gate is
+        # about whether a trade is wise; this one is about whether real money
+        # may move at all. An unmet checklist must not be bypassable by
+        # labelling an order a "close".
+        if self.live_gate is not None:
+            verdict = self.live_gate.evaluate(adapter)
+            if not verdict.allowed:
+                return RouteDecision(
+                    allowed=False, gate="live_trading", venue_name=adapter.name,
+                    reason=verdict.reason,
+                )
 
         # Venue session. Like the kill-switch, this NEVER blocks an exit —
         # switching a venue off must not trap the positions already open there.
@@ -224,4 +238,5 @@ class VenueRouter:
             "sessions": {a.name: self.is_enabled(a.name) for a in self.adapters},
             "pdt": self.pdt.status(moment) if self.pdt else None,
             "kill_switch": self.kill_switch.status(moment) if self.kill_switch else None,
+            "live_gate": self.live_gate.status() if self.live_gate else None,
         }

@@ -39,6 +39,8 @@ class PaperVenue:
     """In-memory broker. Deterministic, so tests assert exact fills."""
 
     name: str = "paper"
+    # Read by trading.live_gate: a paper venue cannot spend money.
+    is_live: bool = False
     starting_cash_usd: float = 10_000.0
     slippage_bps: int = DEFAULT_SLIPPAGE_BPS
     quote_source: Optional[QuoteSource] = None
