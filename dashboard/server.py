@@ -136,6 +136,24 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
             return JSONResponse(status_code=404, content=result)
         return result
 
+    @app.get("/api/venue-modes")
+    def api_venue_modes() -> dict:
+        return {"modes": runtime.venue_modes()}
+
+    @app.post("/api/venue-sessions/{name}/{mode}/{action}")
+    def api_set_venue_mode(name: str, mode: str, action: str) -> Any:
+        if action not in ("start", "stop"):
+            return JSONResponse(status_code=400,
+                                content={"error": "action must be start or stop"})
+        result = runtime.set_venue_mode(name, mode, action == "start")
+        if not result.get("ok"):
+            return JSONResponse(status_code=404, content=result)
+        return result
+
+    @app.get("/api/roundtable/thread")
+    def api_roundtable_thread(limit: int = 6) -> list[dict]:
+        return runtime.roundtable_thread(limit=max(1, min(30, limit)))
+
     @app.get("/api/record")
     def api_record() -> dict:
         return runtime.record()

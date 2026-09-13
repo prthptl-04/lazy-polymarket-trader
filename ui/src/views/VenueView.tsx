@@ -4,6 +4,7 @@ import { AgentDialogue } from "../components/AgentDialogue";
 import { LiveFeed } from "../components/LiveFeed";
 import { MarketStance } from "../components/MarketStance";
 import { RoundTableFeed } from "../components/RoundTableFeed";
+import { RoundTableThread } from "../components/RoundTableThread";
 import { TradeHistory } from "../components/TradeHistory";
 import { EquityArea, Sparkline, type Marker } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
@@ -11,8 +12,8 @@ import { AgentRoundTable } from "../components/AgentRoundTable";
 import { usePolymarketTheme } from "../lib/polymarketTheme";
 import { RH_GOLD as GOLD, RH_GOLD_DEEP as GOLD_DEEP, useRobinhoodTheme } from "../lib/robinhoodTheme";
 import {
-  post, usePoll, type Balances, type FundStatus, type PaperProgress,
-  type Position, type Record_,
+  post, usePoll, type Balances, type FundStatus, type ModeState,
+  type PaperProgress, type Position, type Record_, type VenueModes,
 } from "../lib/api";
 
 type Venue = "polymarket_us" | "robinhood";
@@ -44,9 +45,27 @@ export function VenueView({ venue }: { venue: Venue }) {
   const { data: positions } = usePoll<Position[]>("/api/positions");
   const { data: sessions, refresh: refreshSessions } =
     usePoll<{ sessions: Record<string, boolean> }>("/api/venue-sessions", 8000);
+  const { data: modeData, refresh: refreshModes } =
+    usePoll<{ modes: VenueModes }>("/api/venue-modes", 8000);
 
   const wallet = bal?.[venue];
   const on = sessions?.sessions?.[venue] !== false;
+  // Modes are keyed by ADAPTER name. The venue key exists in that map even when
+  // no adapter is registered under it — execution currently sits on the shared
+  // paper adapter — so the key is chosen by whether an adapter is actually
+  // attached, not by whether the entry exists. Picking the empty entry would
+  // disable a switch that has something to drive.
+  const modes = modeData?.modes ?? {};
+  const wired = (k?: string) =>
+    !!k && (!!modes[k]?.paper?.attached || !!modes[k]?.live?.attached);
+  const modeKey = wired(venue) ? venue : Object.keys(modes).find(wired) ?? venue;
+  const liveMode: ModeState | undefined = modeKey ? modes[modeKey]?.live : undefined;
+  const paperMode: ModeState | undefined = modeKey ? modes[modeKey]?.paper : undefined;
+  const setMode = async (mode: "paper" | "live", start: boolean) => {
+    if (!modeKey) return;
+    await post(`/api/venue-sessions/${modeKey}/${mode}/${start ? "start" : "stop"}`);
+    void refreshModes();
+  };
   const curve = rec?.equity_curve ?? [];
   const paperCurve = paper?.equity_curve ?? [];
   const mine = (positions ?? []).filter((p) =>
@@ -105,10 +124,13 @@ export function VenueView({ venue }: { venue: Venue }) {
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-0">
         {/* ================= LEFT — live (75%) ================= */}
         <div className="xl:col-span-3 space-y-5 xl:pr-6">
-          <div className="flex items-center gap-2 px-1">
+          <div className="flex items-center gap-3 px-1">
             <span className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-semibold">
               Live
             </span>
+            <ModeToggle mode="live" state={liveMode} venue={modeKey}
+                        gateOpen={!!fund?.router_live_gate?.live_possible}
+                        onSet={(v) => setMode("live", v)} />
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
 
@@ -153,6 +175,10 @@ export function VenueView({ venue }: { venue: Venue }) {
 
           <LiveFeed venue={venue} title={`${title} live data feed`} />
 
+          <RoundTableThread title={`${title} live round table · discussion`} />
+
+          <RoundTableFeed title="Live agent round table" max={300} />
+
           <GlassCard className="p-5" inert>
             <PanelTitle right={<Pill>{mine.length} open</Pill>}>Positions &amp; exit plan</PanelTitle>
             {mine.length ? (
@@ -194,10 +220,12 @@ export function VenueView({ venue }: { venue: Venue }) {
         {/* ================= RIGHT — paper (25%) =================
             The border IS the differentiation line the split exists for. */}
         <div className="xl:col-span-1 space-y-5 xl:pl-6 xl:border-l border-white/[0.09] mt-5 xl:mt-0">
-          <div className="flex items-center gap-2 px-1">
+          <div className="flex items-center gap-3 px-1">
             <span className="text-[10px] uppercase tracking-[0.16em] text-amber-400/70 font-semibold">
               Paper
             </span>
+            <ModeToggle mode="paper" state={paperMode} venue={modeKey}
+                        gateOpen onSet={(v) => setMode("paper", v)} />
             <span className="h-px flex-1 bg-white/[0.09]" />
           </div>
 
@@ -254,8 +282,6 @@ export function VenueView({ venue }: { venue: Venue }) {
 
           <AgentDialogue title="Paper round table · live deliberation" />
 
-          <RoundTableFeed title="Live agent round table" max={420} />
-
           <GlassCard className={`p-4 ${fund?.router_live_gate?.live_possible ? "" : "gate-locked"}`} inert>
             <PanelTitle right={fund?.router_live_gate?.live_possible
               ? <Pill tone="good">live possible</Pill>
@@ -299,6 +325,61 @@ const LABELS: Record<string, string> = {
   paper_trades_recorded: "Paper trades on record",
   operator_approval_lesson: "Operator approval",
 };
+
+/**
+ * GO / STOP for one side of one venue.
+ *
+ * `attached: false` means no adapter of that mode is registered — execution
+ * currently sits on the paper adapter, so the live switch has nothing to act
+ * on. It says so rather than offering a button that promises live trading the
+ * process cannot do. A closed rule-#13 gate is shown the same way: the switch
+ * is a permission, never an override.
+ */
+function ModeToggle({ mode, state, venue, gateOpen, onSet }: {
+  mode: "paper" | "live";
+  state?: ModeState;
+  venue?: string;
+  gateOpen: boolean;
+  onSet: (on: boolean) => void;
+}) {
+  const usable = !!state?.attached && gateOpen && !!venue;
+  const on = state?.on !== false;
+  const why = !venue ? "no venue attached"
+    : !state?.attached ? `no ${mode} venue attached`
+    : !gateOpen ? "rule-#13 gate closed" : "";
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`flex items-center gap-1 p-0.5 rounded-full border border-white/12
+                       bg-white/[0.05] ${usable ? "" : "opacity-45"}`}>
+        {(["GO", "STOP"] as const).map((k) => {
+          const active = (k === "GO") === on;
+          return (
+            <button key={k} type="button" disabled={!usable}
+              aria-pressed={active}
+              aria-label={`${mode} trading ${k}`}
+              onClick={() => onSet(k === "GO")}
+              className="relative px-3 py-[3px] text-[10px] font-bold tracking-wide
+                         disabled:cursor-not-allowed">
+              {active && (
+                <motion.span layoutId={`mode-${mode}-${venue ?? "none"}`}
+                  className={`absolute inset-0 rounded-full ${
+                    k === "GO" ? "bg-hood-green/25 border border-hood-green/50"
+                               : "bg-red-500/20 border border-red-400/40"}`}
+                  transition={{ type: "spring", stiffness: 480, damping: 36 }} />
+              )}
+              <span className={`relative z-10 ${
+                active ? (k === "GO" ? "text-hood-green" : "text-red-400") : "text-white/35"}`}>
+                {k}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {why && <span className="text-[9.5px] text-white/30">{why}</span>}
+    </div>
+  );
+}
 
 function Readout({ label, value, tone = "text-white/70" }: {
   label: string; value: string; tone?: string;

@@ -123,3 +123,14 @@ export interface LatestDebate {
   consensus: { signal?: string; confidence?: number; summary?: string;
                dissent?: string; transcript?: string };
 }
+
+export interface ThreadMessage {
+  thesis_id: string; symbol: string; created: number | null;
+  seat_id: string; seat_name: string; signal: string | null;
+  confidence: number | null; reasoning: string; concerns: string[];
+  failed: boolean; error: string | null; role: "seat" | "chair";
+}
+export interface VenueModes {
+  [venue: string]: { paper: ModeState; live: ModeState };
+}
+export interface ModeState { on: boolean; attached: boolean }

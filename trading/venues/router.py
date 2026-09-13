@@ -44,7 +44,8 @@ class RouteDecision:
     allowed: bool
     reason: str
     venue_name: Optional[str] = None
-    gate: Optional[str] = None      # which gate refused: venue | session | pdt | spread
+    gate: Optional[str] = None      # venue | live_trading | venue_session |
+                                    # mode_session | kill_switch | session | pdt | spread
 
 
 @dataclass
@@ -58,6 +59,11 @@ class VenueRouter:
     # Per-venue trading sessions, toggled from the dashboard. Absent means
     # enabled: a venue you registered but never touched should work.
     enabled: dict[str, bool] = field(default_factory=dict)
+    # Per-MODE sessions, keyed "<venue>:<paper|live>". The venue switch above is
+    # the master; this says which side of the house may open positions. They are
+    # separate because "stop paper while I watch a live position" and "stop this
+    # venue entirely" are different instructions.
+    modes: dict[str, bool] = field(default_factory=dict)
     max_extended_hours_spread_bps: int = MAX_EXTENDED_HOURS_SPREAD_BPS
     # Venue preference per asset class; first supporting adapter wins otherwise.
     preferences: dict[str, str] = field(default_factory=dict)
@@ -76,6 +82,29 @@ class VenueRouter:
         """Switch one venue's trading on or off. Returns the new state."""
         self.enabled[name] = bool(on)
         return self.enabled[name]
+
+    @staticmethod
+    def mode_of(adapter: VenueAdapter) -> str:
+        """paper or live, asked of the adapter rather than assumed.
+
+        Mirrors trading.live_gate: an adapter that does not declare itself paper
+        is treated as live, because assuming a new venue is harmless is how real
+        money moves by accident.
+        """
+        explicit = getattr(adapter, "is_live", None)
+        if explicit is not None:
+            return "live" if explicit else "paper"
+        return "paper" if getattr(adapter, "name", "") == "paper" else "live"
+
+    def is_mode_enabled(self, name: str, mode: str) -> bool:
+        return self.modes.get(f"{name}:{mode}", True)
+
+    def set_mode_enabled(self, name: str, mode: str, on: bool) -> bool:
+        """Switch one venue's paper or live side. Returns the new state."""
+        if mode not in ("paper", "live"):
+            raise ValueError(f"mode must be paper or live, got {mode!r}")
+        self.modes[f"{name}:{mode}"] = bool(on)
+        return self.modes[f"{name}:{mode}"]
 
     def venue_for(self, asset_class: AssetClass) -> Optional[VenueAdapter]:
         preferred = self.preferences.get(asset_class)
@@ -124,6 +153,18 @@ class VenueRouter:
                 allowed=False, gate="venue_session", venue_name=adapter.name,
                 reason=(f"{adapter.name} trading is switched OFF. Exits still "
                         "allowed; turn it on from the dashboard to open new positions."),
+            )
+
+        # The mode switch, same exemption as the venue switch: switching paper
+        # off must not strand a paper position, and switching live off must not
+        # strand a live one.
+        mode = self.mode_of(adapter)
+        if not self.is_mode_enabled(adapter.name, mode) and not request.is_close:
+            return RouteDecision(
+                allowed=False, gate="mode_session", venue_name=adapter.name,
+                reason=(f"{mode} trading is switched OFF for {adapter.name}. Exits "
+                        "still allowed; turn it on from the dashboard to open new "
+                        "positions."),
             )
 
         # Daily loss limit comes first: once the fund is done for the day it is
@@ -236,6 +277,10 @@ class VenueRouter:
             "extended_hours": session.is_extended_hours,
             "venues": [a.name for a in self.adapters],
             "sessions": {a.name: self.is_enabled(a.name) for a in self.adapters},
+            "modes": {
+                f"{a.name}:{self.mode_of(a)}": self.is_mode_enabled(a.name, self.mode_of(a))
+                for a in self.adapters
+            },
             "pdt": self.pdt.status(moment) if self.pdt else None,
             "kill_switch": self.kill_switch.status(moment) if self.kill_switch else None,
             "live_gate": self.live_gate.status() if self.live_gate else None,

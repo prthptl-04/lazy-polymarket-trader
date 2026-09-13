@@ -217,6 +217,7 @@ class DashboardRuntime:
     # ---------- venue sessions ----------
 
     SESSION_KEY = "venue_sessions"
+    MODE_KEY = "venue_mode_sessions"
 
     def venue_sessions(self) -> dict[str, bool]:
         """Which venues are currently allowed to OPEN positions."""
@@ -225,6 +226,51 @@ class DashboardRuntime:
             return {name: True for name in self.venues}
         names = {a.name for a in router.adapters} | set(self.venues)
         return {n: router.is_enabled(n) for n in sorted(names)}
+
+    def venue_modes(self) -> dict[str, dict]:
+        """Per-venue paper/live switches, and whether each side can act at all.
+
+        `attached` says whether an adapter of that mode is even registered —
+        without it, a live GO would be a button that promises something the
+        process cannot do. The dashboard shows the reason instead.
+        """
+        router = self._router()
+        names = sorted({a.name for a in (router.adapters if router else [])} | set(self.venues))
+        attached: dict[str, set[str]] = {}
+        if router is not None:
+            for a in router.adapters:
+                attached.setdefault(a.name, set()).add(router.mode_of(a))
+        out: dict[str, dict] = {}
+        for n in names:
+            out[n] = {
+                mode: {
+                    "on": router.is_mode_enabled(n, mode) if router else True,
+                    "attached": mode in attached.get(n, set()),
+                }
+                for mode in ("paper", "live")
+            }
+        return out
+
+    def set_venue_mode(self, name: str, mode: str, on: bool) -> dict:
+        """Toggle one venue's paper or live side. Persisted like the master."""
+        router = self._router()
+        if router is None:
+            return {"ok": False, "reason": "no router attached", "modes": {}}
+        if mode not in ("paper", "live"):
+            return {"ok": False, "reason": f"unknown mode {mode!r}",
+                    "modes": self.venue_modes()}
+        if name not in {a.name for a in router.adapters}:
+            return {"ok": False, "reason": f"unknown venue {name!r}",
+                    "modes": self.venue_modes()}
+        router.set_mode_enabled(name, mode, on)
+        try:
+            self.memory.put("dashboard", self.MODE_KEY, router.modes)
+            self.memory.record_audit_event(
+                "user", f"{mode}_session_{'on' if on else 'off'}", name,
+            )
+        except Exception:
+            pass
+        return {"ok": True, "modes": self.venue_modes()}
 
     def set_venue_session(self, name: str, on: bool) -> dict:
         """Toggle one venue. Persisted, so a restart keeps the operator's intent
@@ -256,6 +302,14 @@ class DashboardRuntime:
             return
         for name, on in saved.items():
             router.set_enabled(name, bool(on))
+        try:
+            saved_modes = self.memory.get("dashboard", self.MODE_KEY, {}) or {}
+        except Exception:
+            return
+        for key, on in saved_modes.items():
+            name, _, mode = key.rpartition(":")
+            if name and mode in ("paper", "live"):
+                router.set_mode_enabled(name, mode, bool(on))
 
     def _router(self):
         sched = self.fund_scheduler
@@ -433,6 +487,49 @@ class DashboardRuntime:
                 "abstained": abstained,
                 "actions": by_symbol.get(o["symbol"], [])[:4],
             })
+        return rows
+
+    def roundtable_thread(self, limit: int = 6) -> list[dict]:
+        """The last few debates flattened into one conversation, oldest first.
+
+        `latest_deliberation` answers "what is the committee saying about this
+        candidate"; this answers "what has the committee been saying", which is
+        the question a running thread is for. Chair messages are interleaved at
+        the end of their own debate so the transcript reads in the order the
+        room actually spoke.
+        """
+        rows = []
+        try:
+            recent = self.memory.recent_deliberations(limit=limit)
+        except Exception:
+            return []
+        for row in reversed(recent):            # oldest first: a thread grows down
+            payload = row.get("payload") or {}
+            created = row.get("created")
+            for op in payload.get("opinions", []):
+                rows.append({
+                    "thesis_id": row["thesis_id"], "symbol": row["symbol"],
+                    "created": created,
+                    "seat_id": op.get("seat_id"), "seat_name": op.get("seat_name"),
+                    "signal": op.get("signal"), "confidence": op.get("confidence"),
+                    "reasoning": op.get("reasoning", ""),
+                    "concerns": op.get("concerns") or [],
+                    "failed": bool(op.get("failed")), "error": op.get("error"),
+                    "role": "seat",
+                })
+            consensus = payload.get("consensus") or {}
+            if consensus.get("summary"):
+                rows.append({
+                    "thesis_id": row["thesis_id"], "symbol": row["symbol"],
+                    "created": created,
+                    "seat_id": "chair", "seat_name": "Chair",
+                    "signal": consensus.get("signal"),
+                    "confidence": consensus.get("confidence"),
+                    "reasoning": consensus["summary"],
+                    "concerns": [consensus["dissent"]] if consensus.get("dissent") else [],
+                    "failed": False, "error": None,
+                    "role": "chair",
+                })
         return rows
 
     def latest_deliberation(self) -> Optional[dict]:
