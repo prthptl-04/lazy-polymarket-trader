@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { AgentRoster } from "../components/AgentRoster";
 import { AgentScorecard } from "../components/AgentScorecard";
 import { EngineButton } from "../components/EngineButton";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
@@ -12,6 +13,8 @@ import { useDynamicBackground } from "../lib/useDynamicBackground";
 
 export function Overview() {
   const { data: rec } = usePoll<Record_>("/api/record");
+  const { data: polyRec } = usePoll<Record_>("/api/record?venue=polymarket_us");
+  const { data: hoodRec } = usePoll<Record_>("/api/record?venue=robinhood");
   const { data: paper } = usePoll<PaperProgress>("/api/paper");
   const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
@@ -19,8 +22,13 @@ export function Overview() {
     usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 6000);
   const { data: lessons } = usePoll<Lesson[]>("/api/lessons?limit=6", 12000);
 
-  const curve = rec?.equity_curve ?? [];
   const gate = fund?.router_live_gate;
+
+  // Trades closed before the book recorded an asset class belong to neither
+  // column. They still exist, so they are counted here rather than quietly
+  // dropped — a total that does not reconcile is worse than an odd label.
+  const unattributed = Math.max(
+    0, (rec?.closed ?? 0) - ((polyRec?.closed ?? 0) + (hoodRec?.closed ?? 0)));
 
   // The ground colour tracks the open trade, bounded by its own exit plan.
   const active = useActiveTrade();
@@ -34,41 +42,31 @@ export function Overview() {
 
       {/* ---------------- dual market feed ---------------- */}
       <GlassCard liquid className="col-span-full p-5">
-        <PanelTitle right={<Pill>{fund?.session ?? "—"}</Pill>}>
+        <PanelTitle right={
+          <div className="flex items-center gap-1.5">
+            {unattributed > 0 && <Pill tone="warn">{unattributed} pre-split</Pill>}
+            <Pill>{fund?.session ?? "—"}</Pill>
+          </div>
+        }>
           Dual market · live feed
         </PanelTitle>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2 h-2 rounded-full bg-poly-blue" />
-              <span className="text-[12px] text-white/70">Polymarket</span>
-            </div>
-            <EngineButton venue="polymarket_us" label="Polymarket Engine"
-                          state={engineData?.engines?.polymarket_us} onDone={refreshEngines} />
-            <EquityArea values={curve} colour="#2d52f3" height={320} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2 h-2 rounded-full bg-hood-green" />
-              <span className="text-[12px] text-white/70">Robinhood</span>
-            </div>
-            <EngineButton venue="robinhood" label="Robinhood Engine"
-                          state={engineData?.engines?.robinhood} onDone={refreshEngines} />
-            <EquityArea values={curve} colour="#00c805" height={320} />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-x-6 gap-y-4 mt-5 pt-4 border-t border-white/[0.07]">
-          <Stat label="Total invested" value={money(rec ? rec.equity_curve[0] : null)} />
-          <Stat label="Realised P&L" value={signed(rec?.realized_usd)} tone={toneOf(rec?.realized_usd)} />
-          <Stat label="Win rate" value={rec?.win_rate == null ? "—" : `${rec.win_rate.toFixed(0)}%`}
-                sub={rec?.closed ? `${rec.wins}W · ${rec.losses}L` : "no positions closed"} />
-          <Stat label="Best / worst" value={`${signed(rec?.best_usd)} / ${signed(rec?.worst_usd)}`} />
-          <Stat label="Profit factor"
-                value={rec?.profit_factor == null ? "—" : rec.profit_factor.toFixed(2)}
-                sub="gross win ÷ gross loss" />
-          <Stat label="Cycles run" value={fund?.metrics?.cycles ?? 0}
-                sub={fund?.metrics?.submitted ? `${fund.metrics.submitted} orders` : "no orders yet"} />
+        {/* Each venue owns its column, stats included. One shared row of
+            numbers under two charts reads as though both venues produced them;
+            the divider is there so a Polymarket loss is never mistaken for the
+            broker's. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
+          <VenuePanel
+            label="Polymarket" dot="bg-poly-blue" colour="#2d52f3"
+            venue="polymarket_us" engineLabel="Polymarket Engine"
+            engine={engineData?.engines?.polymarket_us} onEngine={refreshEngines}
+            record={polyRec} cycles={fund?.metrics?.cycles ?? 0}
+            className="lg:pr-6" />
+          <VenuePanel
+            label="Robinhood" dot="bg-hood-green" colour="#00c805"
+            venue="robinhood" engineLabel="Robinhood Engine"
+            engine={engineData?.engines?.robinhood} onEngine={refreshEngines}
+            record={hoodRec} cycles={fund?.metrics?.cycles ?? 0}
+            className="lg:pl-6 lg:border-l border-white/[0.09] mt-6 lg:mt-0" />
         </div>
       </GlassCard>
 
@@ -125,11 +123,8 @@ export function Overview() {
         ) : <Empty title="No fund attached." hint="Set ANTHROPIC_API_KEY and a watchlist, then restart." />}
       </GlassCard>
 
-      {/* ---------------- agents ---------------- */}
-      <AgentScorecard />
-
       {/* ---------------- paper progress ---------------- */}
-      <GlassCard className="md:col-span-2 p-5">
+      <GlassCard className="col-span-full p-5">
         <PanelTitle>Paper trading · earning the right to trade real money</PanelTitle>
         {paper && (
           <>
@@ -156,6 +151,13 @@ export function Overview() {
           </>
         )}
       </GlassCard>
+
+      {/* ---------------- agents ---------------- */}
+      <AgentScorecard />
+
+      {/* ---------------- roster ----------------
+          Where the paper panel used to sit: who to believe, ranked. */}
+      <AgentRoster />
 
       {/* ---------------- learning ---------------- */}
       <GlassCard className="md:col-span-1 xl:col-span-2 p-5">
@@ -251,6 +253,43 @@ const LABELS: Record<string, string> = {
   paper_trades_recorded: "Graded paper trades on record",
   operator_approval_lesson: "Operator approval recorded",
 };
+
+/** One venue: its engine, its chart, and its OWN numbers. */
+function VenuePanel({ label, dot, colour, venue, engineLabel, engine, onEngine, record, cycles, className = "" }: {
+  label: string; dot: string; colour: string; venue: string; engineLabel: string;
+  engine?: EngineState; onEngine: () => void; record: Record_ | null;
+  cycles: number; className?: string;
+}) {
+  const invested = record?.equity_curve?.[0] ?? null;
+  return (
+    <div className={className}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`w-2 h-2 rounded-full ${dot}`} />
+        <span className="text-[12px] text-white/70">{label}</span>
+      </div>
+      <EngineButton venue={venue} label={engineLabel} state={engine} onDone={onEngine} />
+      <EquityArea values={record?.equity_curve ?? []} colour={colour} height={320} />
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-4 mt-5 pt-4
+                      border-t border-white/[0.07]">
+        <Stat label="Total invested" value={money(invested)} />
+        <Stat label="Realised P&L" value={signed(record?.realized_usd)}
+              tone={toneOf(record?.realized_usd)} />
+        <Stat label="Win rate"
+              value={record?.win_rate == null ? "—" : `${record.win_rate.toFixed(0)}%`}
+              sub={record?.closed ? `${record.wins}W · ${record.losses}L` : "nothing closed here"} />
+        <Stat label="Best / worst"
+              value={`${signed(record?.best_usd)} / ${signed(record?.worst_usd)}`} />
+        <Stat label="Profit factor"
+              value={record?.profit_factor == null ? "—" : record.profit_factor.toFixed(2)}
+              sub="gross win ÷ gross loss" />
+        {/* The scheduler runs one loop for both venues, so this number is the
+            fund's, not this venue's. Labelled rather than silently duplicated. */}
+        <Stat label="Cycles run" value={cycles} sub="fund-wide" />
+      </div>
+    </div>
+  );
+}
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (

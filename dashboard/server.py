@@ -173,8 +173,8 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
         return runtime.roundtable_thread(limit=max(1, min(30, limit)))
 
     @app.get("/api/record")
-    def api_record() -> dict:
-        return runtime.record()
+    def api_record(venue: str | None = None) -> dict:
+        return runtime.record(venue)
 
     @app.get("/api/lessons")
     def api_lessons(limit: int = 20) -> list[dict]:

@@ -315,13 +315,26 @@ class DashboardRuntime:
         sched = self.fund_scheduler
         return getattr(getattr(sched, "fund", None), "router", None) if sched else None
 
-    def record(self) -> dict:
+    # Prediction markets are Polymarket; everything else is the broker.
+    VENUE_OF_ASSET = {"prediction": "polymarket_us"}
+
+    def record(self, venue: Optional[str] = None) -> dict:
         """Wins, losses and the equity curve — the 'am I making money' view.
 
         Built from closed positions, which is the only honest source: an open
         position has an opinion about itself, a closed one has a result.
+
+        `venue` narrows it to one book. Trades closed before asset class was
+        recorded have no venue and are counted only in the fund-wide view —
+        silently filing them under the broker would invent a history.
         """
         closed = list(getattr(self.position_book, "closed", []) or [])
+        if venue is not None:
+            closed = [
+                c for c in closed
+                if c.get("asset_class")
+                and self.VENUE_OF_ASSET.get(c["asset_class"], "robinhood") == venue
+            ]
         wins = [c for c in closed if c.get("realized_usd", 0) > 0]
         losses = [c for c in closed if c.get("realized_usd", 0) < 0]
         realized = sum(c.get("realized_usd", 0.0) for c in closed)

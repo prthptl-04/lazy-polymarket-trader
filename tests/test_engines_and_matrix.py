@@ -118,3 +118,34 @@ def test_every_seat_appears_even_unscored(tmp_path):
     unscored = [r for r in rows if r["samples"] == 0]
     assert unscored and all(r["hit_rate"] is None for r in unscored)
     assert all("unscored" in r["target"]["note"] for r in unscored)
+
+
+# ---------- per-venue record ----------
+
+def _book_with(closed):
+    class Book:
+        def __init__(self): self.closed = closed
+    return Book()
+
+
+def test_record_splits_by_venue(tmp_path):
+    rt = DashboardRuntime(memory=MemoryStore(db_path=str(tmp_path / "r.db")),
+                          position_book=_book_with([
+                              {"symbol": "AAPL", "asset_class": "equity", "realized_usd": 40.0},
+                              {"symbol": "BTC", "asset_class": "crypto", "realized_usd": -10.0},
+                              {"symbol": "will-x", "asset_class": "prediction", "realized_usd": 25.0},
+                          ]))
+    assert rt.record()["closed"] == 3
+    assert rt.record("robinhood")["closed"] == 2
+    assert rt.record("robinhood")["realized_usd"] == 30.0
+    assert rt.record("polymarket_us")["closed"] == 1
+    assert rt.record("polymarket_us")["realized_usd"] == 25.0
+
+
+def test_trades_closed_before_asset_class_was_recorded_are_fund_wide_only(tmp_path):
+    """Filing an unattributable trade under the broker would invent a history."""
+    rt = DashboardRuntime(memory=MemoryStore(db_path=str(tmp_path / "r2.db")),
+                          position_book=_book_with([{"symbol": "OLD", "realized_usd": 12.0}]))
+    assert rt.record()["closed"] == 1
+    assert rt.record("robinhood")["closed"] == 0
+    assert rt.record("polymarket_us")["closed"] == 0

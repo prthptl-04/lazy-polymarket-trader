@@ -133,6 +133,10 @@ class PositionBook:
         realized = position.realized_return(exit_price)
         record = {
             "symbol": symbol,
+            # Without this a closed trade cannot be attributed to a venue, and
+            # every per-venue number on the dashboard would be the fund's total
+            # printed twice.
+            "asset_class": position.asset_class,
             "thesis_id": position.thesis_id,
             "reason": reason,
             "entry_price": position.entry_price,
