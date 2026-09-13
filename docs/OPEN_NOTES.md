@@ -63,12 +63,12 @@ supplied/recorded data and gets live quotes from any venue. What is missing is
 Altman/Piotroski need fundamentals; without them those screens stay
 NOT AVAILABLE and the Analyst seat is flying on less.
 
-### Calibration can now be fitted, but nothing resolves theses yet
-`roundtable/calibration.py` scores seats and fits the confidence shrink, and
-`/api/scorecard` exposes it. What is missing is the trigger: nothing calls
-`MemoryStore.record_thesis_outcome` when a position closes at its stop or
-target. Until that lands the scorecard stays empty and
-`trading.pipeline.CONFIDENCE_SHRINK` remains the pessimistic constant.
+### PositionBook is not wired into fund_wiring yet
+`FundLoop` enforces stops when a `position_book` is attached, but
+`dashboard/fund_wiring.build_fund` does not construct one. Until it does, a
+fund built from config still has unenforced stops. **Do not run live before
+closing this** — it is a one-line construction, deliberately left for a commit
+of its own so it gets reviewed.
 
 ### The fitted shrink is not fed back automatically
 `fit_confidence_shrink` returns a number; `ThesisPipeline` still uses the
@@ -158,3 +158,5 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Dashboard wiring for the fund engine | `8f1a281` |
 | Fund config + entrypoint wiring + stale-thesis policy | `116b73c` |
 | Seat scoring + confidence calibration | `b48bf6e` |
+| Stops were never enforced after entry | this commit |
+| Nothing resolved theses (scorecard always empty) | this commit |

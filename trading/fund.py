@@ -64,6 +64,7 @@ class CycleReport:
     deliberated: list[str] = field(default_factory=list)
     results: list[Any] = field(default_factory=list)     # PipelineResult
     flattened: list[str] = field(default_factory=list)
+    exits: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     halted_reason: Optional[str] = None
 
@@ -80,6 +81,7 @@ class CycleReport:
             "deliberated": len(self.deliberated),
             "submitted": len(self.submitted),
             "flattened": len(self.flattened),
+            "exits": len(self.exits),
             "errors": len(self.errors),
             "halted_reason": self.halted_reason,
         }
@@ -96,6 +98,7 @@ class FundLoop:
     equity_watchlist: Sequence[str] = ()
     crypto_watchlist: Sequence[str] = ()
     kill_switch: Any = None
+    position_book: Any = None
     memory: Any = None
     lookback_bars: int = 60
     max_candidates_per_cycle: int = 5
@@ -119,11 +122,17 @@ class FundLoop:
         if self.kill_switch is not None and equity_usd is not None:
             self.kill_switch.observe_equity(moment, equity_usd)
 
-        # 2. Weekend → weekday handoff: free the capital before the open.
+        # 2. Exits first, ALWAYS. A stop that has fired must be honoured before
+        #    anything else happens — before the kill-switch check (which permits
+        #    closes anyway) and before a single token is spent on a new idea.
+        if self.position_book is not None:
+            report.exits = await self._process_exits(moment, report)
+
+        # 3. Weekend → weekday handoff: free the capital before the open.
         if should_flatten_crypto(moment):
             report.flattened = await self._flatten_crypto(holdings, moment, report)
 
-        # 3. A tripped switch stops new risk. Exits above already happened,
+        # 4. A tripped switch stops new risk. Exits above already happened,
         #    and the router would permit more, but there is no reason to spend
         #    six LLM calls on a thesis that cannot be acted on.
         if self.kill_switch is not None:
@@ -133,7 +142,7 @@ class FundLoop:
                 self._emit(report)
                 return report
 
-        # 4. Universe follows the session.
+        # 5. Universe follows the session.
         universe = self._universe_for(session)
         report.universe = list(universe)
         if not universe:
@@ -142,7 +151,7 @@ class FundLoop:
 
         held = {h.symbol: h for h in holdings}
 
-        # 5. Build + screen + deliberate + execute.
+        # 6. Build + screen + deliberate + execute.
         deliberated = 0
         for symbol in universe:
             if deliberated >= self.max_candidates_per_cycle:
@@ -226,7 +235,80 @@ class FundLoop:
             available_cash_usd=available_cash_usd,
         )
         report.results.append(result)
+
+        # Register the fill so the stop is actually watched from here on. A
+        # position opened without this entry would ride through its stop.
+        if (
+            self.position_book is not None
+            and result.submitted
+            and result.trade is not None
+            and result.trade.is_entry
+            and result.size is not None
+        ):
+            self.position_book.open(
+                symbol=symbol,
+                asset_class=asset_class,
+                quantity=result.size.quantity,
+                entry_price=built.exit_plan.entry,
+                plan=built.exit_plan,
+                thesis_id=thesis.thesis_id,
+            )
         return True
+
+    # ---------- exits ----------
+
+    async def _process_exits(self, moment: datetime, report: CycleReport) -> list[dict]:
+        """Close anything that hit its stop or target.
+
+        Sized in QUANTITY, never notional — a dollar-sized close overshoots
+        once the price has moved, which is exactly the state a stopped-out
+        position is in.
+        """
+        quotes = await self._quote_map(self.position_book.open_symbols())
+        if not quotes:
+            return []
+
+        done: list[dict] = []
+        for signal in self.position_book.check_exits(quotes):
+            try:
+                ack = await self.router.place(
+                    OrderRequest(
+                        symbol=signal.symbol, side="sell",
+                        asset_class=signal.position.asset_class,
+                        quantity=signal.quantity,
+                        thesis_id=signal.position.thesis_id,
+                    ),
+                    moment,
+                )
+                if ack.accepted:
+                    record = self.position_book.close(
+                        signal.symbol, signal.price, reason=signal.reason
+                    )
+                    done.append({**(record or {}), "detail": signal.describe()})
+                else:
+                    # The position stays open and will be retried next tick.
+                    # Silently dropping a failed stop would be the worst
+                    # possible outcome here, so it goes in the report.
+                    report.errors.append(
+                        f"EXIT FAILED {signal.symbol} ({signal.reason}): {ack.error}"
+                    )
+            except Exception as e:
+                report.errors.append(
+                    f"EXIT FAILED {signal.symbol}: {type(e).__name__}: {e}"
+                )
+        return done
+
+    async def _quote_map(self, symbols: Sequence[str]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for symbol in symbols:
+            try:
+                quote = await self.data.get_quote(symbol)
+            except Exception:
+                continue
+            price = quote.mid if quote else None
+            if price is not None:
+                out[symbol] = price
+        return out
 
     # ---------- weekend handoff ----------
 
