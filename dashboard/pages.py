@@ -35,17 +35,23 @@ _OVERVIEW_BODY = """
     <div class="sub" style="margin-top:10px">Hover any seat for its mandate.</div></div>
 </div>
 
-<div class="grid g2">
+<div class="grid g2" style="margin-bottom:16px">
   <div class="panel"><h2>Last cycle</h2><div id="cycle"></div></div>
   <div class="panel"><h2>Recent decisions</h2><div id="audit"></div></div>
+</div>
+
+<div class="panel">
+  <h2>What the fund has learned &mdash; written on every loss</h2>
+  <div id="lessons"></div>
 </div>
 """
 
 _OVERVIEW_JS = """
 async function refresh(){
-  const [rec,pnl,bal,agents,fund,audit,pos,vs] = await Promise.all([
+  const [rec,pnl,bal,agents,fund,audit,pos,vs,lessons] = await Promise.all([
     j('/api/record'), j('/api/pnl'), j('/api/balances'), j('/api/agents'),
-    j('/api/fund'), j('/api/audit?limit=12'), j('/api/positions'), j('/api/venue-sessions')]);
+    j('/api/fund'), j('/api/audit?limit=12'), j('/api/positions'), j('/api/venue-sessions'),
+    j('/api/lessons?limit=8')]);
   if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
 
   if(pnl){ $('equity').textContent = money(pnl.equity_usd);
@@ -106,6 +112,19 @@ async function refresh(){
           +'<tr><td>orders</td><td class="num">'+c.submitted+'</td></tr>'
           +'<tr><td>exits</td><td class="num">'+c.exits+'</td></tr></table>'
           +(c.halted_reason?'<div class="warn">HALTED: '+c.halted_reason+'</div>':''));
+  }
+
+  if(lessons){
+    paint('lessons', lessons.length
+      ? lessons.map(l=>'<div class="thread" style="border-left-color:'
+          +(l.severity==='warning'?'var(--amber)':'var(--border)')+'">'
+          +'<div class="who">'+(l.symbol||'')+' <span style="color:var(--dim);font-weight:400">'
+          +l.code.replace(/_/g,' ')+'</span></div>'
+          +'<div class="msg">'+l.lesson+'</div></div>').join('')
+      : '<div class="empty">Nothing learned yet.<br><span style="font-size:12px">'
+        +'A lesson is written every time a position closes at a loss &mdash; who dissented '
+        +'and was right, whether the table was unanimous, whether the data was ever verified.'
+        +'</span></div>');
   }
 
   if(audit){

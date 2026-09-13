@@ -247,6 +247,24 @@ class DashboardRuntime:
             "equity_curve": curve,
         }
 
+    def lessons(self, limit: int = 20) -> list[dict]:
+        """What the fund has learned from its losses."""
+        try:
+            rows = self.memory.recent_lessons("*", limit=limit * 3)
+        except Exception:
+            return []
+        out = []
+        for r in rows:
+            ctx = r.get("context") or {}
+            if not isinstance(ctx, dict) or not ctx.get("code"):
+                continue      # operational notes are not lessons from trading
+            out.append({
+                "code": ctx["code"], "symbol": ctx.get("symbol"),
+                "severity": ctx.get("severity", "note"),
+                "lesson": r.get("lesson", ""), "created": r.get("created"),
+            })
+        return out[:limit]
+
     def agents(self) -> list[dict]:
         """The roster, for the UI's hover cards."""
         from roundtable.seats import ALL_SEATS

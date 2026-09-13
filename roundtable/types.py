@@ -52,6 +52,7 @@ class Candidate:
     technical_notes: tuple[str, ...] = ()
     portfolio_notes: tuple[str, ...] = ()
     corroboration_notes: tuple[str, ...] = ()
+    lessons: tuple[str, ...] = ()
 
     @property
     def r_multiple(self) -> Optional[float]:
@@ -87,6 +88,7 @@ class Candidate:
             ("TECHNICALS", self.technical_notes),
             ("PORTFOLIO", self.portfolio_notes),
             ("CORROBORATION", self.corroboration_notes),
+            ("LESSONS FROM PAST LOSSES (apply these)", self.lessons),
         ):
             if notes:
                 lines.append(f"\n{header}:")

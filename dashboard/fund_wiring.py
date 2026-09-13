@@ -23,6 +23,7 @@ import os
 from typing import Any, Optional
 
 from roundtable.engine import RoundTable
+from roundtable.postmortem import Postmortem
 from trading.fund import FundLoop
 from trading.fund_config import FundConfig, load_config
 from trading.fund_scheduler import FundScheduler
@@ -123,6 +124,7 @@ def build_fund(
         kill_switch=kill_switch,
         scout=scout,
         memory=memory,
+        postmortem=Postmortem(memory=memory),
         lookback_bars=cfg.lookback_bars,
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,
         resume_max_age_seconds=cfg.resume_max_age_seconds,

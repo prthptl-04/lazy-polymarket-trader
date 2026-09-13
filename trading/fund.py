@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
+from roundtable.postmortem import Postmortem, recent_lesson_lines
 from trading.candidate_builder import build_candidate
 from trading.fund_config import is_thesis_stale
 from trading.sessions import Session, session_at, should_flatten_crypto
@@ -101,6 +102,7 @@ class FundLoop:
     position_book: Any = None
     scout: Any = None
     memory: Any = None
+    postmortem: Any = None
     lookback_bars: int = 60
     max_candidates_per_cycle: int = 5
     resume_max_age_seconds: float = 3600.0
@@ -222,6 +224,7 @@ class FundLoop:
             financials=current_fin,
             prior_financials=prior_fin,
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
+            lessons=recent_lesson_lines(self.memory),
         )
 
         if not built.prescreen.worth_debating:
@@ -291,7 +294,10 @@ class FundLoop:
                     record = self.position_book.close(
                         signal.symbol, signal.price, reason=signal.reason
                     )
-                    done.append({**(record or {}), "detail": signal.describe()})
+                    entry = {**(record or {}), "detail": signal.describe()}
+                    # A loss is the only thing the fund learns from for certain.
+                    entry["lessons"] = self._postmortem(record, signal)
+                    done.append(entry)
                 else:
                     # The position stays open and will be retried next tick.
                     # Silently dropping a failed stop would be the worst
@@ -316,6 +322,31 @@ class FundLoop:
             if price is not None:
                 out[symbol] = price
         return out
+
+    def _postmortem(self, record: Optional[dict], signal: Any) -> list[str]:
+        """Turn a losing exit into lessons the seats read next time."""
+        if self.postmortem is None or not record:
+            return []
+        if record.get("realized_return", 0) >= 0:
+            return []
+        thesis = None
+        thesis_id = record.get("thesis_id")
+        if thesis_id and self.memory is not None:
+            try:
+                thesis = self.memory.get_deliberation(thesis_id)
+            except Exception:
+                thesis = None
+        try:
+            findings = self.postmortem.run(
+                symbol=record["symbol"],
+                realized_return=record["realized_return"],
+                thesis=thesis,
+                exit_reason=record.get("reason", "stop"),
+            )
+        except Exception:
+            logger.exception("post-mortem failed for %s", record.get("symbol"))
+            return []
+        return [f.code for f in findings]
 
     # ---------- weekend handoff ----------
 
