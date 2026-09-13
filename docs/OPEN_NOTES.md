@@ -127,6 +127,13 @@ Checked all four (2026-09-12):
 - **Scrapling** — `import scrapling` fails on a missing `curl_cffi`. Either
   add the dep or remove it from pyproject.
 
+### Macro / geopolitical signals not wired
+The Sentiment seat now gets per-ticker news with publisher sentiment. What is
+NOT wired is macro: Massive exposes `/fed/v1/inflation` and other Economy
+endpoints, and nothing reads them. Geopolitical/war signals have no source at
+all — the honest options are a news-category filter over the existing feed, or
+a dedicated provider. Not attempted rather than half-built.
+
 ### Dashboard token auth
 Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
 
@@ -206,3 +213,6 @@ disposes of, so a notional close overshoots and is rejected. Pinned by
 | Authenticator 403'd on UA-requiring hosts | this commit |
 | PositionBook wired into build_fund — stops now enforced | this commit |
 | Agents use Playwright for narrative scraping | this commit |
+| Per-venue trading sessions (independent start/stop) | `b56025a` |
+| Post-mortem: a lesson written on every loss | `ddb8ade` |
+| News + publisher sentiment into the Sentiment seat | this commit |

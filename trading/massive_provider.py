@@ -80,6 +80,43 @@ class MassiveProvider:
         close = rows[0].get("c")
         return Quote(symbol=symbol, bid=None, ask=None, last=close)
 
+    async def get_news(self, symbol: str, *, limit: int = 6) -> list[dict]:
+        """Recent articles with the publisher's per-ticker sentiment.
+
+        Verified entitled on the $29 plan (2026-09-12). Each article carries an
+        `insights` list with a sentiment and a one-line reasoning PER TICKER,
+        which is what makes this usable: an article about the whole sector is
+        not evidence about our symbol, and the per-ticker split says which is
+        which.
+
+        The sentiment is the publisher's, not ours. It reaches the seats
+        labelled that way — a vendor's label is a data point, not a verdict.
+        """
+        data = self._call("/v2/reference/news", {
+            "ticker": _ticker(symbol).replace("X:", ""),
+            "limit": max(1, min(50, limit)),
+            "order": "desc",
+            "sort": "published_utc",
+        })
+        rows = (data or {}).get("results") or []
+        out: list[dict] = []
+        for a in rows[:limit]:
+            insight = next(
+                (i for i in (a.get("insights") or [])
+                 if str(i.get("ticker", "")).upper() == symbol.upper()),
+                None,
+            )
+            out.append({
+                "title": a.get("title"),
+                "publisher": ((a.get("publisher") or {}).get("name")
+                              if isinstance(a.get("publisher"), dict) else a.get("publisher")),
+                "published": a.get("published_utc"),
+                "sentiment": (insight or {}).get("sentiment"),
+                "why": (insight or {}).get("sentiment_reasoning"),
+                "url": a.get("article_url"),
+            })
+        return out
+
     async def get_financials(
         self, symbol: str
     ) -> Optional[tuple[Financials, Optional[Financials]]]:
@@ -101,9 +138,14 @@ class MassiveProvider:
         url = f"{self.base_url}{path}?{urllib.parse.urlencode(params)}"
         try:
             body = self.fetch(url, self.api_key, self.timeout)
-        except Exception:
-            # A dead feed degrades to "no data", which the pre-screen already
-            # treats as a skip. It must never take down a cycle.
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+                TimeoutError, ValueError):
+            # A dead or slow feed degrades to "no data", which the pre-screen
+            # already treats as a skip. It must never take down a cycle.
+            #
+            # Deliberately NOT a bare `except Exception`: that would swallow a
+            # TypeError from a mis-wired fetch and present a programming bug as
+            # an empty feed, which is exactly how this went unnoticed once.
             return None
         if not isinstance(body, dict):
             return None

@@ -209,6 +209,7 @@ class FundLoop:
             )
             return False
 
+        sentiment_notes = await self._news_notes(symbol)
         financials = await self.data.get_financials(symbol)
         current_fin, prior_fin = financials if financials else (None, None)
 
@@ -223,6 +224,7 @@ class FundLoop:
             dollar_volumes=history.dollar_volumes,
             financials=current_fin,
             prior_financials=prior_fin,
+            sentiment_notes=sentiment_notes,
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
             lessons=recent_lesson_lines(self.memory),
         )
@@ -264,6 +266,30 @@ class FundLoop:
                 thesis_id=thesis.thesis_id,
             )
         return True
+
+    async def _news_notes(self, symbol: str) -> tuple[str, ...]:
+        """Headlines for the Sentiment seat.
+
+        Labelled with the PUBLISHER's sentiment, explicitly, because a vendor's
+        label is a data point and not a verdict — the seat is instructed to
+        treat crowded agreement as a risk factor rather than a confirmation.
+        """
+        getter = getattr(self.data, "get_news", None)
+        if getter is None:
+            return ()
+        try:
+            articles = await getter(symbol, limit=5)
+        except Exception:
+            logger.exception("news fetch failed for %s", symbol)
+            return ()
+        notes = []
+        for a in articles:
+            label = a.get("sentiment") or "unlabelled"
+            line = f"[publisher sentiment: {label}] {a.get('title') or ''}"
+            if a.get("why"):
+                line += f" — {a['why'][:180]}"
+            notes.append(line)
+        return tuple(notes)
 
     # ---------- exits ----------
 
