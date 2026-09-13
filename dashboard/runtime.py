@@ -272,6 +272,42 @@ class DashboardRuntime:
             return {"attached": False}
         return {"attached": True, **router.status()}
 
+    def paper_progress(self) -> dict:
+        """Progress toward the rule-#13 bar, and what the record looks like.
+
+        Separate from `record()` because the question is different: record()
+        asks "am I making money", this asks "has the fund earned the right to
+        trade real money yet, and is it getting better while it waits".
+        """
+        from verification.criteria import MIN_PAPER_TRADES_FOR_LIVE
+        try:
+            trades = self.memory.recent_trades(limit=100_000)
+        except Exception:
+            trades = []
+        graded = [t for t in trades if t.get("grade_pass")]
+
+        card = self.scorecard()
+        lessons = self.lessons(limit=200)
+        seats = card.get("seats") or []
+        # A seat is "improving" once it is both calibrated and better than a
+        # coin flip — beating chance while claiming 95% certainty is not skill.
+        improving = [s for s in seats if s.get("calibrated") and s.get("beats_coin_flip")]
+
+        return {
+            "graded_paper_trades": len(graded),
+            "required": MIN_PAPER_TRADES_FOR_LIVE,
+            "pct_complete": round(min(100.0, len(graded) / MIN_PAPER_TRADES_FOR_LIVE * 100), 1),
+            "total_trades_logged": len(trades),
+            "deliberations": len(self.deliberations(limit=500)),
+            "resolved": card.get("resolved", 0),
+            "committee": card.get("committee"),
+            "seats": seats,
+            "seats_calibrated": len(improving),
+            "seats_scored": len([s for s in seats if s.get("samples")]),
+            "lessons_learned": len(lessons),
+            "shrink_fit": card.get("fit"),
+        }
+
     def agents(self) -> list[dict]:
         """The roster, for the UI's hover cards."""
         from roundtable.seats import ALL_SEATS

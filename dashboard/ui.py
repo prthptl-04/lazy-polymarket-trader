@@ -90,6 +90,17 @@ td.num,th.num{text-align:right;font-family:var(--mono)}
 .thread .who{font-weight:600;font-size:13px}
 .thread .msg{color:var(--muted);font-size:13px;margin-top:3px;white-space:pre-wrap}
 .warn{color:var(--amber);font-size:12px;margin-top:8px}
+.bar{height:8px;border-radius:999px;background:#1b2430;overflow:hidden;margin:10px 0 6px}
+.bar span{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));
+  border-radius:999px;transition:width .5s ease}
+.seatrow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #1b2430}
+.seatrow:last-child{border-bottom:none}
+.seatrow .ico{font-size:15px}
+.seatrow .nm{flex:1;font-size:13px}
+.seatrow .m{font-family:var(--mono);font-size:12px;color:var(--muted);min-width:58px;text-align:right}
+.tag{font-size:10px;padding:1px 6px;border-radius:4px;letter-spacing:.03em}
+.tag.ok{background:rgba(38,217,127,.14);color:var(--green)}
+.tag.no{background:rgba(255,184,76,.14);color:var(--amber)}
 .sw{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
 .sw input{display:none}
 .sw .track{width:40px;height:22px;border-radius:999px;background:#2a3444;

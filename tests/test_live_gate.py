@@ -178,3 +178,65 @@ def test_router_status_exposes_the_checklist():
     s = VenueRouter(adapters=[PaperVenue()], live_gate=_gate()).status(WED)
     assert s["live_gate"]["live_possible"] is False
     assert s["live_gate"]["required_paper_trades"] == MIN_PAPER_TRADES_FOR_LIVE
+
+
+# ---------------- paper progress panel ----------------
+
+def test_paper_progress_reports_the_rule_13_bar(tmp_path):
+    from dashboard.runtime import build_runtime
+    from memory.store import MemoryStore
+
+    store = MemoryStore(db_path=str(tmp_path / "p.db"))
+    for i in range(7):
+        store.log_trade("fund", f"S{i}", "buy", 1.0, 0.5, True, True, "ok")
+    store.log_trade("fund", "UGLY", "buy", 1.0, 0.5, True, False, "rejected")
+
+    p = build_runtime(memory=store).paper_progress()
+    assert p["graded_paper_trades"] == 7        # the rejected one does not count
+    assert p["total_trades_logged"] == 8
+    assert p["required"] == MIN_PAPER_TRADES_FOR_LIVE
+    assert p["pct_complete"] == pytest.approx(14.0)
+
+
+def test_paper_progress_is_empty_but_explicit_on_a_fresh_fund(tmp_path):
+    from dashboard.runtime import build_runtime
+    from memory.store import MemoryStore
+    p = build_runtime(memory=MemoryStore(db_path=str(tmp_path / "p.db"))).paper_progress()
+    assert p["graded_paper_trades"] == 0
+    assert p["seats"] == [] and p["lessons_learned"] == 0
+    assert p["shrink_fit"]["usable"] is False
+
+
+def test_a_seat_counts_as_improving_only_if_calibrated_AND_beating_chance(tmp_path):
+    """Beating chance while claiming 95% certainty is not skill."""
+    from dashboard.runtime import DashboardRuntime
+    from memory.store import MemoryStore
+
+    rt = DashboardRuntime(memory=MemoryStore(db_path=str(tmp_path / "p.db")))
+    rt.scorecard = lambda: {"resolved": 10, "seats": [
+        {"seat_id": "a", "samples": 10, "calibrated": True, "beats_coin_flip": True},
+        {"seat_id": "b", "samples": 10, "calibrated": False, "beats_coin_flip": True},
+        {"seat_id": "c", "samples": 10, "calibrated": True, "beats_coin_flip": False},
+    ], "fit": {"usable": False}}
+    rt.lessons = lambda limit=200: []
+    assert rt.paper_progress()["seats_calibrated"] == 1
+    assert rt.paper_progress()["seats_scored"] == 3
+
+
+def test_overview_ships_the_paper_panel():
+    from dashboard.pages import OVERVIEW_HTML
+    assert 'id="paper"' in OVERVIEW_HTML
+    assert 'id="seatperf"' in OVERVIEW_HTML
+    assert "graded trades" in OVERVIEW_HTML
+    # The empty state must explain how a seat is scored.
+    assert "dissenter" in OVERVIEW_HTML
+
+
+def test_paper_route_is_served(tmp_path):
+    from fastapi.testclient import TestClient
+    from dashboard.runtime import build_runtime
+    from dashboard.server import create_app
+    from memory.store import MemoryStore
+    body = TestClient(create_app(build_runtime(
+        memory=MemoryStore(db_path=str(tmp_path / "p.db"))))).get("/api/paper").json()
+    assert body["required"] == MIN_PAPER_TRADES_FOR_LIVE

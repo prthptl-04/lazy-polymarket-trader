@@ -55,12 +55,18 @@ class SeatScore:
 
     @property
     def is_calibrated(self) -> bool:
-        """Within 10 points either way. Wider than that is a real bias."""
-        return abs(self.overconfidence) <= 10.0
+        """Within 10 points either way. Wider than that is a real bias.
+
+        A seat with NO samples is not calibrated — it is unscored. Returning
+        True there reads as a clean bill of health for a seat that has never
+        been tested, and it inflates any "how many seats are doing well" count.
+        """
+        return self.samples > 0 and abs(self.overconfidence) <= 10.0
 
     @property
     def beats_a_coin_flip(self) -> bool:
-        return self.brier < 0.25
+        """Unscored is not better than chance; it is unknown."""
+        return self.samples > 0 and self.brier < 0.25
 
     def as_dict(self) -> dict:
         return {

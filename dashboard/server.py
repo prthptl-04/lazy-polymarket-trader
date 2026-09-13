@@ -134,6 +134,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_llm() -> dict:
         return runtime.llm_status()
 
+    @app.get("/api/paper")
+    def api_paper() -> dict:
+        return runtime.paper_progress()
+
     @app.get("/api/agents")
     def api_agents() -> list[dict]:
         return runtime.agents()

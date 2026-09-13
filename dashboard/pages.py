@@ -40,18 +40,24 @@ _OVERVIEW_BODY = """
   <div class="panel"><h2>Recent decisions</h2><div id="audit"></div></div>
 </div>
 
-<div class="panel">
-  <h2>What the fund has learned &mdash; written on every loss</h2>
-  <div id="lessons"></div>
+<div class="panel" style="margin-bottom:16px">
+  <h2>Paper trading &mdash; earning the right to trade real money</h2>
+  <div id="paper"></div>
+</div>
+
+<div class="grid g2">
+  <div class="panel"><h2>Agent performance on paper</h2><div id="seatperf"></div></div>
+  <div class="panel"><h2>What the fund has learned &mdash; written on every loss</h2>
+    <div id="lessons"></div></div>
 </div>
 """
 
 _OVERVIEW_JS = """
 async function refresh(){
-  const [rec,pnl,bal,agents,fund,audit,pos,vs,lessons,llm] = await Promise.all([
+  const [rec,pnl,bal,agents,fund,audit,pos,vs,lessons,llm,paper,roster] = await Promise.all([
     j('/api/record'), j('/api/pnl'), j('/api/balances'), j('/api/agents'),
     j('/api/fund'), j('/api/audit?limit=12'), j('/api/positions'), j('/api/venue-sessions'),
-    j('/api/lessons?limit=8'), j('/api/llm')]);
+    j('/api/lessons?limit=8'), j('/api/llm'), j('/api/paper'), j('/api/agents')]);
   renderLlm(llm);
   if(vs && renderVenuePills(vs.sessions)) wireVenueSwitches(refresh);
 
@@ -113,6 +119,48 @@ async function refresh(){
           +'<tr><td>orders</td><td class="num">'+c.submitted+'</td></tr>'
           +'<tr><td>exits</td><td class="num">'+c.exits+'</td></tr></table>'
           +(c.halted_reason?'<div class="warn">HALTED: '+c.halted_reason+'</div>':''));
+  }
+
+  if(paper){
+    const pct = paper.pct_complete;
+    const done = paper.graded_paper_trades >= paper.required;
+    paint('paper',
+      '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+      + '<div class="stat">' + paper.graded_paper_trades + ' <span style="font-size:15px;color:var(--muted)">of '
+      + paper.required + ' graded trades</span></div>'
+      + '<div class="' + (done?'up':'sub') + '">' + pct.toFixed(0) + '%</div></div>'
+      + '<div class="bar"><span style="width:' + Math.max(2, pct) + '%"></span></div>'
+      + '<div class="sub">' + (done
+          ? 'Trade count satisfied. The remaining rule-#13 conditions are on the Venues page.'
+          : 'Rule #13 requires ' + paper.required + ' graded paper trades before live trading unlocks.')
+      + '</div>'
+      + '<table style="margin-top:12px">'
+      + '<tr><td>deliberations held</td><td class="num">' + paper.deliberations + '</td></tr>'
+      + '<tr><td>theses resolved (scored)</td><td class="num">' + paper.resolved + '</td></tr>'
+      + '<tr><td>seats beating a coin flip <span style="color:var(--dim)">and honest about it</span></td>'
+      + '<td class="num">' + paper.seats_calibrated + ' of ' + (paper.seats_scored||0) + '</td></tr>'
+      + '<tr><td>lessons written from losses</td><td class="num">' + paper.lessons_learned + '</td></tr>'
+      + '<tr><td>confidence calibration</td><td class="num">'
+      + (paper.shrink_fit && paper.shrink_fit.usable
+          ? 'fitted ' + paper.shrink_fit.shrink.toFixed(2)
+          : '<span style="color:var(--dim)">not yet fittable</span>') + '</td></tr>'
+      + '</table>');
+
+    const icons = {}; (roster||[]).forEach(a=>icons[a.id]=a.icon);
+    paint('seatperf', (paper.seats && paper.seats.length)
+      ? paper.seats.map(s=>
+          '<div class="seatrow"><span class="ico">'+(icons[s.seat_id]||'•')+'</span>'
+          +'<span class="nm">'+s.seat_name+'</span>'
+          +'<span class="m">'+s.samples+' calls</span>'
+          +'<span class="m '+(s.hit_rate>=0.5?'up':'down')+'">'+(s.hit_rate*100).toFixed(0)+'%</span>'
+          +'<span class="m">brier '+s.brier.toFixed(2)+'</span>'
+          +'<span class="tag '+(!s.samples?'':(s.calibrated?'ok':'no'))+'">'
+          +(!s.samples ? 'unscored'
+             : (s.calibrated?'calibrated':(s.overconfidence>0?'overconfident':'underconfident')))
+          +'</span></div>').join('')
+      : '<div class="empty">No seat has been scored yet.<br><span style="font-size:12px">'
+        +'A seat is scored on ITS OWN call when a position closes &mdash; a dissenter '
+        +'who was right scores well even when the committee lost.</span></div>');
   }
 
   if(lessons){

@@ -129,6 +129,7 @@ class McpSession:
     timeout_seconds: float = 60.0
     _session: Any = field(default=None, init=False)
     _tools: dict[str, dict] = field(default_factory=dict, init=False)
+    _stack: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.storage = self.storage or FileTokenStorage(self.server_url)
@@ -187,20 +188,66 @@ class McpSession:
         return _unwrap(result)
 
     async def close(self) -> None:
-        session, self._session = self._session, None
-        if session is not None and hasattr(session, "__aexit__"):
+        self._session = None
+        stack, self._stack = self._stack, None
+        if stack is not None:
             try:
-                await session.__aexit__(None, None, None)
+                await stack.aclose()
             except Exception:
-                pass
+                # A server that has already dropped the connection makes the
+                # unwind noisy; the session is gone either way.
+                logger.debug("MCP unwind was not clean", exc_info=True)
 
     async def _open(self) -> Any:
         if self.session_factory is not None:
             return await self.session_factory(self)
-        raise McpUnavailable(
-            "no session_factory: build one with mcp.client.streamable_http + "
-            "mcp.client.auth.OAuthClientProvider(storage=self.storage)"
+        return await self._open_real()
+
+    async def _open_real(self) -> Any:
+        """Open a real streamable-HTTP session and KEEP it open.
+
+        `streamablehttp_client` and `ClientSession` are async context managers.
+        Re-entering them per call would pay a TLS handshake and an MCP
+        initialize round trip every time — a round table makes seven calls per
+        candidate. An AsyncExitStack holds them open for the daemon's lifetime
+        and `close()` unwinds them.
+        """
+        from contextlib import AsyncExitStack
+
+        from mcp.client.auth import OAuthClientProvider
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.shared.auth import OAuthClientMetadata
+
+        async def _no_browser(url: str) -> None:
+            raise McpUnavailable(
+                "this session needs interactive authorisation; run "
+                "`python scripts_mcp_auth.py` once from a desktop"
+            )
+
+        async def _no_callback() -> tuple[str, Optional[str]]:
+            raise McpUnavailable("interactive authorisation required")
+
+        provider = OAuthClientProvider(
+            server_url=self.server_url,
+            client_metadata=OAuthClientMetadata(
+                client_name="Lazy Fund",
+                redirect_uris=["http://localhost:8900/callback"],
+                grant_types=["authorization_code", "refresh_token"],
+                response_types=["code"],
+            ),
+            storage=self.storage,
+            redirect_handler=_no_browser,
+            callback_handler=_no_callback,
         )
+
+        stack = AsyncExitStack()
+        read, write, _ = await stack.enter_async_context(
+            streamablehttp_client(self.server_url, auth=provider))
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        self._stack = stack
+        return session
 
 
 class McpUnavailable(RuntimeError):

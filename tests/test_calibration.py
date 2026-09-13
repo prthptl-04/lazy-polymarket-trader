@@ -307,3 +307,15 @@ def test_scorecard_route_reports_seats_once_resolved(tmp_path):
     by_id = {s["seat_id"]: s for s in body["seats"]}
     assert by_id["risk"]["hit_rate"] == 1.0
     assert body["committee"]["hit_rate"] == 0.0
+
+
+def test_an_unscored_seat_is_not_calibrated():
+    """A seat with no samples has never been tested. Reporting it as
+    calibrated is a clean bill of health for something never examined, and it
+    inflates any 'how many seats are doing well' count."""
+    card = score_seats([_delib("t1", [("a", "neutral", 50), ("b", "bullish", 70)])],
+                       {"t1": _outcome("t1", 0.05)})
+    unscored = next(s for s in card.seats if s.seat_id == "a")
+    assert unscored.samples == 0
+    assert unscored.is_calibrated is False
+    assert unscored.beats_a_coin_flip is False

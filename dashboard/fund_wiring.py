@@ -38,7 +38,9 @@ from trading.discovery import MarketScout
 from trading.sec_edgar import SecEdgarFundamentals
 from trading.pdt import DayTradeTracker
 from trading.pipeline import ThesisPipeline
+from trading.mcp_client import McpSession
 from trading.venues.paper import PaperVenue
+from trading.venues.robinhood import MCP_URL, RobinhoodVenue
 from trading.venues.router import VenueRouter
 from verification.criteria import DEFAULT_CRITERIA, VerifiedOutcomeCriteria
 from verification.outcome_grader import OutcomeGrader
@@ -101,10 +103,20 @@ def build_fund(
     if not gemini.available:
         logger.info("Gemini failover not configured (no GEMINI_API_KEY, no CLI)")
 
+    # Robinhood supplies REAL prices; fills stay simulated. That is what makes
+    # the 50 paper trades rule #13 requires actually meaningful — a paper record
+    # built on synthetic prices proves nothing about live behaviour.
+    #
+    # Execution deliberately stays on PaperVenue. The live gate would refuse a
+    # real venue anyway, but routing to paper means we are not relying on a gate
+    # to avoid spending money; the order simply has nowhere real to go.
+    quote_source, robinhood = _robinhood_quotes(memory)
+
     trading_venue = venue or PaperVenue(
         name="paper",
         starting_cash_usd=cfg.bankroll_usd,
         supported=("equity", "crypto"),
+        quote_source=quote_source,
     )
 
     kill_switch = DailyLossKillSwitch(max_daily_loss_usd=cfg.max_daily_loss_usd)
@@ -153,7 +165,24 @@ def build_fund(
     # Exposed so the dashboard can show open positions and their live stops.
     scheduler.position_book = position_book
     scheduler.llm_router = router
+    scheduler.robinhood = robinhood
     return scheduler
+
+
+def _robinhood_quotes(memory: Any) -> tuple[Optional[Any], Optional[Any]]:
+    """Live quotes from Robinhood, if the daemon holds an authenticated session.
+
+    Returns (quote_source, venue). Both None when unauthenticated — the fund
+    then falls back to the data provider's prices and says so, rather than
+    failing to start.
+    """
+    session = McpSession(server_url=MCP_URL)
+    if not session.auth_summary().get("authenticated"):
+        logger.info("Robinhood not authenticated; run scripts_mcp_auth.py once "
+                    "for live quotes. Falling back to provider prices.")
+        return None, None
+    rh = RobinhoodVenue(session=session)
+    return rh.get_quote, rh
 
 
 def _default_client() -> Optional[Any]:
