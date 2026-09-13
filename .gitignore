@@ -40,3 +40,4 @@ mcp-tokens.json
 ui/node_modules/
 ui/dist/
 dashboard/static/
+ui/tsconfig.tsbuildinfo

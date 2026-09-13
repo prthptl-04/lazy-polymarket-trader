@@ -2,7 +2,20 @@ import {
   Area, AreaChart, CartesianGrid, Line, LineChart, ReferenceDot,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { money } from "./primitives";
+import { Empty, money } from "./primitives";
+
+/** One point is not a line. Recharts happily renders a lone dot in an empty
+ *  frame, which reads as a broken chart rather than as "nothing has closed
+ *  yet" — so say which it is. */
+function tooShort(values: number[], height: number) {
+  if (values.length >= 2) return null;
+  return (
+    <div style={{ height }} className="flex items-center justify-center">
+      <Empty title="Not enough history to plot."
+             hint="The curve starts once a position closes — an open position has an opinion about itself, a closed one has a result." />
+    </div>
+  );
+}
 
 export interface Marker { x: number; y: number; label: string; tone?: "entry" | "stop" | "target" }
 
@@ -50,6 +63,8 @@ function markerShape(tone: Marker["tone"], label: string) {
 export function EquityArea({
   values, colour = "#2d52f3", markers = [], height = 190,
 }: { values: number[]; colour?: string; markers?: Marker[]; height?: number }) {
+  const short = tooShort(values, height);
+  if (short) return short;
   const data = values.map((v, i) => ({ i, v }));
   const id = `grad-${colour.replace("#", "")}`;
   return (
@@ -82,6 +97,8 @@ export function EquityArea({
 export function Sparkline({
   values, colour = "#00c805", markers = [], height = 230,
 }: { values: number[]; colour?: string; markers?: Marker[]; height?: number }) {
+  const short = tooShort(values, height);
+  if (short) return short;
   const data = values.map((v, i) => ({ i, v }));
   return (
     <ResponsiveContainer width="100%" height={height}>

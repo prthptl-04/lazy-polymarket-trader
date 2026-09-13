@@ -4,7 +4,10 @@
 @tailwind utilities;
 
 @layer base {
-  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  /* The body gradient is `fixed`, so it paints only the viewport. Any area
+     beyond it — a tall page, an over-scroll, a full-page capture — falls
+     through to html, which must not be white. */
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; background: #070b12; }
   body {
     @apply font-sans tracking-tight text-white/90 min-h-screen;
     /* Deep slate → dark emerald. The glass layers need a shifting, non-flat

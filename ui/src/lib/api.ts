@@ -76,6 +76,13 @@ export interface PaperProgress {
   seats_scored: number; lessons_learned: number;
   seats: SeatScore[];
   shrink_fit: { usable: boolean; shrink: number | null; reason: string };
+  equity_curve: number[]; realized_usd: number;
+  win_rate: number | null; closed: number;
+}
+export interface Feed {
+  symbol: string; entry: number | null; bid: number | null; ask: number | null;
+  last: number | null; spread_bps: number | null; change_pct: number | null;
+  reason: string | null;
 }
 export interface SeatScore {
   seat_id: string; seat_name: string; samples: number; hit_rate: number;
@@ -94,4 +101,25 @@ export interface Candles {
 export interface Deliberation {
   thesis_id: string; symbol: string; signal: string | null; confidence: number | null;
   status: string; created: number; seats: number; tally: Record<string, number>;
+}
+
+export interface TradeRow {
+  thesis_id: string; symbol: string; resolved_at: number | null;
+  side: string; signal: string | null; confidence: number | null;
+  realized_pct: number | null; won: boolean; notes: string | null;
+  blamed: { name: string; confidence: number; reasoning: string }[];
+  vindicated: { name: string; signal: string; reasoning: string }[];
+  abstained: string[];
+  actions: { code: string; lesson: string }[];
+}
+export interface Opinion {
+  seat_id: string; seat_name: string; signal: string; confidence: number;
+  reasoning: string; key_points: string[]; concerns: string[];
+  failed: boolean; error: string | null;
+}
+export interface LatestDebate {
+  thesis_id: string; symbol: string; status: string; created: number;
+  opinions: Opinion[]; unanimous: boolean; abstentions: string[];
+  consensus: { signal?: string; confidence?: number; summary?: string;
+               dissent?: string; transcript?: string };
 }

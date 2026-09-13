@@ -108,6 +108,49 @@ class DashboardRuntime:
         })
         return out
 
+    async def feeds(self, venue: str, *, limit: int = 8) -> list[dict]:
+        """Live quotes for what this venue is holding right now.
+
+        Quotes come from the venue adapter, not from the data provider: the
+        number that matters for an exit is the one the broker would fill at,
+        and a provider's delayed mark would quietly disagree with it. A symbol
+        whose quote fails is returned with its reason rather than dropped —
+        a feed that silently shortens is indistinguishable from a flat book.
+        """
+        prediction = venue == "polymarket_us"
+        held = [
+            p for p in self.positions()
+            if (p["asset_class"] == "prediction") == prediction
+        ][:limit]
+
+        adapter = (self.venues or {}).get(venue)
+        rows: list[dict] = []
+        for pos in held:
+            row = {
+                "symbol": pos["symbol"],
+                "entry": pos["entry"],
+                "bid": None, "ask": None, "last": None,
+                "spread_bps": None, "change_pct": None, "reason": None,
+            }
+            if adapter is None:
+                row["reason"] = "venue not attached"
+            else:
+                try:
+                    q = await adapter.get_quote(pos["symbol"])
+                    row.update(
+                        bid=q.bid, ask=q.ask, last=q.last or q.mid,
+                        spread_bps=q.spread_bps,
+                    )
+                    mark = row["last"] or q.mid
+                    if mark and pos["entry"]:
+                        row["change_pct"] = round(
+                            (mark - pos["entry"]) / pos["entry"] * 100, 3
+                        )
+                except Exception as e:
+                    row["reason"] = f"{type(e).__name__}"
+            rows.append(row)
+        return rows
+
     # ---------- history ----------
 
     def recent_trades(self, limit: int = 20) -> list[dict]:
@@ -290,6 +333,7 @@ class DashboardRuntime:
         graded = [t for t in trades if t.get("grade_pass")]
 
         card = self.scorecard()
+        record = self.record()
         lessons = self.lessons(limit=200)
         seats = card.get("seats") or []
         # A seat is "improving" once it is both calibrated and better than a
@@ -309,7 +353,97 @@ class DashboardRuntime:
             "seats_scored": len([s for s in seats if s.get("samples")]),
             "lessons_learned": len(lessons),
             "shrink_fit": card.get("fit"),
+            # The paper engine IS the position book today, so its curve is
+            # the record's curve. Exposed here so the paper panel does not
+            # have to fetch the live record to draw its own performance.
+            "equity_curve": record["equity_curve"],
+            "realized_usd": record["realized_usd"],
+            "win_rate": record["win_rate"],
+            "closed": record["closed"],
         }
+
+    # ---------- trade history with agent attribution ----------
+
+    def trade_history(self, limit: int = 25) -> list[dict]:
+        """Closed trades joined to the deliberation that caused them.
+
+        The attribution is the point. A row says which seats backed the losing
+        call and which one dissented and was right, because "the committee was
+        wrong" is not actionable and "the Quant was confidently wrong while the
+        Risk Manager objected" is.
+
+        Blame is assigned ONLY on a loss, and only to seats whose own signal
+        matched the consensus — a seat that abstained or dissented is not
+        responsible for a call it did not make.
+        """
+        try:
+            outcomes = self.memory.resolved_outcomes(limit=limit * 2)
+            lessons = self.memory.recent_lessons("*", limit=500)
+        except Exception:
+            return []
+
+        by_symbol: dict[str, list[dict]] = {}
+        for l in lessons:
+            ctx = l.get("context") or {}
+            if isinstance(ctx, dict) and ctx.get("symbol"):
+                by_symbol.setdefault(ctx["symbol"], []).append(
+                    {"code": ctx.get("code"), "lesson": l.get("lesson", "")})
+
+        rows: list[dict] = []
+        for o in outcomes[:limit]:
+            thesis = None
+            try:
+                thesis = self.memory.get_deliberation(o["thesis_id"])
+            except Exception:
+                pass
+            payload = (thesis or {}).get("payload") or {}
+            opinions = payload.get("opinions") or []
+            consensus = payload.get("consensus") or {}
+            signal = consensus.get("signal") or o.get("signal")
+            realized = o.get("realized_return")
+            won = bool(o.get("correct"))
+
+            backed, dissented, abstained = [], [], []
+            for op in opinions:
+                if op.get("failed"):
+                    abstained.append(op.get("seat_name"))
+                elif op.get("signal") == signal:
+                    backed.append({"name": op.get("seat_name"),
+                                   "confidence": op.get("confidence"),
+                                   "reasoning": op.get("reasoning", "")})
+                elif op.get("signal") in ("bullish", "bearish"):
+                    dissented.append({"name": op.get("seat_name"),
+                                      "signal": op.get("signal"),
+                                      "reasoning": op.get("reasoning", "")})
+
+            rows.append({
+                "thesis_id": o["thesis_id"],
+                "symbol": o["symbol"],
+                "resolved_at": o.get("resolved_at"),
+                "side": "buy" if signal == "bullish" else "sell" if signal == "bearish" else "—",
+                "signal": signal,
+                "confidence": consensus.get("confidence") or o.get("confidence"),
+                "realized_return": realized,
+                "realized_pct": None if realized is None else round(realized * 100, 2),
+                "won": won,
+                "notes": o.get("notes"),
+                # Only meaningful on a loss; a seat that was right is not to blame.
+                "blamed": [] if won else backed,
+                "vindicated": dissented if not won else [],
+                "abstained": abstained,
+                "actions": by_symbol.get(o["symbol"], [])[:4],
+            })
+        return rows
+
+    def latest_deliberation(self) -> Optional[dict]:
+        """Newest debate with every seat's reasoning, for the dialogue panel."""
+        try:
+            rows = self.memory.recent_deliberations(limit=1)
+        except Exception:
+            return None
+        if not rows:
+            return None
+        return self.deliberation(rows[0]["thesis_id"])
 
     def agents(self) -> list[dict]:
         """The roster, for the UI's hover cards."""

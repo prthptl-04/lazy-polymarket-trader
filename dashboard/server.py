@@ -152,6 +152,20 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_paper() -> dict:
         return runtime.paper_progress()
 
+    @app.get("/api/feeds")
+    async def api_feeds(venue: str, limit: int = 8) -> list[dict]:
+        return await runtime.feeds(venue, limit=max(1, min(25, limit)))
+
+    @app.get("/api/trade-history")
+    def api_trade_history(limit: int = 25) -> list[dict]:
+        return runtime.trade_history(limit=max(1, min(200, limit)))
+
+    @app.get("/api/roundtable/latest")
+    def api_latest_deliberation() -> Any:
+        found = runtime.latest_deliberation()
+        return found if found is not None else JSONResponse(
+            status_code=404, content={"error": "no deliberation yet"})
+
     @app.get("/api/agents")
     def api_agents() -> list[dict]:
         return runtime.agents()
