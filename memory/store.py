@@ -20,6 +20,42 @@ class MemoryStore:
         # we never share a transaction across threads, so this is safe.
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.executescript(SCHEMA_PATH.read_text())
+        self._migrate()
+        self._conn.commit()
+
+    # Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS`
+    # is a NO-OP on an existing database, so a column added to schema.sql alone
+    # never appears on a live file — and the first write would fail with
+    # "no such column" inside a caller that catches Exception, losing the row
+    # silently. Every added column belongs in BOTH places.
+    _ADDED_COLUMNS: dict[str, dict[str, str]] = {
+        "closed_trades": {
+            "planned_entry": "REAL", "planned_exit": "REAL",
+            "entry_fill_source": "TEXT", "exit_fill_source": "TEXT",
+            "adv_usd": "REAL", "spread_bps_at_entry": "INTEGER",
+        },
+        "trade_log": {
+            "filled": "INTEGER NOT NULL DEFAULT 0", "session": "TEXT", "venue": "TEXT",
+        },
+    }
+
+    def _migrate(self) -> None:
+        """Additive only: never drops, never rewrites, safe on every boot.
+
+        Deliberately allowed to RAISE. A store that cannot hold the ledger must
+        fail at startup, where someone is watching, rather than at the first
+        close, where the failure is caught and logged and the trade is gone.
+        """
+        for table, columns in self._ADDED_COLUMNS.items():
+            existing = {
+                row[1] for row in
+                self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not existing:
+                continue            # table not created yet; schema.sql owns it
+            for name, decl in columns.items():
+                if name not in existing:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
         self._conn.commit()
 
     def put(self, agent_id: str, key: str, value: Any) -> None:
@@ -47,24 +83,31 @@ class MemoryStore:
         paper: bool,
         grade_pass: bool,
         grade_reason: str | None,
+        filled: bool = False,
+        session: str | None = None,
+        venue: str | None = None,
     ) -> int:
         cur = self._conn.execute(
             """
-            INSERT INTO trade_log (agent_id, market_id, side, size, price, paper, grade_pass, grade_reason, created)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trade_log (agent_id, market_id, side, size, price, paper,
+                                   grade_pass, grade_reason, created, filled, session, venue)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (agent_id, market_id, side, size, price, int(paper), int(grade_pass), grade_reason, time.time()),
+            (agent_id, market_id, side, size, price, int(paper), int(grade_pass),
+             grade_reason, time.time(), int(filled), session, venue),
         )
         self._conn.commit()
         return cur.lastrowid
 
     def recent_trades(self, limit: int = 20) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id, agent_id, market_id, side, size, price, paper, grade_pass, grade_reason, created "
+            "SELECT id, agent_id, market_id, side, size, price, paper, grade_pass, "
+            "grade_reason, created, filled, session, venue "
             "FROM trade_log ORDER BY created DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        cols = ["id", "agent_id", "market_id", "side", "size", "price", "paper", "grade_pass", "grade_reason", "created"]
+        cols = ["id", "agent_id", "market_id", "side", "size", "price", "paper",
+                "grade_pass", "grade_reason", "created", "filled", "session", "venue"]
         return [dict(zip(cols, r)) for r in rows]
 
     # ----- Lessons (consulted by OrchestrationManager before every specialist run) -----
@@ -280,7 +323,9 @@ class MemoryStore:
     CLOSED_COLUMNS = ("symbol", "asset_class", "thesis_id", "venue", "mode", "reason",
                       "entry_price", "exit_price", "quantity", "stop", "target", "atr",
                       "realized_return", "realized_usd", "held_seconds",
-                      "opened_at", "closed_at")
+                      "opened_at", "closed_at",
+                      "planned_entry", "planned_exit", "entry_fill_source",
+                      "exit_fill_source", "adv_usd", "spread_bps_at_entry")
 
     def record_closed_trade(self, record: dict) -> None:
         """Persist one closed position. Unknown keys are ignored so the caller
@@ -289,8 +334,10 @@ class MemoryStore:
         self._conn.execute(
             "INSERT INTO closed_trades (symbol, asset_class, thesis_id, venue, mode, "
             "reason, entry_price, exit_price, quantity, stop, target, atr, "
-            "realized_return, realized_usd, held_seconds, opened_at, closed_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "realized_return, realized_usd, held_seconds, opened_at, closed_at, "
+            "planned_entry, planned_exit, entry_fill_source, exit_fill_source, "
+            "adv_usd, spread_bps_at_entry) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             values,
         )
         self._conn.commit()
@@ -300,7 +347,8 @@ class MemoryStore:
         rows = self._conn.execute(
             "SELECT symbol, asset_class, thesis_id, venue, mode, reason, entry_price, "
             "exit_price, quantity, stop, target, atr, realized_return, realized_usd, "
-            "held_seconds, opened_at, closed_at "
+            "held_seconds, opened_at, closed_at, planned_entry, planned_exit, "
+            "entry_fill_source, exit_fill_source, adv_usd, spread_bps_at_entry "
             "FROM closed_trades ORDER BY closed_at ASC LIMIT ?",
             (limit,),
         ).fetchall()

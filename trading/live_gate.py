@@ -111,14 +111,52 @@ class LiveTradingGate:
         return 0 < self.criteria.max_position_usd <= self.bankroll_usd
 
     def _graded_count(self) -> int:
+        """Closed PAPER round trips — not orders.
+
+        Rule #13's condition 4 says "50 paper TRADES". This used to count rows
+        in `trade_log` with grade_pass, which includes orders that were accepted
+        and never traded. Combined with extended-hours limit orders that cannot
+        fill, the cheapest path to opening this gate was fifty orders in which
+        nothing happened. A gate whose easiest route to open is the route where
+        nothing occurred is not a gate.
+
+        A closed trade can only exist downstream of `grade.passed` — the
+        pipeline routes nothing ungraded — so "graded" is satisfied by
+        construction. A NULL mode does NOT count: unknown resolves against the
+        operator, the same stance as `_is_live_venue`.
+        """
         if self.memory is None:
             return 0
         try:
-            return sum(1 for t in self.memory.recent_trades(limit=100_000)
-                       if t.get("grade_pass"))
+            return sum(1 for t in self.memory.closed_trades(limit=100_000)
+                       if t.get("mode") == "paper")
         except Exception:
-            logger.exception("could not count graded paper trades")
             return 0
+
+    def order_diagnostics(self) -> dict:
+        """Fill rate, reported beside the gate but never gating it.
+
+        A near-zero extended-hours fill rate is how you discover the counter is
+        being fed by orders that cannot trade.
+        """
+        try:
+            rows = self.memory.recent_trades(limit=100_000) if self.memory else []
+        except Exception:
+            rows = []
+        graded = [t for t in rows if t.get("grade_pass")]
+        filled = [t for t in graded if t.get("filled")]
+        by_session: dict[str, dict] = {}
+        for t in graded:
+            bucket = by_session.setdefault(t.get("session") or "unknown",
+                                           {"graded": 0, "filled": 0})
+            bucket["graded"] += 1
+            bucket["filled"] += 1 if t.get("filled") else 0
+        return {
+            "orders_graded": len(graded),
+            "orders_filled": len(filled),
+            "fill_rate_pct": round(len(filled) / len(graded) * 100, 1) if graded else None,
+            "fill_rate_by_session": by_session,
+        }
 
     def _paper_trades_ok(self) -> bool:
         return self._graded_count() >= MIN_PAPER_TRADES_FOR_LIVE

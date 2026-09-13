@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS trade_log (
     paper       INTEGER NOT NULL,
     grade_pass  INTEGER NOT NULL,
     grade_reason TEXT,
-    created     REAL NOT NULL
+    created     REAL NOT NULL,
+    filled      INTEGER NOT NULL DEFAULT 0,   -- did it TRADE, not just get accepted
+    session     TEXT,                         -- fill rate by session
+    venue       TEXT                          -- which adapter took it
 );
 
 CREATE INDEX IF NOT EXISTS idx_trade_log_market ON trade_log (market_id);
@@ -155,6 +158,9 @@ CREATE INDEX IF NOT EXISTS idx_llm_costs_created ON llm_costs (created);
 -- dashboard — reset to empty on every restart. thesis_outcomes survives but
 -- carries only the return, not the size, the venue, the plan it was opened
 -- under, or why it ended.
+-- Added with the fill-capture work. See MemoryStore._migrate: CREATE TABLE IF
+-- NOT EXISTS is a no-op on an existing database, so a column added here alone
+-- would never appear on a live file and the first write would be swallowed.
 CREATE TABLE IF NOT EXISTS closed_trades (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol          TEXT NOT NULL,
@@ -173,7 +179,13 @@ CREATE TABLE IF NOT EXISTS closed_trades (
     realized_usd    REAL NOT NULL,
     held_seconds    REAL,
     opened_at       REAL,
-    closed_at       REAL NOT NULL
+    closed_at       REAL NOT NULL,
+    planned_entry       REAL,      -- the quote mid the plan and the grade were built on
+    planned_exit        REAL,      -- the mid that triggered the exit signal
+    entry_fill_source   TEXT,      -- 'venue' | 'mid'
+    exit_fill_source    TEXT,      -- 'venue' | 'mid'
+    adv_usd             REAL,      -- capacity; captured now, computed when it binds
+    spread_bps_at_entry INTEGER    -- capacity and fill quality
 );
 
 CREATE INDEX IF NOT EXISTS idx_closed_symbol ON closed_trades (symbol);

@@ -32,15 +32,22 @@ def main() -> None:
     host = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
     port = int(os.environ.get("DASHBOARD_PORT", "8765"))
 
+    # One bankroll, one source. The dashboard used to read BANKROLL_USD
+    # (default 100) while the fund sized against config.bankroll_usd (500), so
+    # the equity curve and the drawdown denominator were five times too small —
+    # every percentage a reader inferred was overstated fivefold. FundConfig
+    # already resolves FUND_BANKROLL_USD > TOML > default; two env names for one
+    # number is how they drifted apart.
+    config = load_config()
+
     runtime = build_runtime(
         memory=MemoryStore(),
-        starting_bankroll_usd=float(os.environ.get("BANKROLL_USD", "100")),
+        starting_bankroll_usd=config.bankroll_usd,
     )
 
     # Attach the hedge-fund engine if it can be built. Returns None when the
     # watchlist is empty or no Anthropic key is set, in which case the
     # dashboard still runs and reports the fund as not attached.
-    config = load_config()
     runtime.fund_scheduler = build_fund(config=config, memory=runtime.memory)
     if runtime.fund_scheduler is None:
         print(

@@ -43,6 +43,7 @@ from typing import Any, Optional, Sequence
 from roundtable.postmortem import Postmortem, recent_lesson_lines
 from trading.candidate_builder import build_candidate
 from trading.fund_config import is_thesis_stale
+from trading.pipeline import EXTENDED_HOURS_CUSHION_BPS
 from trading.sessions import Session, session_at, should_flatten_crypto
 from trading.venues.base import OrderRequest
 
@@ -264,11 +265,17 @@ class FundLoop:
             and result.trade.is_entry
             and result.size is not None
         ):
+            entry_fill = self._fill_price(result.ack)
             self.position_book.open(
                 symbol=symbol,
                 asset_class=asset_class,
                 quantity=result.size.quantity,
-                entry_price=built.exit_plan.entry,
+                # The venue's price, not the mid the plan was drawn on.
+                entry_price=entry_fill if entry_fill is not None else built.exit_plan.entry,
+                planned_entry=built.exit_plan.entry,
+                entry_fill_source="venue" if entry_fill is not None else "mid",
+                spread_bps_at_entry=built.candidate.spread_bps,
+                mode=self._venue_mode(result.ack),
                 plan=built.exit_plan,
                 thesis_id=thesis.thesis_id,
                 # Carried so the outcome can be scored against what was staked.
@@ -335,25 +342,42 @@ class FundLoop:
         once the price has moved, which is exactly the state a stopped-out
         position is in.
         """
-        quotes = await self._quote_map(self.position_book.open_symbols())
+        quotes = await self._quotes(self.position_book.open_symbols())
         if not quotes:
             return []
+        marks = {s: q.mid for s, q in quotes.items()}
 
+        session = session_at(moment)
         done: list[dict] = []
-        for signal in self.position_book.check_exits(quotes):
+        for signal in self.position_book.check_exits(marks):
             try:
+                # An exit used to go out as a plain market order. The router
+                # refuses equity market orders in extended hours, so a stop that
+                # fired premarket or after-hours could not execute AT ALL — the
+                # fund could enter in a session it was unable to leave.
+                exit_kwargs = self._exit_order_kwargs(
+                    quotes.get(signal.symbol), session, signal.position.asset_class)
+                if exit_kwargs is None:
+                    report.errors.append(
+                        f"EXIT UNPRICEABLE {signal.symbol} ({signal.reason}): "
+                        f"{session.value} needs a two-sided quote to price a "
+                        "marketable limit; the position stays open and will retry"
+                    )
+                    continue
                 ack = await self.router.place(
                     OrderRequest(
                         symbol=signal.symbol, side="sell",
                         asset_class=signal.position.asset_class,
                         quantity=signal.quantity,
                         thesis_id=signal.position.thesis_id,
+                        **exit_kwargs,
                     ),
                     moment,
                 )
                 if ack.is_filled:
-                    record = self.position_book.close(
-                        signal.symbol, signal.price, reason=signal.reason
+                    record = self._book_close(
+                        signal.symbol, ack,
+                        planned_price=signal.price, reason=signal.reason,
                     )
                     entry = {**(record or {}), "detail": signal.describe()}
                     # A loss is the only thing the fund learns from for certain.
@@ -376,6 +400,19 @@ class FundLoop:
                 )
         return done
 
+    async def _quotes(self, symbols: Sequence[str]) -> dict[str, Any]:
+        """Full quotes, not just mids — an extended-hours exit has to be priced
+        through the touch, and a mid cannot say where the touch is."""
+        out: dict[str, Any] = {}
+        for symbol in symbols:
+            try:
+                quote = await self.data.get_quote(symbol)
+            except Exception:
+                continue
+            if quote is not None and quote.mid is not None:
+                out[symbol] = quote
+        return out
+
     async def _quote_map(self, symbols: Sequence[str]) -> dict[str, float]:
         out: dict[str, float] = {}
         for symbol in symbols:
@@ -387,6 +424,66 @@ class FundLoop:
             if price is not None:
                 out[symbol] = price
         return out
+
+    @staticmethod
+    def _exit_order_kwargs(quote: Any, session: Any, asset_class: str) -> Optional[dict]:
+        """How to word an exit so the router will take it in this session.
+
+        Regular hours and crypto: a market order. Extended hours on equities:
+        a limit priced THROUGH the bid, because the router refuses both market
+        orders and limits that are not marked extended_hours. Returns None when
+        there is no two-sided quote to price against — a stop that cannot be
+        priced is a loud error, never a resting order nobody is watching.
+        """
+        if asset_class != "equity" or not getattr(session, "is_extended_hours", False):
+            return {"order_type": "market"}
+        bid = getattr(quote, "bid", None)
+        spread = getattr(quote, "spread_bps", None) if quote else None
+        if bid is None or spread is None:
+            return None
+        through = (spread / 2 + EXTENDED_HOURS_CUSHION_BPS) / 10_000
+        return {
+            "order_type": "limit",
+            "limit_price": round(bid * (1 - through), 4),
+            "extended_hours": True,
+        }
+
+    @staticmethod
+    def _fill_price(ack: Any) -> Optional[float]:
+        """What the venue actually traded at, or None if it did not say.
+
+        PaperVenue crosses the spread and adds slippage and stamps the result
+        into ack.raw["fill_price"]. Booking the mid instead — which is what the
+        fund did — computes every P&L figure, every realised return and the
+        fitted shrink on a cost-free round trip, while the grader is rejecting
+        trades on a slippage estimate. Graded as if cost matters, scored as if
+        it does not.
+        """
+        raw = getattr(ack, "raw", None) or {}
+        price = raw.get("fill_price")
+        try:
+            return float(price) if price is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _book_close(self, symbol: str, ack: Any, *, planned_price: float,
+                    reason: str) -> Optional[dict]:
+        """Remove a position from the book at the price it actually traded.
+
+        The single funnel for every close — stops and targets, a bearish
+        consensus on a held name, and the weekend crypto flatten. Two of those
+        three used to sell at the venue and never touch the book, leaving a
+        position that fired exits forever against inventory the fund no longer
+        owned and produced neither a closed_trades row nor a thesis outcome.
+        """
+        if self.position_book is None:
+            return None
+        fill = self._fill_price(ack)
+        return self.position_book.close(
+            symbol, fill if fill is not None else planned_price, reason=reason,
+            planned_exit=planned_price,
+            exit_fill_source="venue" if fill is not None else "mid",
+        )
 
     def _postmortem(self, record: Optional[dict], signal: Any) -> list[str]:
         """Turn a losing exit into lessons the seats read next time."""
@@ -441,6 +538,13 @@ class FundLoop:
                     moment,
                 )
                 if ack.is_filled:
+                    # Was a pure venue sale: the book kept the position and went
+                    # on checking a stop against inventory that was gone.
+                    self._book_close(
+                        holding.symbol, ack,
+                        planned_price=self._fill_price(ack) or 0.0,
+                        reason="flatten",
+                    )
                     closed.append(holding.symbol)
                 else:
                     report.errors.append(

@@ -104,15 +104,45 @@ async def test_a_live_venue_is_never_logged_as_paper(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_live_gate_can_now_count(tmp_path):
-    """End to end: the gate's condition 4 moves off zero."""
+async def test_orders_are_logged_with_whether_they_actually_traded(tmp_path):
+    pipeline, memory = _pipeline(tmp_path)
+    await pipeline.run(_thesis(), _candidate(), _plan(), MOMENT)
+    row = memory.recent_trades(limit=1)[0]
+    assert row["filled"] == 1 and row["session"] == "regular" and row["venue"] == "paper"
+
+
+@pytest.mark.asyncio
+async def test_graded_orders_alone_do_not_open_the_live_bar(tmp_path):
+    """The gate counts closed round trips. Orders that never traded — which is
+    every extended-hours limit-at-mid — must not count toward real money."""
     from trading.live_gate import LiveTradingGate
     pipeline, memory = _pipeline(tmp_path)
     for _ in range(3):
         await pipeline.run(_thesis(), _candidate(), _plan(), MOMENT)
     gate = LiveTradingGate(memory=memory, criteria=VerifiedOutcomeCriteria(),
                            bankroll_usd=1000.0)
-    assert gate.status()["graded_paper_trades"] == 3
+    assert memory.recent_trades(limit=10)          # orders were graded and logged
+    assert gate.status()["graded_paper_trades"] == 0, "no round trip has closed"
+
+    memory.record_closed_trade({"symbol": "AAPL", "asset_class": "equity",
+                                "mode": "paper", "entry_price": 100.0,
+                                "exit_price": 102.0, "quantity": 1.0,
+                                "realized_return": 0.02, "realized_usd": 2.0,
+                                "closed_at": 1.0})
+    assert gate.status()["graded_paper_trades"] == 1
+
+
+def test_a_trade_with_no_recorded_mode_does_not_count(tmp_path):
+    """Unknown resolves against the operator, as everywhere else in the gate."""
+    from trading.live_gate import LiveTradingGate
+    memory = MemoryStore(db_path=str(tmp_path / "nm.db"))
+    memory.record_closed_trade({"symbol": "AAPL", "asset_class": "equity",
+                                "entry_price": 100.0, "exit_price": 102.0,
+                                "quantity": 1.0, "realized_return": 0.02,
+                                "realized_usd": 2.0, "closed_at": 1.0})
+    gate = LiveTradingGate(memory=memory, criteria=VerifiedOutcomeCriteria(),
+                           bankroll_usd=1000.0)
+    assert gate.status()["graded_paper_trades"] == 0
 
 
 @pytest.mark.asyncio

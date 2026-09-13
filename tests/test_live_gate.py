@@ -43,9 +43,18 @@ class _LiveVenue(PaperVenue):
 
 
 def _ready_memory(tmp_path, trades=MIN_PAPER_TRADES_FOR_LIVE):
+    """The gate counts CLOSED PAPER ROUND TRIPS, not orders. An order that was
+    accepted and never traded is not a trade — and extended-hours limit orders
+    are exactly that, which made "fifty orders where nothing happened" the
+    cheapest route to opening this gate."""
     m = MemoryStore(db_path=str(tmp_path / "g.db"))
     for i in range(trades):
-        m.log_trade("fund", f"S{i}", "buy", 1.0, 0.5, True, True, "ok")
+        m.log_trade("fund", f"S{i}", "buy", 1.0, 0.5, True, True, "ok", filled=True)
+        m.record_closed_trade({
+            "symbol": f"S{i}", "asset_class": "equity", "mode": "paper",
+            "entry_price": 100.0, "exit_price": 101.0, "quantity": 1.0,
+            "realized_return": 0.01, "realized_usd": 1.0, "closed_at": float(i),
+        })
     m.record_lesson("*", LIVE_APPROVAL_LESSON)
     return m
 

@@ -80,3 +80,63 @@ async def test_an_unfilled_exit_leaves_the_position_open():
     assert "AAPL" in book.positions, "an unfilled exit must not close the book"
     assert report.errors and "EXIT FAILED" in report.errors[0]
     assert "unfilled" in report.errors[0]
+
+
+# ---------- the book records what the venue traded, on every close path ----------
+
+@pytest.mark.asyncio
+async def test_the_book_records_the_venue_fill_not_the_mid():
+    """PaperVenue crosses the spread AND adds 5bps, so a fill can never equal
+    the mid. Booking the mid computes every P&L figure on a cost-free round
+    trip while the grader rejects trades on a slippage estimate."""
+    venue = PaperVenue(starting_cash_usd=10_000.0)
+    venue.set_quote("AAPL", bid=99.90, ask=100.10)          # mid = 100.00
+    ack = await venue.place_order(OrderRequest(
+        symbol="AAPL", side="buy", asset_class="equity", order_type="market",
+        notional_usd=500.0, client_order_id="c1"))
+    assert ack.is_filled
+    fill = ack.raw["fill_price"]
+    assert fill > 100.0, "the paper venue must cost something to trade"
+
+    from trading.fund import FundLoop
+    assert FundLoop._fill_price(ack) == fill
+    assert FundLoop._fill_price(OrderAck(accepted=True, client_order_id="c",
+                                         status="filled")) is None
+
+
+@pytest.mark.asyncio
+async def test_a_bearish_close_removes_the_position_from_the_book():
+    """It used to sell at the venue and never touch the book: the position kept
+    firing exits against inventory the fund no longer owned, and neither a
+    closed trade nor a thesis outcome was ever written."""
+    from trading.fund import FundLoop
+
+    book = PositionBook()
+    book.open(symbol="AAPL", asset_class="equity", quantity=1.0, entry_price=100.0,
+              plan=ExitPlan(entry=100.0, stop=95.0, target=115.0,
+                            direction="long", atr=2.0), thesis_id="t1")
+    fund = FundLoop(router=None, position_book=book, pipeline=None,
+                    round_table=None, data=None)
+    ack = OrderAck(accepted=True, client_order_id="c1", status="filled",
+                   venue="paper", raw={"fill_price": 104.0})
+    record = fund._book_close("AAPL", ack, planned_price=104.5, reason="signal")
+
+    assert "AAPL" not in book.positions
+    assert record["exit_price"] == 104.0 and record["planned_exit"] == 104.5
+    assert record["exit_fill_source"] == "venue"
+
+
+@pytest.mark.asyncio
+async def test_a_close_without_a_venue_price_is_marked_mid_not_treated_as_free():
+    from trading.fund import FundLoop
+    book = PositionBook()
+    book.open(symbol="AAPL", asset_class="equity", quantity=1.0, entry_price=100.0,
+              plan=ExitPlan(entry=100.0, stop=95.0, target=115.0,
+                            direction="long", atr=2.0), thesis_id="t1")
+    fund = FundLoop(router=None, position_book=book, pipeline=None,
+                    round_table=None, data=None)
+    record = fund._book_close("AAPL", OrderAck(accepted=True, client_order_id="c",
+                                               status="filled"),
+                              planned_price=104.5, reason="target")
+    assert record["exit_price"] == 104.5
+    assert record["exit_fill_source"] == "mid", "an unpriced fill must be excluded, not costed at zero"

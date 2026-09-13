@@ -220,6 +220,14 @@ class ThesisPipeline:
             )
 
         # --- 5. route + submit ---
+        if needs_two_sided_quote(candidate):
+            return stop(
+                "session",
+                "extended-hours order needs a two-sided quote to price a "
+                "marketable limit; refusing rather than resting at the mid",
+                outcome="skipped", win_probability=p, size=size,
+                trade=trade, grade=grade,
+            )
         order = self._build_order(candidate, size.size_usd, plan, side="buy")
         ack = await self.router.place(order, moment)
         result = PipelineResult(
@@ -272,7 +280,7 @@ class ThesisPipeline:
         order = OrderRequest(
             symbol=symbol, side="sell", asset_class=candidate.asset_class,
             quantity=quantity, thesis_id=tid,
-            **_session_order_kwargs(candidate),
+            **_session_order_kwargs(candidate, side="sell"),
         )
         ack = await self.router.place(order, moment)
         result = PipelineResult(
@@ -293,7 +301,7 @@ class ThesisPipeline:
         return OrderRequest(
             symbol=candidate.symbol, side=side, asset_class=candidate.asset_class,
             notional_usd=size_usd, thesis_id=candidate.symbol,
-            **_session_order_kwargs(candidate, limit_price=plan.entry),
+            **_session_order_kwargs(candidate, limit_price=plan.entry, side=side),
         )
 
     def _notes(self, thesis: Thesis, size: SizeResult) -> list[str]:
@@ -351,6 +359,12 @@ class ThesisPipeline:
                 paper=self._is_paper(result),
                 grade_pass=bool(result.grade.passed),
                 grade_reason=result.grade.reason,
+                # Already computed and previously thrown away. Without it the
+                # ledger cannot tell an order that traded from one that sat at
+                # the venue — and extended-hours orders are the ones that sit.
+                filled=bool(result.ack.is_filled) if result.ack else False,
+                session=result.trade.session,
+                venue=result.ack.venue if result.ack else None,
             )
         except Exception:
             logger.exception("could not write the trade ledger for %s", result.symbol)
@@ -369,15 +383,45 @@ class ThesisPipeline:
         return False
 
 
-def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None) -> dict:
-    """Extended-hours sessions require a limit order and the explicit flag."""
-    if candidate.session in ("premarket", "after_hours"):
-        return {
-            "order_type": "limit",
-            "limit_price": limit_price if limit_price is not None else candidate.price,
-            "extended_hours": True,
-        }
-    return {"order_type": "market"}
+# How far THROUGH the touch an extended-hours limit is priced. A marketable
+# limit still needs a cushion: the book moves between the quote we read and the
+# order arriving. Raise it if fills are being missed, lower it if slippage bites
+# — it is a tuning knob, not a constant of nature.
+EXTENDED_HOURS_CUSHION_BPS = 10
+
+
+def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None,
+                          *, side: str = "buy") -> dict:
+    """Extended hours needs a limit order — a MARKETABLE one.
+
+    The previous version priced the limit at the mid, which by definition sits
+    inside the spread and cannot trade: verified live, a premarket buy came back
+    accepted, status "open", never filled. Those orders then counted toward the
+    50-trade live bar, so the cheapest route to real money was fifty orders in
+    which nothing happened.
+
+    Priced through the touch: a buy pays half the spread plus the cushion, a
+    sell gives it up. Without a two-sided quote there is no touch to price
+    through, and the caller must refuse rather than send a resting order.
+    """
+    if candidate.session not in ("premarket", "after_hours"):
+        return {"order_type": "market"}
+
+    reference = limit_price if limit_price is not None else candidate.price
+    half_spread = (candidate.spread_bps or 0) / 2
+    through = (half_spread + EXTENDED_HOURS_CUSHION_BPS) / 10_000
+    price = reference * (1 + through) if side == "buy" else reference * (1 - through)
+    return {
+        "order_type": "limit",
+        "limit_price": round(price, 4),
+        "extended_hours": True,
+    }
+
+
+def needs_two_sided_quote(candidate: Candidate) -> bool:
+    """An extended-hours order cannot be priced without a spread."""
+    return (candidate.session in ("premarket", "after_hours")
+            and candidate.spread_bps is None)
 
 
 def _slippage_estimate(candidate: Candidate) -> int:

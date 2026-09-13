@@ -54,6 +54,14 @@ class ManagedPosition:
     signal: Optional[str] = None
     confidence: Optional[float] = None
     venue: Optional[str] = None
+    mode: Optional[str] = None
+    # The mid the plan and the grade were built on. Kept beside the fill so the
+    # cost of trading is a subtraction rather than a guess — and NOT stored as a
+    # slippage figure: a derived column drifts from its inputs the first time
+    # someone corrects one and not the other.
+    planned_entry: Optional[float] = None
+    entry_fill_source: Optional[str] = None
+    spread_bps_at_entry: Optional[int] = None
     opened_at: float = field(default_factory=time.time)
 
     def unrealized_return(self, price: float) -> float:
@@ -112,6 +120,10 @@ class PositionBook:
         signal: Optional[str] = None,
         confidence: Optional[float] = None,
         venue: Optional[str] = None,
+        mode: Optional[str] = None,
+        planned_entry: Optional[float] = None,
+        entry_fill_source: Optional[str] = None,
+        spread_bps_at_entry: Optional[int] = None,
     ) -> ManagedPosition:
         """Register a fill. Adding to an existing position averages the entry
         and keeps the ORIGINAL plan — a stop should not drift looser because we
@@ -129,13 +141,17 @@ class PositionBook:
         position = ManagedPosition(
             symbol=symbol, asset_class=asset_class, quantity=quantity,
             entry_price=entry_price, plan=plan, thesis_id=thesis_id,
-            signal=signal, confidence=confidence, venue=venue,
+            signal=signal, confidence=confidence, venue=venue, mode=mode,
+            planned_entry=planned_entry, entry_fill_source=entry_fill_source,
+            spread_bps_at_entry=spread_bps_at_entry,
         )
         self.positions[symbol] = position
         return position
 
     def close(
-        self, symbol: str, exit_price: float, *, reason: ExitReason = "manual"
+        self, symbol: str, exit_price: float, *, reason: ExitReason = "manual",
+        planned_exit: Optional[float] = None,
+        exit_fill_source: Optional[str] = None,
     ) -> Optional[dict]:
         """Remove a position and record what the thesis actually did."""
         position = self.positions.pop(symbol, None)
@@ -165,8 +181,14 @@ class PositionBook:
             "target": position.plan.target,
             "atr": position.plan.atr,
             "venue": position.venue,
+            "mode": position.mode,
             "opened_at": position.opened_at,
             "closed_at": time.time(),
+            "planned_entry": position.planned_entry,
+            "planned_exit": planned_exit,
+            "entry_fill_source": position.entry_fill_source,
+            "exit_fill_source": exit_fill_source,
+            "spread_bps_at_entry": position.spread_bps_at_entry,
         }
         self.closed.append(record)
         self._persist_closed(record)
