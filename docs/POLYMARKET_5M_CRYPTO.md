@@ -43,6 +43,26 @@ Sources: [CFTC approval](https://www.regulatoryoversight.com/2025/12/cftc-approv
 [US status and state restrictions](https://startpolymarket.com/countries/united-states/) ·
 [state-by-state](https://next.io/prediction-markets/polymarket/legal/)
 
+### 0.1 New Jersey, specifically (added 2026-09-19)
+
+NJ is one of the contested states, and the contest is live. The Third Circuit
+affirmed a preliminary injunction on 2026-04-06 barring New Jersey from
+enforcing its gambling laws against Kalshi — but the Ninth Circuit ruled the
+*other* way for Nevada on 2026-08-28, and **New Jersey petitioned the Supreme
+Court on 2026-09-02**. There is an open circuit split and no merits ruling.
+
+Two things follow. Sports contracts are the contested ones; **crypto price
+contracts sit on much firmer ground**, being plainly CFTC-regulated commodity
+event contracts. And an injunction is not a settlement — the ground can move.
+
+### 0.2 If Polymarket US does not list 5M crypto
+
+That is Q1 resolving to "no", and §10 step 1 says the answer is to stop — not
+to route around the block. A VPN does not change what the block is for, and the
+failure mode is an account freeze on a venue holding the working capital.
+
+**The contract is available elsewhere, legally.** See §2.1.
+
 ---
 
 ## 1. What the contract actually is
@@ -80,6 +100,34 @@ Sources: [5-minute markets, mechanics](https://sailgp.com/prediction-markets/pol
 | Q5 | **Settlement oracle detail**: which Chainlink feed, what timestamp, tie behaviour ("at or above" suggests ties resolve UP). | The tie rule is worth real money on a coin-flip contract. |
 
 Q1 and Q2 are gating. Do not build past §7 until both are answered.
+
+### 2.1 Kalshi — the lawful venue for this strategy
+
+Kalshi is a CFTC-designated contract market and it lists what we actually want:
+
+- **15-minute and hourly crypto markets**, plus daily, on BTC and ETH among
+  others.
+- **REST, WebSocket and FIX APIs** — a real programmatic surface, documented
+  publicly, no application gate to read.
+- **Settlement on CF Benchmarks Real-Time Indices**: the final value is the
+  average of sixty one-second readings across the expiry minute, aggregated
+  from multiple exchanges.
+
+That settlement model is *better* for us than a single oracle print. A
+60-second average is far harder to push around, and it is smoother to model —
+but it changes the fair-value maths in §3: the terminal value is an average over
+the last minute, not a point, so the effective time-to-expiry is shorter and the
+terminal variance smaller than a naive Φ(·) on the close. Get that right or the
+model is biased in the last minute, which is where the volume is.
+
+The nearest available window is **15 minutes rather than 5**. Slower is not
+worse here: three times the window is three times the σ√T, a proportionally
+wider distribution of outcomes, and more time for the book to be wrong.
+
+Sources: [Kalshi crypto markets](https://help.kalshi.com/en/articles/13823838-crypto-markets) ·
+[15-minute category](https://kalshi.com/category/crypto/frequency/fifteen_min) ·
+[hourly](https://kalshi.com/category/crypto/hourly) ·
+[API docs](https://docs.kalshi.com/welcome)
 
 ---
 
@@ -135,6 +183,37 @@ At a 1-cent spread on a 1.00 contract, crossing costs **100 bps**. A strategy
 that earns "cents per trade" on a $1 contract earns 100–300 bps gross. The
 margin is thin enough that a 2% taker fee would eliminate it outright, and thin
 enough that **being a maker rather than a taker is probably mandatory**.
+
+**Kalshi's published schedule turns that from a caution into a constraint.** The
+taker fee is
+
+```
+fee_per_contract = ceil( 0.07 x P x (1 - P) x 100 ) / 100
+```
+
+which is a parabola peaking **at P = 0.50**, where it costs **1.75¢ per
+contract** — and falls toward zero at the extremes. Makers pay roughly a
+quarter of that, about 0.44¢ at the money. There is no settlement fee and no
+membership fee.
+
+Read that curve against the contract we want to trade. An "up or down over the
+next N minutes" market sits at 0.50 almost by construction, which means **the
+contract is priced at the exact maximum of the fee curve**. Taking at the money
+costs 175 bps round trip before spread — larger than the entire edge described
+in the request.
+
+Three conclusions, and they are not negotiable by cleverness:
+
+1. **Maker-only.** Taking at the money is unprofitable on arithmetic alone.
+2. **The mispricings worth trading are away from 0.50**, where the fee falls —
+   which is late in the window, once drift has moved the fair value off even.
+   That is also where the book is thinnest.
+3. **Fee-aware fair value.** The trigger is not `|fair − mid| > 0`, it is
+   `|fair − mid| > fee(P) + half_spread`, and `fee(P)` must be in the signal,
+   not applied afterwards as a disappointment.
+
+Source: [Kalshi fee schedule, July 2026](https://kalshi.com/docs/kalshi-fee-schedule.pdf) ·
+[fee explainer](https://help.kalshi.com/en/articles/13823805-fees)
 
 Concrete sizing check with the fund's current $500 bankroll: at $10 per position
 and 2 cents of net edge per contract, a round trip nets roughly **$0.20**. To
@@ -281,7 +360,7 @@ that lives for days. None of that describes a 5-minute contract.
 ## 10. Build order
 
 1. **Answer Q1 and Q2.** If the 5M contracts are not listed on the US venue,
-   stop — that is the finding.
+   the answer is Kalshi's 15-minute crypto markets (§2.1) — not a bypass.
 2. Market discovery: enumerate open 5M windows and their close timestamps.
 3. `fair_value.py` + tests. Pure, offline, no venue needed.
 4. Replay harness: past windows, underlying data, what the model would have
