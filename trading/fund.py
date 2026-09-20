@@ -256,15 +256,18 @@ class FundLoop:
 
         # Register the fill so the stop is actually watched from here on. A
         # position opened without this entry would ride through its stop.
-        if (
-            self.position_book is not None
-            # `filled`, not `submitted`: an accepted resting limit order has not
-            # traded, and extended-hours candidates are ALWAYS limit orders.
-            and result.filled
-            and result.trade is not None
-            and result.trade.is_entry
-            and result.size is not None
-        ):
+        # `filled`, not `submitted`: an accepted resting limit order has not
+        # traded, and extended-hours candidates are ALWAYS limit orders. The
+        # same three conditions gate both directions, so they are hoisted.
+        booked = (self.position_book is not None
+                  and result.filled
+                  and result.trade is not None)
+
+        # `result.size is not None` belongs to the ENTRY branch only — a close
+        # is never sized (`ThesisPipeline._close` skips the sizer), so requiring
+        # it here would silently skip every close. That is the exact shape of
+        # the bug this block was rewritten to fix.
+        if booked and result.trade.is_entry and result.size is not None:
             entry_fill = self._fill_price(result.ack)
             filled_qty = self._filled_quantity(result.ack)
             self.position_book.open(
@@ -285,6 +288,38 @@ class FundLoop:
                 confidence=thesis.consensus.confidence if thesis.consensus else None,
                 venue=result.ack.venue if result.ack else None,
             )
+        elif booked and not result.trade.is_entry:
+            # A close that sold at the venue and never reached the book left a
+            # phantom: it fired an exit every cycle against inventory the fund
+            # no longer owned ("cannot sell 19.99 of AAPL: holding 0.0"), wrote
+            # no closed_trades row, resolved no thesis, and inflated
+            # unrealized_usd for ever. `_book_close`'s docstring already called
+            # itself the single funnel for all three close types; this is the
+            # caller that made that true.
+            record = self._book_close(
+                symbol, result.ack,
+                # The mid the close was GRADED on — the same number written to
+                # the trade ledger, so `planned_exit` reconciles against it.
+                # `_book_close` prefers the venue's fill and falls back to this,
+                # never to 0.0.
+                planned_price=result.trade.entry,
+                reason="signal",
+            )
+            if record is None:
+                report.errors.append(
+                    f"UNBOOKED CLOSE {symbol}: the venue sold but the book held "
+                    "no position, so neither a closed trade nor a thesis outcome "
+                    "was written. The book is in-memory and does not survive a "
+                    "restart, which is the usual cause."
+                )
+            else:
+                sold = self._filled_quantity(result.ack)
+                if sold is not None and abs(sold - record["quantity"]) > 1e-6:
+                    report.errors.append(
+                        f"CLOSE QUANTITY MISMATCH {symbol}: the venue sold {sold} "
+                        f"but the book closed {record['quantity']}; the realised "
+                        "figure is computed on the book's quantity"
+                    )
         return True
 
     async def _corroboration_notes(self, symbol: str) -> tuple[str, ...]:

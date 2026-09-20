@@ -62,6 +62,20 @@ def _stack(tmp_path, *, signal="bullish"):
     return loop, venue, book, store
 
 
+async def _holdings(venue):
+    """What the scheduler passes into `run_cycle` — read from the VENUE, not
+    the book. That asymmetry is what lets the two diverge in the first place:
+    the pipeline decides there is something to close from the venue's account,
+    while exits are driven by the book."""
+    from trading.fund import Holding
+    return [Holding(symbol=p.symbol, asset_class=p.asset_class, quantity=p.quantity)
+            for p in await venue.positions()]
+
+
+def _turn_bearish(loop) -> None:
+    loop.round_table.client = type(loop.round_table.client)(signal="bearish")
+
+
 def _mark(loop, venue, data_price: float) -> None:
     """Move the market for both the exit check and the fill."""
     loop.data.quotes["AAPL"] = Quote(symbol="AAPL", bid=data_price - 0.05,
@@ -222,3 +236,128 @@ async def test_a_stopped_position_is_re_entered_in_the_same_cycle(tmp_path):
     assert len(report.submitted) == 1, "the same cycle opened a new position"
     reopened = book.get("AAPL")
     assert reopened is not None and reopened.entry_price < stopped_at
+
+
+# ---------- the discretionary close ----------
+#
+# Until this worked, `closed_trades` contained ONLY barrier exits — stop,
+# target and the weekend flatten. With the 2xATR stop / 3xATR target geometry
+# that makes the recorded profit factor exactly 1.00 and the win rate exactly
+# 40% with zero skill, because the R-distribution is two-point on {-1, +1.5}
+# and carries one free parameter. A discretionary close is the only exit class
+# that puts mass BETWEEN the barriers, which is what lets the record disagree
+# with the exit plan at all.
+
+
+@pytest.mark.asyncio
+async def test_a_bearish_close_leaves_the_book_empty_and_writes_one_closed_trade(tmp_path):
+    """The regression. The venue sold, so the book must let go."""
+    loop, venue, book, store = _stack(tmp_path)
+    await loop.run_cycle(WEDNESDAY, holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+    assert book.get("AAPL") is not None
+
+    _turn_bearish(loop)
+    report = await loop.run_cycle(WEDNESDAY + timedelta(minutes=5),
+                                  holdings=await _holdings(venue),
+                                  equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+
+    assert report.errors == [], report.errors
+    assert await venue.positions() == []
+    assert book.open_symbols() == [], "the book must not keep a phantom"
+
+    rows = store.closed_trades()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["mode"] == "paper"
+    assert row["reason"] == "signal", "not stop, target, flatten or manual"
+    assert row["exit_fill_source"] == "venue"
+    assert row["exit_price"] > 0, "never book a close at zero"
+
+
+@pytest.mark.asyncio
+async def test_a_bearish_close_stops_the_exit_failing_forever(tmp_path):
+    """The symptom. A phantom fires an exit every cycle against inventory the
+    fund no longer owns: `cannot sell 19.99 of AAPL: holding 0.0`, for ever."""
+    loop, venue, book, store = _stack(tmp_path)
+    await loop.run_cycle(WEDNESDAY, holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+    stop = book.get("AAPL").plan.stop
+
+    _turn_bearish(loop)
+    await loop.run_cycle(WEDNESDAY + timedelta(minutes=5),
+                         holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+
+    _mark(loop, venue, stop - 1.0)          # the old stop is now through
+    report = await loop.run_cycle(WEDNESDAY + timedelta(minutes=10),
+                                  holdings=await _holdings(venue),
+                                  equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+
+    assert report.errors == [], report.errors
+    assert book.unrealized_usd({"AAPL": stop - 1.0}) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_bearish_close_resolves_the_original_thesis(tmp_path):
+    """Closing is when the committee learns.
+
+    The outcome attaches to the ENTRY thesis, and its recorded signal stays
+    `bullish`. Attaching it to the bearish thesis would invert the sign —
+    `direction_was_right("bearish", realized)` is `realized < 0`, but realized
+    is the long's return, so a bearish call that correctly banked a winner
+    would score as wrong and its seats be punished for being right.
+    """
+    loop, venue, book, store = _stack(tmp_path)
+    await loop.run_cycle(WEDNESDAY, holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+    entry_thesis = book.get("AAPL").thesis_id
+
+    _turn_bearish(loop)
+    await loop.run_cycle(WEDNESDAY + timedelta(minutes=5),
+                         holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+
+    outcomes = store.resolved_outcomes()
+    assert len(outcomes) == 1, "exactly one outcome per closed trade"
+    assert outcomes[0]["thesis_id"] == entry_thesis
+    assert outcomes[0]["signal"] == "bullish"
+
+
+@pytest.mark.asyncio
+async def test_the_ledgers_still_agree_after_a_bearish_close(tmp_path):
+    """The double-count canary. Two `thesis_outcomes` rows for one economic
+    event would double `Scorecard.resolved` and feed the committee Brier two
+    observations of the same trade, one of them sign-inverted."""
+    from trading.live_gate import LiveTradingGate
+
+    loop, venue, _, store = _stack(tmp_path)
+    await loop.run_cycle(WEDNESDAY, holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+    _turn_bearish(loop)
+    await loop.run_cycle(WEDNESDAY + timedelta(minutes=5),
+                         holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+
+    gate = LiveTradingGate(memory=store, bankroll_usd=BANKROLL)
+    assert gate._ledgers_agree() is True
+    assert gate.graded_paper_trades() == 1
+
+
+@pytest.mark.asyncio
+async def test_a_bearish_close_does_not_count_as_a_stop_firing(tmp_path):
+    """`graduation()` tracks stop discipline separately — 5 losses where the
+    stop executed. A discretionary cut is not evidence the risk system works."""
+    from trading.live_gate import LiveTradingGate
+
+    loop, venue, _, store = _stack(tmp_path)
+    await loop.run_cycle(WEDNESDAY, holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+    _turn_bearish(loop)
+    await loop.run_cycle(WEDNESDAY + timedelta(minutes=5),
+                         holdings=await _holdings(venue),
+                         equity_usd=BANKROLL, available_cash_usd=BANKROLL)
+
+    stops = [g for g in LiveTradingGate(memory=store, bankroll_usd=BANKROLL)
+             .graduation() if g["id"] == "stops_fired"][0]
+    assert stops["detail"].startswith("0 of 5")

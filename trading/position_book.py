@@ -33,7 +33,14 @@ from finance.exits import ExitPlan, is_stop_breached, is_target_reached, trail_s
 logger = logging.getLogger(__name__)
 
 
-ExitReason = Literal["stop", "target", "flatten", "manual"]
+# "signal" is a DISCRETIONARY exit — the committee turned against a name it
+# held. It is deliberately not "manual" (no human intervened) and not a
+# barrier: `live_gate.graduation` filters `reason == "stop"` for stop
+# discipline, and a discretionary cut is not evidence the risk system
+# works. It is also the only exit class that puts a realised return
+# BETWEEN the stop and the target, which is what lets the record disagree
+# with the exit plan instead of restating it.
+ExitReason = Literal["stop", "target", "flatten", "manual", "signal"]
 
 
 @dataclass

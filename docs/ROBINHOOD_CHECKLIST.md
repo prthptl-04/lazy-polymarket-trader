@@ -1,10 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6, B11 and B1 are FIXED.** The fund books and closes
+**Status: B0, B18, B2, B3, B6, B11, B1 and B4 are FIXED.** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
-the same number the gate enforces. Thirteen blockers remain.
+the same number the gate enforces, and a discretionary close now lands in the
+record instead of leaving a phantom. Twelve blockers remain, plus four filed.
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -246,7 +247,101 @@ These do not stop a trade being booked; they make the resulting record a lie.
       Worth closing eventually; it is no longer the difference between a
       kill-switch that works and one that cannot fire.
 
-- [ ] **B4 · A bearish close leaves the position in the book permanently**
+- [x] **B4 · A bearish close leaves the position in the book permanently** —
+      **DONE**, designed by the Architect and the Statistical Analyst jointly.
+
+      Reproduced first: after a bearish close the venue was flat, the book still
+      held, `closed_trades` stayed at 0, and once the phantom's stop was crossed
+      every cycle emitted `EXIT FAILED AAPL (stop): cannot sell 19.99 of AAPL:
+      holding 0.0` — for ever. After the fix:
+
+      ```
+      venue: 0 | book: [] | errors: []
+      row: reason=signal mode=paper exit=99.95 planned_exit=100.00
+           src=venue realized_usd=-2.00
+      cycle3 errors (was EXIT FAILED forever): []
+      ledgers agree: True | graded_paper_trades: 1 | outcomes: 1
+      ```
+
+      **Why it mattered more than a stuck position.** Until this worked,
+      `closed_trades` contained *only* barrier exits. With the 2×ATR stop /
+      3×ATR target geometry in `finance/exits.py`, that makes the recorded
+      numbers arithmetically predetermined — confirmed by direct calculation:
+
+      ```
+      R_target = 1.5 · P(target first) = 2/(2+3) = 0.40
+      win rate = 40%   profit factor = 1.0000   (with zero skill)
+      ```
+
+      The R-distribution was two-point on {−1, +1.5} and carried one free
+      parameter, so it could not disagree with the exit plan. **A discretionary
+      close is the only exit class that puts mass between the barriers.** The
+      censored sample also drove `fit_confidence_shrink` toward its
+      `MIN_SHRINK` floor — and `fund_wiring.py` feeds that straight into live
+      Kelly sizing.
+
+      The fix is one branch in `FundLoop._consider`, the single place where a
+      venue fill becomes the book's truth (`ThesisPipeline._close` has one
+      caller, `run`, which has one production caller, `_consider`). Decisions
+      recorded:
+
+      - **Fill-gated** (`result.filled`, not `accepted`) — an unfilled resting
+        sell would flatten the book against a live venue holding: the same
+        phantom, mirrored.
+      - `result.size is not None` stays on the **entry** branch only. A close is
+        never sized, so requiring it would silently skip every close — the exact
+        shape of the original bug.
+      - **`reason="signal"`**, added to the `ExitReason` Literal. Not `"manual"`
+        (no human intervened) and not a barrier: `graduation()` filters
+        `reason == "stop"` for stop discipline, and a discretionary cut is not
+        evidence the risk system works. The name was already in use at
+        `tests/test_fill_semantics.py:122` — outside the Literal, which only a
+        type-checker would have caught.
+      - **`planned_exit` is the mid the close was graded on**, never the fill
+        and never `0.0`, so the row contributes real cost to `_bridge`.
+      - **The outcome attaches to the original bullish thesis.** Attaching it to
+        the bearish one inverts the sign: `direction_was_right("bearish",
+        realized)` is `realized < 0`, but `realized` is the long's return, so a
+        bearish call that correctly banked a winner would score as *wrong* and
+        its seats be punished for being right. `_ledgers_agree()` is the
+        double-count canary and stays True.
+      - Two `report.errors` lines rather than silence: an `UNBOOKED CLOSE` when
+        the venue sold something the book never tracked (the usual cause is a
+        restart — the book is in-memory), and a `CLOSE QUANTITY MISMATCH` when
+        the venue's filled quantity disagrees with the book's, because that is a
+        money number.
+
+- [ ] **B23 · The weekend flatten books a close at the fill, and can book one at $0.00**
+      `fund.py:633` passes `planned_price=self._fill_price(ack) or 0.0`. Two
+      defects, both currently **latent** (flatten has never run, and a paper
+      fill always carries a price) but both armed:
+      - `planned_exit == exit_price` while `exit_fill_source == "venue"`, so the
+        row passes `_bridge`'s filter and contributes a perfectly plausible
+        **$0.00 of trading cost** — the exact fiction the bridge's own docstring
+        says it exists to expose.
+      - The `or 0.0` fallback books `exit_price=0.0`, `realized_return=-1.0`,
+        i.e. a **−100% return**, on any filled ack the venue does not price.
+      Not fixed with B4 because `_flatten_crypto` holds no quote, so a correct
+      reference price needs a fetch added to that function — a real design
+      decision (and rule #16 I/O placement), not a one-liner.
+
+- [ ] **B24 · Postmortem fires on every loss, however small**
+      `Postmortem.analyse` returns early only on `realized_return >= 0`, so any
+      loss writes `unanimous_loss` / `overconfident_loss` lessons under
+      `agent_id="*"` — injected into every later deliberation. Discretionary
+      cuts produce many tiny losses, and "the committee was 85% confident and
+      lost 0.3%" teaches an overconfidence penalty from noise. Gate on
+      materiality (e.g. `|realized| ≥ 0.25R` of planned risk) or restrict those
+      two findings to barrier exits. The module's own docstring records the last
+      time a finding fired too broadly and taught the whole committee to widen
+      its stops.
+
+- [ ] **B25 · `graduation()` cannot show the close mix**
+      "50 of 50" can currently hide a record that is 95% discretionary. Add a
+      **display-only** item: share of closed paper trades by `reason`, plus
+      median `held_seconds`. Display-only deliberately — adding a *blocking*
+      condition rule #13 does not name is a CLAUDE.md edit, not a gate
+      tightening itself.
       `trading/pipeline.py:249` sells at the venue; `fund.py:259` books only
       *entries*; `_book_close` is never called on this path. The paper position
       is gone but the book still holds it → every subsequent cycle fires an exit
@@ -337,6 +432,14 @@ and nothing else until Monday 04:00 ET. It cannot.
       Pinned by `test_a_stopped_position_is_re_entered_in_the_same_cycle` so it
       is visible rather than surprising. Fix: a per-symbol cooldown after a
       stop, checked in `_universe_for` or the candidate builder.
+
+      **Widened by the B4 review:** the same brake is needed after a
+      `reason="signal"` close. Nothing stops close-on-bearish then
+      re-open-on-bullish the next cycle, and PDT caps that at 3 per 5 business
+      days for equities **only** — crypto is exempt, so the weekend book has no
+      brake at all. One indecisive committee can manufacture the fifty round
+      trips at the cost of the spread each time. A dict of `{symbol: session}`
+      is enough; this does not need a cooldown framework.
 
 ---
 
