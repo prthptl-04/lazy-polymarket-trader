@@ -27,6 +27,8 @@ The adapter refuses to act on any account where `agentic_allowed` is false.
 
 from __future__ import annotations
 
+import math
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -318,7 +320,7 @@ class RobinhoodVenue:
             ids.rhs_account_number if crypto else ids.account_number)
 
         if request.quantity is not None:
-            payload["quantity"] = _s(request.quantity)
+            payload["quantity"] = _quantity(request.quantity, crypto=crypto)
         else:
             if not crypto and request.order_type != "market":
                 # Robinhood rejects this; catching it here puts the reason in
@@ -330,7 +332,7 @@ class RobinhoodVenue:
         if request.order_type in ("limit", "stop_limit"):
             if request.limit_price is None:
                 return {}, "limit order requires limit_price"
-            payload["limit_price"] = _s(request.limit_price)
+            payload["limit_price"] = _limit_price(request.limit_price, crypto=crypto)
 
         payload["time_in_force"] = (
             _CRYPTO_TIF if crypto else _EQUITY_TIF).get(request.time_in_force, "gfd" if not crypto else "gtc")
@@ -347,9 +349,62 @@ class RobinhoodVenue:
 _CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "XRP", "LTC", "ADA", "AVAX", "LINK", "DOT"}
 
 
+# Venue precision. Equities trade in fractional shares to 6dp; crypto carries
+# more. NOT verified against the live tool schema — `discover_tools` does not
+# expose property constraints — so these are conservative and the FLOORING
+# below is what actually protects the order, not the digit count.
+_EQUITY_QTY_DP = 6
+_CRYPTO_QTY_DP = 8
+
+# SEC Rule 612: no sub-penny quoting for equities at or above $1. Below that,
+# and for crypto, finer increments are legal.
+_SUB_PENNY_FLOOR_USD = 1.0
+
+
 def _s(v: Any) -> str:
-    """Robinhood wants decimal strings, not floats."""
+    """Robinhood wants decimal strings, not floats.
+
+    For a NOTIONAL only. Quantities and limit prices have their own rounding
+    contracts — see `_quantity` and `_limit_price` — and using this for them is
+    how a sell came to ask for more shares than the account held.
+    """
     return f"{float(v):.8f}".rstrip("0").rstrip(".") if v is not None else ""
+
+
+def _floor_str(v: float, dp: int) -> str:
+    """Truncate toward zero at `dp`, as a decimal string.
+
+    Truncation, not rounding, and deliberately so: every rounding decision in
+    an order should go against us. `f"{x:.6f}"` rounds half-up, which is what
+    turned a holding of 0.035211267605633804 into a sell order for
+    0.03521127 — more than the account held, rejected by the venue, and the
+    stop did not execute.
+    """
+    factor = 10 ** dp
+    truncated = math.floor(abs(v) * factor) / factor
+    out = f"{-truncated if v < 0 else truncated:.{dp}f}"
+    return out.rstrip("0").rstrip(".") or "0"
+
+
+def _quantity(v: Any, *, crypto: bool) -> str:
+    """A tradable quantity, rounded DOWN so it never exceeds the holding."""
+    if v is None:
+        return ""
+    return _floor_str(float(v), _CRYPTO_QTY_DP if crypto else _EQUITY_QTY_DP)
+
+
+def _limit_price(v: Any, *, crypto: bool) -> str:
+    """A limit price on a legal increment, rounded so it never improves.
+
+    Rounding a limit UP would cross further than intended on a buy; rounding a
+    sell limit down would do the same on the way out. Truncating does neither.
+    """
+    if v is None:
+        return ""
+    price = float(v)
+    if crypto or price < _SUB_PENNY_FLOOR_USD:
+        return _floor_str(price, 8)
+    return _floor_str(price, 2)
 
 
 def _positive(v: Any) -> Optional[float]:

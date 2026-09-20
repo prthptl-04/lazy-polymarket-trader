@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6, B11, B1 and B4 are FIXED.** The fund books and closes
+**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14 and B15 are FIXED.** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Twelve blockers remain, plus four filed.
+record instead of leaving a phantom. Ten blockers remain, plus four filed.
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -475,7 +475,31 @@ any hour now.
 
 ## 7. Order-precision bugs that will reject real exits
 
-- [ ] **B14 · `_s()` rounds half-up, so a full-position sell asks for more than is held**
+- [x] **B14 · `_s()` rounds half-up, so a full-position sell asks for more than is held**
+      — **DONE**, together with B15: one formatter was serving three different
+      contracts (quantity, notional, limit price), which is the root cause of
+      both.
+
+      ```
+      holding          0.035211267605633804
+      old _s()         0.03521127   exceeds holding: True   <- stop rejected
+      new _quantity()  0.035211     exceeds holding: False
+      ```
+
+      `_quantity(v, crypto=)` truncates toward zero — **truncation, not
+      rounding**, because every rounding decision in an order should go against
+      us. `_limit_price(v, crypto=)` does the same on a legal increment.
+      Precision: 6dp equity / 8dp crypto quantity. Those digit counts are
+      **not verified** against the live tool schema (`discover_tools` does not
+      expose property constraints), and are deliberately conservative — the
+      flooring is what protects the order, not the digit count.
+
+      Still open from the original finding: the sellable amount is
+      `shares_available_for_sells` (equity) / `quantity_transferable` (crypto),
+      not `quantity`, which the adapter reads at `robinhood.py:148`. Filed as
+      part of B10's parsing work.
+
+- [ ] ~~**B14 (original text)**~~
       Verified: `_s(0.035211267605633804)` → `"0.03521127"`, which is **larger
       than the holding**. Robinhood rejects it, and the stop does not execute.
       This is the same failure `_filled_quantity` was written to kill,
@@ -484,9 +508,21 @@ any hour now.
       `shares_available_for_sells`, not `quantity`.
       Fix: **floor**, at venue precision — 6 dp equity, 8 dp crypto.
 
-- [ ] **B15 · Sub-penny limit prices** — `fund.py:449`, `pipeline.py:414` round to
-      4 dp. SEC Rule 612 prohibits sub-penny quoting at or above $1, so
-      `limit_price="334.7163"` is a rejected exit. 2 dp for equities ≥ $1.
+- [x] **B15 · Sub-penny limit prices** — **DONE** with B14. `_limit_price`
+      truncates to 2dp for equities at or above $1 (SEC Rule 612) and keeps
+      full precision for crypto and sub-dollar names:
+
+      ```
+      old _s(334.7163)      334.7163   rejected under Rule 612
+      new _limit_price()    334.71
+      crypto limit kept     81234.56789
+      ```
+
+      Fixed at the venue boundary rather than at `fund.py:449` /
+      `pipeline.py:414`, because those two callers both route through here and
+      a guard in the shared formatter is a smaller diff than one in each — and
+      it covers any caller added later. Rule 612 is the basis for the 2dp
+      figure; **not venue-tested**, since that would mean placing an order.
 
 - [ ] **B16 · PDT records an open on `accepted`, not `filled`** — `router.py:349`.
       Everywhere else in the codebase reads `is_filled`. A premarket limit that
@@ -676,8 +712,8 @@ no work can be measured.
 5. **B1** — make the displayed bar the gate's number.
 6. **B4, B6** — book the close on a bearish exit; make a dead feed loud.
 8. **B7, B8, B9, B10** — the weekend crypto path, as one piece of work.
-9. **B14, B15, B16, B17** — precision and error-handling, before live is ever
-   discussed.
+9. ~~**B14, B15**~~ **DONE.** **B16, B17** — error-handling, before live is
+   ever discussed.
 10. **B5** — persist the state that currently dies on restart.
 11. **B21** — the post-stop cooldown.
 12. **O1–O4, P1–P2, D1–D8** — operator, packaging, docs.
