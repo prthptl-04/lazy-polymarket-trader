@@ -1,6 +1,7 @@
 # Robinhood — the road to a paper track record
 
-**Status: the fund cannot book a position. One missing method severs the chain.**
+**Status: B0 is FIXED. The fund can book and close a position; the rule-#13
+counter reads `1 of 50` instead of `0 of 50`. Nineteen blockers remain.**
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -45,7 +46,22 @@ It just cannot **record** what it did.
 
 ## 1. The blocker — `FundLoop._venue_mode` does not exist
 
-- [ ] **B0 · Define `FundLoop._venue_mode`** — `trading/fund.py:280`
+- [x] **B0 · Define `FundLoop._venue_mode`** — `trading/fund.py:280` — **DONE (a24a627+)**
+
+      Fixed by adding the method beside its siblings. It resolves the ack's
+      venue through `router.mode_of`, and **unknown resolves to `"live"`**,
+      matching `live_gate._is_live_venue` and `pipeline._is_paper` — a fill
+      nobody can attribute must not pad the bar that gates real money.
+
+      Verified against the real `build_fund` wiring, not a hand-built stack:
+      ```
+      cycle1 errors=[] submitted=1 · booked mode=paper
+      cycle2 exits=['stop']
+      closed_trades: 1  mode=paper  realized=-$101.95
+      live gate graded_paper_trades: 1
+      graduation round_trips: 1 of 50
+      ```
+
 
 ```python
 >>> from trading.fund import FundLoop; hasattr(FundLoop, "_venue_mode")
@@ -83,7 +99,8 @@ column must read `"paper"` or the live gate will not count the row.
 
 ## 2. Why 1,133 green tests did not catch it
 
-- [ ] **T1 · Write `tests/test_fund_e2e.py::test_a_cycle_produces_a_closed_trade_the_live_gate_counts`**
+- [x] **T1 · `tests/test_fund_e2e.py`** — **DONE.** 9 tests, all of which failed
+      before B0 and pass after. Suite 1,133 → 1,142.
 
 The crash needs a `position_book` **and** a `pipeline` that fills. **No test in
 the repo attaches both.** Every `FundLoop(position_book=…)` passes
@@ -235,6 +252,23 @@ and nothing else until Monday 04:00 ET. It cannot.
       `symbol` / `average_buy_price`. So `_flatten_crypto` iterates an empty
       list and reports nothing flattened while the position rides into the
       equity session.
+
+- [ ] **B21 · A stopped position is re-entered in the same cycle**
+      Found while fixing B0 — the test asserted the book would be empty after a
+      stop, and it was not. `run_cycle` exits first and then looks for new
+      ideas, which is the right order, but nothing tells the candidate builder
+      that this symbol just hit its stop:
+      ```
+      cycle 2: exits=[('AAPL','stop')]  submitted=1
+               book now: AAPL qty=21.0416 @ 95.05   <- re-bought at the stop price
+      ```
+      The stop fired for a reason and the fund immediately overrides it. In
+      paper it also manufactures round trips that count toward the fifty, so the
+      record reads as activity rather than as one position being churned. Same
+      class of problem as B9's weekend flatten/re-buy.
+      Pinned by `test_a_stopped_position_is_re_entered_in_the_same_cycle` so it
+      is visible rather than surprising. Fix: a per-symbol cooldown after a
+      stop, checked in `_universe_for` or the candidate builder.
 
 ---
 
@@ -428,8 +462,8 @@ the debt is in prose, not in markers.
 Nothing below step 1 is worth starting until step 1 lands, because until then
 no work can be measured.
 
-1. **B0** — define `_venue_mode`. One method. Unblocks everything.
-2. **T1** — the end-to-end test, so B0 can never silently regress.
+1. ~~**B0** — define `_venue_mode`.~~ **DONE.**
+2. ~~**T1** — the end-to-end test.~~ **DONE** (`tests/test_fund_e2e.py`, 9 tests).
 3. **B18** — the round table's parse failures, or every cycle declines to trade.
 4. **B2** — route quotes through the venue, with a Massive fallback. This one
    change also fixes B3's frozen mark-to-market, the always-`None` spread, and
@@ -441,7 +475,8 @@ no work can be measured.
 9. **B14, B15, B16, B17** — precision and error-handling, before live is ever
    discussed.
 10. **B5** — persist the state that currently dies on restart.
-11. **O1–O4, P1–P2, D1–D8** — operator, packaging, docs.
+11. **B21** — the post-stop cooldown.
+12. **O1–O4, P1–P2, D1–D8** — operator, packaging, docs.
 
 **Then, and only then**, run `LiveTradingGate.graduation()` and watch
 `round_trips` move off `0 of 50`.

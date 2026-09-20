@@ -486,6 +486,25 @@ class FundLoop:
         except (TypeError, ValueError):
             return None
 
+    def _venue_mode(self, ack: Any) -> str:
+        """Which side of the house filled this — "paper" or "live".
+
+        Stamped onto the booked position and carried into `closed_trades`,
+        where `LiveTradingGate._graded_count` counts only rows reading "paper".
+        So this is not a label: it decides whether a round trip advances the
+        fifty that gate real money.
+
+        Unknown resolves to LIVE, matching `trading.live_gate._is_live_venue`
+        and `ThesisPipeline._is_paper`. The opposite default is the dangerous
+        one — a fill nobody can attribute, counted as paper, pads the very bar
+        that exists to hold live trading back.
+        """
+        name = getattr(ack, "venue", None) if ack is not None else None
+        for adapter in getattr(self.router, "adapters", []):
+            if adapter.name == name:
+                return self.router.mode_of(adapter)
+        return "live"
+
     def _book_close(self, symbol: str, ack: Any, *, planned_price: float,
                     reason: str) -> Optional[dict]:
         """Remove a position from the book at the price it actually traded.
