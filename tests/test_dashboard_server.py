@@ -149,9 +149,12 @@ def test_failing_venue_degrades_rather_than_500s(tmp_path):
     assert r.status_code == 200 and r.json()["polymarket_us"]["available"] is False
 
 
-def test_header_has_both_balance_pills():
+def test_header_shows_robinhood_and_not_the_retired_venue():
+    """Polymarket is retired, so its balance pill would sit at an eternal "—".
+    A permanently blank number reads as a broken feed, not a closed venue."""
     from dashboard.pages import OVERVIEW_HTML
-    assert 'id="bal-polymarket"' in OVERVIEW_HTML and 'id="bal-robinhood"' in OVERVIEW_HTML
+    assert 'id="bal-robinhood"' in OVERVIEW_HTML
+    assert 'id="bal-polymarket"' not in OVERVIEW_HTML
 
 
 @pytest.mark.parametrize("path,marker", [

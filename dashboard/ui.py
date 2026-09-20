@@ -126,7 +126,6 @@ _NAV = """
   <div class="right">
     <span id="llm-pill" class="pill" title="model provider">model &mdash;</span>
     <span id="venue-switches" style="display:flex;gap:8px"></span>
-    <span id="bal-polymarket" class="pill">PM &mdash;</span>
     <span id="bal-robinhood" class="pill">RH &mdash;</span>
     <span id="state-pill" class="pill">stopped</span>
     <button id="go-btn" class="go">GO</button>
@@ -167,7 +166,6 @@ function renderBalances(b){
     n.textContent=label+' '+money(v.cash_usd); n.title=label+' equity '+money(v.equity_usd);
     n.style.color='var(--fg)';
   };
-  set('bal-polymarket','PM', b.polymarket_us||b.polymarket);
   set('bal-robinhood','RH', b.robinhood);
 }
 function renderState(s){
@@ -201,6 +199,8 @@ function wireVenueSwitches(refresh){
 }
 function renderVenuePills(sessions){
   const host = $('venue-switches'); if(!host || !sessions) return false;
+  // Polymarket is retired and never registers, so it cannot appear here; the
+  // mapping stays so a re-enabled venue still gets a readable name.
   const nice = n => n==='polymarket_us'?'Polymarket':(n==='robinhood'?'Robinhood':n);
   const html = Object.entries(sessions).map(([n,on])=>
     '<span class="pill" style="display:inline-flex;gap:8px;align-items:center">'

@@ -32,6 +32,7 @@ from trading.venues.base import (
     Quote,
     VenueAdapter,
 )
+from trading.venues.retired import is_retired, retirement_reason
 
 
 # Premarket books are thin. A wide spread there is how a "good" thesis turns
@@ -44,8 +45,9 @@ class RouteDecision:
     allowed: bool
     reason: str
     venue_name: Optional[str] = None
-    gate: Optional[str] = None      # venue | live_trading | venue_session |
-                                    # mode_session | kill_switch | session | pdt | spread
+    gate: Optional[str] = None      # venue | venue_retired | live_trading |
+                                    # venue_session | mode_session | kill_switch |
+                                    # session | pdt | spread
 
 
 @dataclass
@@ -194,6 +196,19 @@ class VenueRouter:
             return RouteDecision(
                 allowed=False, gate="venue",
                 reason=f"no registered venue supports {request.asset_class!r}",
+            )
+
+        # Retirement comes before everything, including rule #13: a venue the
+        # fund no longer trades is not a venue with a strict checklist, it is
+        # one with no path at all. Exits are still permitted, on the same
+        # reasoning as the venue switch below — retiring a venue must not trap
+        # the positions already open there.
+        if is_retired(adapter.name) and not request.is_close:
+            return RouteDecision(
+                allowed=False, gate="venue_retired", venue_name=adapter.name,
+                reason=(f"{adapter.name} is RETIRED and no longer trades. "
+                        f"{retirement_reason(adapter.name)} Exits remain "
+                        "allowed so open positions can be closed."),
             )
 
         # Rule #13 comes FIRST and applies to exits too. Every other gate is

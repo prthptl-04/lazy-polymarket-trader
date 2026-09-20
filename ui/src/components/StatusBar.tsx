@@ -7,10 +7,12 @@ import { useDocumentSurface } from "../lib/useDynamicBackground";
 
 export type ViewKey = "overview" | "paper" | "polymarket" | "robinhood";
 
-const VIEWS: { key: ViewKey; label: string }[] = [
+const VIEWS: { key: ViewKey; label: string; retired?: boolean }[] = [
   { key: "overview", label: "Overview" },
   { key: "paper", label: "Paper Trading" },
-  { key: "polymarket", label: "Polymarket" },
+  // Still reachable, and still obviously off. Removing the tab would hide the
+  // decision; greying it states it.
+  { key: "polymarket", label: "Polymarket", retired: true },
   { key: "robinhood", label: "Robinhood" },
 ];
 
@@ -77,8 +79,13 @@ function SegmentedControl({ value, onChange }: { value: ViewKey; onChange: (v: V
                 transition={{ type: "spring", stiffness: 480, damping: 38 }}
               />
             )}
-            <span className={`relative z-10 ${active ? "text-white" : "text-white/50 hover:text-white/80"}`}>
-              {v.label}
+            <span className={`relative z-10 ${
+              v.retired ? (active ? "text-white/55" : "text-white/25 hover:text-white/40")
+                        : (active ? "text-white" : "text-white/50 hover:text-white/80")
+            }`}>
+              <span className={v.retired ? "line-through decoration-white/25" : undefined}>
+                {v.label}
+              </span>
             </span>
           </button>
         );

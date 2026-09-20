@@ -1,5 +1,12 @@
 # Polymarket 5-minute crypto — backend design
 
+> **SUPERSEDED 2026-09-20. Polymarket is retired; this was never built and will
+> not be.** The lawful-route analysis below (what is and is not reachable from
+> New Jersey, and why a geo-block is not a technical problem to be solved) is
+> the part worth keeping — it is why the search moved to Kalshi, which was then
+> rejected on measurement in `KALSHI_BTC_15M.md` §14. The fund trades Robinhood
+> only. See CLAUDE.md rule #23.
+
 Status: **design, not built.** Nothing in this document is implemented.
 Written 2026-09-19. Every external claim carries a source; the ones that could
 not be verified are listed as open questions rather than assumed.

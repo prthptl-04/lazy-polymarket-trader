@@ -76,9 +76,31 @@
 [data-surface="light"] [class*="text-amber-400"]  { color: rgb(138 82 6); }
 
 /* ---------------------------------------------------------------------------
-   Polymarket dark mode. Mounted by usePolymarketTheme() while the Polymarket
-   tab is open; the attribute is removed on unmount so the other views keep the
-   house palette.
+   Retired venue. Stamped on <html> by <RetiredVenue/>, so the title bar and
+   the page chrome grey out with the panel rather than leaving a live-looking
+   frame around a switched-off page. Grayscale rather than a colour override:
+   a retirement should not need the palette to know about it, and any venue
+   retired later gets this for free.
+   --------------------------------------------------------------------------- */
+[data-retired] body { filter: grayscale(1); }
+[data-retired] body::after {
+  /* Faint diagonal hatching — the visual vocabulary for "not in service". */
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 14px,
+    rgb(255 255 255 / 0.014) 14px 28px
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Polymarket dark mode. The venue is RETIRED and nothing mounts this today —
+   it is kept, unreferenced, so re-enabling the venue is one line in
+   trading/venues/retired.py rather than a rebuild of its palette.
 
    Typography maps onto the existing white-alpha tokens: the strong buckets
    become the off-white heading colour, everything below it the muted gray.

@@ -1,6 +1,18 @@
-# Lazy Polymarket Trader — Project Rules
+# Project धन — Project Rules
 
-Three managed agents (Product, Architect, Forward Deployment) cooperate via an orchestrator to operate an autonomous Polymarket trading bot. These rules are binding for every agent and every session.
+Three managed agents (Product, Architect, Forward Deployment) cooperate via an orchestrator to operate an autonomous trading fund. These rules are binding for every agent and every session.
+
+> **The fund trades Robinhood, and only Robinhood** — US equities Monday to
+> Friday, crypto at weekends, on the rotation in `trading/sessions.py`.
+> **Polymarket is RETIRED** (`trading/venues/retired.py`, 2026-09-20); Kalshi
+> was researched as its replacement and rejected on its own evidence
+> (`docs/KALSHI_BTC_15M.md` §14). The directory is still named
+> `Lazy Polymarket Trader` for git's sake — the name is history, not scope.
+>
+> Rules below that name Polymarket describe a path that is gone. Their *intent*
+> — the gates, the checklists, the refuse-by-default stance — is unchanged and
+> still binding; only the venue moved. Rule #23 is the current statement of
+> which venue is real.
 
 ## 1. Agent ownership (no merge conflicts)
 
@@ -31,10 +43,12 @@ A failing grader or red test blocks the phase. No exceptions.
 `PAPER_TRADING=true` in `.env`. Live trading requires:
 
 - Explicit user confirmation in-session.
-- A funded `POLYMARKET_FUNDER_ADDRESS`.
+- A funded, authenticated venue account (Robinhood, via the MCP session).
 - Risk caps configured in `verification/criteria.py` (max position size, max daily loss).
 
-`trading/execution.py` MUST refuse to call live order endpoints unless all three are satisfied.
+Enforcement lives in `trading/live_gate.LiveTradingGate`, called as the first
+gate in `VenueRouter` — see rule #21. `trading/execution.py` belonged to the
+removed Polymarket CLOB path and no longer guards anything that runs.
 
 ## 5. Secrets
 
@@ -177,7 +191,7 @@ Four cookbook patterns are now first-class capabilities in this codebase:
   Opus. Use thinking on planning-heavy paths; do not use on trading-loop
   latency paths.
 
-## 13. Live trading flip — explicit, gated, recoverable
+## 13. Live trading flip — explicit, gated, recoverable  *(HISTORICAL — Polymarket; superseded by #21 + #23)*
 
 Real-wallet trading is now wired (`trading/polymarket_client.py` derives L2
 creds from `POLYMARKET_PRIVATE_KEY` and signs orders via py-clob-client).
@@ -201,7 +215,7 @@ unsafe (env unset, criteria loosened, key removed), it silently downgrades
 to paper for that trade and emits a `wallet_sign_failed` or
 `live_disallowed` feedback event.
 
-## 14. Real-time market data + decision tree on the hot path
+## 14. Real-time market data + decision tree on the hot path  *(HISTORICAL — the Polymarket CLOB path is removed; the LLM-off-the-hot-path rule stands)*
 
 The trading loop is structured so that the LLM is NEVER in the per-tick path:
 
@@ -267,7 +281,7 @@ unit of work:
 - A new dependency that introduces its own event loop is rejected; all
   async work shares the trading-loop's loop.
 
-## 17. HFT primitives — replace + cashout (Phase-B, 2026-05-29)
+## 17. HFT primitives — replace + cashout (Phase-B, 2026-05-29)  *(HISTORICAL — PolymarketClient is gone; the cancel/replace and graded-cashout rules apply to any venue that gains an order manager)*
 
 Three lifecycle facts about live orders:
 
@@ -395,3 +409,59 @@ The checklist is visible on the dashboard's Venues page.
 ## 22. Memory
 
 Cross-session state lives in SQLite at `memory/state.db` (path overridable via `MEMORY_DB_PATH`). Use `memory.store.MemoryStore` — do not write ad-hoc files. Each agent's records are scoped by `agent_id` in the schema.
+
+
+## 23. One venue: Robinhood, on a rotation (2026-09-20)
+
+The fund trades **Robinhood and nothing else**. This rule is the current
+statement of venue scope and outranks any venue named in rules #4–#21.
+
+**The rotation**, implemented in `trading/sessions.py` and followed by
+`FundLoop._universe_for`:
+
+| When | Universe |
+|---|---|
+| Mon–Fri, premarket through after-hours | US equities |
+| Fri close → Mon open, holidays, and any hour equities are shut | Crypto |
+
+They are two strategies on one account, not one strategy with two inputs.
+Report them separately — `DashboardRuntime.record(venue, asset_class=...)`
+slices closed trades, and the Overview shows the two columns side by side. A
+blended Robinhood number hides which of the two is working, which is the only
+thing the number is for.
+
+`should_flatten_crypto` closes the weekend book before the next premarket so
+capital is free for the open. That handoff is the one place the two strategies
+touch, and it runs before anything else in the cycle.
+
+**Retired venues.** `trading/venues/retired.py` is the single declaration.
+A retired venue:
+
+- is refused by `VenueRouter` as gate zero, ahead of rule #13 — a venue the
+  fund does not trade is not a venue with a strict checklist, it is one with
+  no path at all;
+- **may still be exited.** Retiring a venue must never strand an open position.
+  A venue you cannot trade is an inconvenience; a position you cannot close is
+  not. Every gate in the router that blocks an entry exempts a close, and this
+  one is no different;
+- keeps its adapter, its tests, its trade history and its UI tab. The tab
+  renders as retired and says why. **Do not delete a retired venue's code** —
+  a venue that silently vanishes reads as a bug six months later, and the
+  decision stops being reversible.
+
+Re-enabling one is removing its entry from that file. Nothing else is switched
+off, and nothing else needs switching back on.
+
+**Why Polymarket went.** The fund outgrew prediction markets: the round table,
+the Kelly sizer and the session calendar are built for instruments with a
+continuous price and a real exit, and a binary that settles has neither. Kalshi
+was researched as the replacement and **rejected on measurement, not opinion** —
+`docs/KALSHI_BTC_15M.md` §14 has the held-out numbers. That result did not
+revive the case for Polymarket, because that case was already gone.
+
+**The transferable rule from that research:** when a strategy's viability is
+the open question, build the falsification test *first* and make it cheap
+enough that running it is never the expensive option. §11 of that document put
+the replay at step 2 of 11; it cost four modules instead of a venue adapter, a
+signing path, a paper engine, a persistence schema, a dashboard API and a
+themed UI built on an edge nobody had measured.

@@ -27,9 +27,9 @@ const VENUE = { key: "robinhood", label: "Robinhood" } as const;
  *
  * What is deliberately absent: profit factor (on a 2xATR stop / 3xATR target,
  * 3W/2L returns ~2.25 mechanically, with no skill in it), a Polymarket column
- * (the paper adapter supports equity and crypto — that venue could not produce
- * a trade), and per-seat blame rates (the fund is long-only, so every bullish
- * seat is scored on the identical event).
+ * (that venue is retired — trading/venues/retired.py), and per-seat blame
+ * rates (the fund is long-only, so every bullish seat is scored on the
+ * identical event).
  */
 export function PaperTrading() {
   useSimulationLab(true);

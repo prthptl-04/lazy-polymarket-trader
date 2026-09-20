@@ -1,4 +1,4 @@
-"""Per-venue trading sessions — switch Polymarket and Robinhood independently.
+"""Per-venue trading sessions — switch venues on and off independently.
 
 - Blind (the one that matters): switching a venue OFF must never block an
   EXIT. Trapping positions you cannot close is worse than any missed entry.
@@ -33,7 +33,7 @@ class _Spy(PaperVenue):
 
 
 def _router():
-    v = _Spy(name="polymarket_us", starting_cash_usd=10_000.0, slippage_bps=0,
+    v = _Spy(name="robinhood", starting_cash_usd=10_000.0, slippage_bps=0,
              supported=("equity", "crypto"))
     v.set_quote("AAPL", bid=99.95, ask=100.05)
     return VenueRouter(adapters=[v]), v
@@ -54,13 +54,13 @@ def _sell(**kw):
 def test_venues_are_enabled_by_default():
     """A venue you registered but never touched should just work."""
     r, _ = _router()
-    assert r.is_enabled("polymarket_us")
+    assert r.is_enabled("robinhood")
 
 
 @pytest.mark.asyncio
 async def test_switched_off_blocks_entries_and_never_reaches_the_venue():
     r, v = _router()
-    r.set_enabled("polymarket_us", False)
+    r.set_enabled("robinhood", False)
     ack = await r.place(_buy(), WED)
     assert not ack.accepted
     assert "[venue_session]" in ack.error
@@ -72,7 +72,7 @@ async def test_switched_off_still_allows_exits():
     """Trapping open positions is worse than any missed entry."""
     r, v = _router()
     await r.place(_buy(), WED)              # open while enabled
-    r.set_enabled("polymarket_us", False)
+    r.set_enabled("robinhood", False)
     ack = await r.place(_sell(), WED)
     assert ack.accepted, ack.error
 
@@ -80,15 +80,15 @@ async def test_switched_off_still_allows_exits():
 @pytest.mark.asyncio
 async def test_switching_back_on_restores_entries():
     r, _ = _router()
-    r.set_enabled("polymarket_us", False)
-    r.set_enabled("polymarket_us", True)
+    r.set_enabled("robinhood", False)
+    r.set_enabled("robinhood", True)
     assert (await r.place(_buy(), WED)).accepted
 
 
 def test_status_reports_each_session():
     r, _ = _router()
-    r.set_enabled("polymarket_us", False)
-    assert r.status(WED)["sessions"] == {"polymarket_us": False}
+    r.set_enabled("robinhood", False)
+    assert r.status(WED)["sessions"] == {"robinhood": False}
 
 
 # ---------------- dashboard control ----------------
@@ -112,16 +112,16 @@ def client(tmp_path):
 
 def test_sessions_endpoint_lists_venues(client):
     c, _, _ = client
-    assert c.get("/api/venue-sessions").json()["sessions"] == {"polymarket_us": True}
+    assert c.get("/api/venue-sessions").json()["sessions"] == {"robinhood": True}
 
 
 def test_stop_then_start_one_venue(client):
     c, _, router = client
-    body = c.post("/api/venue-sessions/polymarket_us/stop").json()
-    assert body["ok"] and body["sessions"]["polymarket_us"] is False
-    assert router.is_enabled("polymarket_us") is False
+    body = c.post("/api/venue-sessions/robinhood/stop").json()
+    assert body["ok"] and body["sessions"]["robinhood"] is False
+    assert router.is_enabled("robinhood") is False
 
-    assert c.post("/api/venue-sessions/polymarket_us/start").json()["sessions"]["polymarket_us"]
+    assert c.post("/api/venue-sessions/robinhood/start").json()["sessions"]["robinhood"]
 
 
 def test_unknown_venue_404s(client):
@@ -131,12 +131,12 @@ def test_unknown_venue_404s(client):
 
 def test_bad_action_400s(client):
     c, _, _ = client
-    assert c.post("/api/venue-sessions/polymarket_us/wobble").status_code == 400
+    assert c.post("/api/venue-sessions/robinhood/wobble").status_code == 400
 
 
 def test_toggle_is_audited(client):
     c, rt, _ = client
-    c.post("/api/venue-sessions/polymarket_us/stop")
+    c.post("/api/venue-sessions/robinhood/stop")
     assert "venue_session_off" in [e["action"] for e in rt.recent_audit(limit=10)]
 
 
@@ -146,13 +146,13 @@ def test_intent_survives_a_restart(tmp_path):
     rt = build_runtime(memory=MemoryStore(db_path=db))
     router, _ = _router()
     rt.fund_scheduler = _Sched(router)
-    rt.set_venue_session("polymarket_us", False)
+    rt.set_venue_session("robinhood", False)
 
     fresh = build_runtime(memory=MemoryStore(db_path=db))
     fresh_router, _ = _router()
     fresh.fund_scheduler = _Sched(fresh_router)
     fresh.restore_venue_sessions()
-    assert fresh_router.is_enabled("polymarket_us") is False
+    assert fresh_router.is_enabled("robinhood") is False
 
 
 def test_no_router_degrades_rather_than_raising(tmp_path):

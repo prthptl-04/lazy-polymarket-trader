@@ -1,10 +1,16 @@
-# Lazy Polymarket Trader
+# Project धन (Dhan)
 
-Autonomous Polymarket trading bot. Three Claude-driven managed agents (Product,
-Software Architect, Forward Deployment) cooperate through an Orchestrator and
-an Orchestration Manager (Chief of Staff). Below the agents, a deterministic
-Python core handles real-time market data, decision-tree prediction, Kelly
-position sizing, and HMAC-signed CLOB execution.
+Autonomous trading fund. Three Claude-driven managed agents (Product, Software
+Architect, Forward Deployment) cooperate through an Orchestrator and an
+Orchestration Manager (Chief of Staff). Below the agents, a deterministic
+Python core handles real-time market data, a round-table of LLM analysts, Kelly
+position sizing, and venue-routed execution behind a live-trading gate.
+
+**The fund trades Robinhood only** — US equities Monday to Friday, crypto at
+weekends, on the rotation in `trading/sessions.py`. Polymarket is retired
+(`trading/venues/retired.py`); Kalshi was researched as a replacement and
+rejected on its own held-out evidence (`docs/KALSHI_BTC_15M.md` §14). The
+repository keeps its original directory name; it is history, not scope.
 
 > **Status:** live trading infrastructure is wired but **gated**.
 > `PAPER_TRADING=true` is the default. Flipping live requires five independent

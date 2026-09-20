@@ -1,7 +1,7 @@
 [project]
 name = "lazy-polymarket-trader"
 version = "0.1.0"
-description = "Autonomous Polymarket trading bot orchestrated by three Managed Agents."
+description = "Project dhan - autonomous Robinhood trading fund orchestrated by three Managed Agents."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

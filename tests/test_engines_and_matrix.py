@@ -64,9 +64,28 @@ def test_stopping_an_engine_never_needs_the_system_running(tmp_path):
     assert rt.set_engine("robinhood", False)["ok"] is True
 
 
-def test_a_venue_with_no_adapter_says_so(tmp_path):
+def test_a_retired_venue_says_it_is_retired_not_that_it_is_misconfigured(tmp_path):
+    """Polymarket has no adapter because it was retired, not because someone
+    forgot to wire one. "No adapter registered" reads as a fixable gap and
+    would have an operator hunting for the configuration mistake."""
     state = _runtime(tmp_path, [_Live()], running=True).engines()["polymarket_us"]
-    assert state["attached"] is False and "no adapter" in state["reason"]
+    assert state["attached"] is False
+    assert state["retired"] is True
+    assert state["on"] is False
+    assert "Retired" in state["reason"] and "Robinhood only" in state["reason"]
+
+
+def test_a_retired_venue_cannot_be_started(tmp_path):
+    """The engine button must not be able to revive a retired venue."""
+    rt = _runtime(tmp_path, [_Live()], running=True)
+    result = rt.set_engine("polymarket_us", True)
+    assert result["ok"] is False and "Retired" in result["reason"]
+    assert rt.engines()["polymarket_us"]["on"] is False
+
+
+def test_robinhood_is_not_retired(tmp_path):
+    """The one venue the fund actually trades."""
+    assert _runtime(tmp_path, [_Live()], running=True).engines()["robinhood"]["retired"] is False
 
 
 def test_paper_adapter_is_not_described_as_authenticated(tmp_path):
@@ -218,3 +237,71 @@ async def test_unreachable_broker_falls_back_to_the_fund_record(tmp_path):
 async def test_a_venue_without_a_ledger_reports_no_broker(tmp_path):
     out = await _runtime(tmp_path, [PaperVenue()], running=True).venue_stats("paper")
     assert out["broker"] is None and out["primary"] == "fund"
+
+
+# ---------- the strategy split ----------
+#
+# One venue now, so the interesting cut is no longer venue vs venue but the two
+# strategies inside Robinhood: equities Monday to Friday, crypto at weekends.
+# They run on different calendars and a blended number hides which is working.
+
+def _closed(store, symbol, asset_class, pnl):
+    import time
+    now = time.time()
+    store.record_closed_trade({
+        "symbol": symbol, "asset_class": asset_class, "realized_usd": pnl,
+        "realized_return": pnl / 1000.0, "quantity": 1, "entry_price": 1.0,
+        "exit_price": 2.0, "reason": "test", "venue": "robinhood",
+        "mode": "paper", "opened_at": now - 600, "closed_at": now,
+        "held_seconds": 600,
+    })
+
+
+def _with_trades(tmp_path):
+    store = MemoryStore(db_path=str(tmp_path / "split.db"))
+    _closed(store, "AAPL", "equity", 120.0)
+    _closed(store, "MSFT", "equity", -40.0)
+    _closed(store, "BTC-USD", "crypto", 300.0)
+    _closed(store, "ETH-USD", "crypto", -50.0)
+    return DashboardRuntime(memory=store)
+
+
+def test_asset_class_slices_the_record(tmp_path):
+    rt = _with_trades(tmp_path)
+    assert rt.record("robinhood")["closed"] == 4
+    assert rt.record("robinhood", asset_class="equity")["closed"] == 2
+    assert rt.record("robinhood", asset_class="crypto")["closed"] == 2
+
+
+def test_the_split_shows_which_strategy_is_carrying_the_book(tmp_path):
+    """The whole point of splitting. Blended it is +330 and looks uniform;
+    split it is +80 equities against +250 crypto, which is a different fund."""
+    rt = _with_trades(tmp_path)
+    assert rt.record("robinhood")["realized_usd"] == pytest.approx(330.0)
+    assert rt.record("robinhood", asset_class="equity")["realized_usd"] == pytest.approx(80.0)
+    assert rt.record("robinhood", asset_class="crypto")["realized_usd"] == pytest.approx(250.0)
+
+
+def test_the_slices_sum_to_the_whole(tmp_path):
+    """A split that does not reconcile is worse than no split."""
+    rt = _with_trades(tmp_path)
+    parts = sum(rt.record("robinhood", asset_class=a)["closed"] for a in ("equity", "crypto"))
+    assert parts == rt.record("robinhood")["closed"]
+
+
+@pytest.mark.asyncio
+async def test_a_sliced_panel_suppresses_the_broker_ledger(tmp_path):
+    """The broker's ledger is account-wide and cannot be cut by asset class.
+
+    Showing it under an "Equities" heading would read as the equity strategy's
+    P&L and be wrong by every crypto trade in the account.
+    """
+    rt = _with_trades(tmp_path)
+    assert (await rt.venue_stats("robinhood", asset_class="equity"))["broker"] is None
+    assert (await rt.venue_stats("robinhood", asset_class="equity"))["primary"] == "fund"
+
+
+@pytest.mark.asyncio
+async def test_an_unsliced_panel_still_reports_its_asset_class_as_none(tmp_path):
+    stats = await _with_trades(tmp_path).venue_stats("robinhood")
+    assert stats["asset_class"] is None

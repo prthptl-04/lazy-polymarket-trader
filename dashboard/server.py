@@ -137,8 +137,8 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
         return result
 
     @app.get("/api/venue-stats")
-    async def api_venue_stats(venue: str) -> dict:
-        return await runtime.venue_stats(venue)
+    async def api_venue_stats(venue: str, asset_class: str | None = None) -> dict:
+        return await runtime.venue_stats(venue, asset_class=asset_class)
 
     @app.get("/api/edge")
     def api_edge() -> dict:

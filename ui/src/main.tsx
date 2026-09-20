@@ -5,6 +5,7 @@ import { LiquidGlassProvider } from "./components/LiquidGlassProvider";
 import { StatusBar, type ViewKey } from "./components/StatusBar";
 import { Overview } from "./views/Overview";
 import { PaperTrading } from "./views/PaperTrading";
+import { RetiredVenue } from "./views/RetiredVenue";
 import { VenueView } from "./views/VenueView";
 import "./index.css";
 
@@ -33,7 +34,8 @@ function App() {
           transition={{ duration: 0.18 }}>
           {view === "overview" && <Overview />}
           {view === "paper" && <PaperTrading />}
-          {view === "polymarket" && <VenueView venue="polymarket_us" />}
+          {/* Retired, not deleted — the tab stays so the decision is visible. */}
+          {view === "polymarket" && <RetiredVenue venue="polymarket_us" title="Polymarket" />}
           {view === "robinhood" && <VenueView venue="robinhood" />}
         </motion.div>
       </main>

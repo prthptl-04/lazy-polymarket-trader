@@ -14,9 +14,14 @@ import { useDynamicBackground } from "../lib/useDynamicBackground";
 
 export function Overview() {
   const { data: rec } = usePoll<Record_>("/api/record");
-  // Per-venue statistics, sourced from the venue itself where it has a ledger.
-  const { data: polyStats } = usePoll<VenueStats>("/api/venue-stats?venue=polymarket_us", 15000);
-  const { data: hoodStats } = usePoll<VenueStats>("/api/venue-stats?venue=robinhood", 15000);
+  // Robinhood is the only venue the fund trades, so the interesting split is
+  // no longer venue vs venue but the two strategies inside it: equities on
+  // weekdays, crypto at weekends. They run on different calendars and a single
+  // blended number hides which of the two is working.
+  const { data: eqStats } = usePoll<VenueStats>(
+    "/api/venue-stats?venue=robinhood&asset_class=equity", 15000);
+  const { data: cryptoStats } = usePoll<VenueStats>(
+    "/api/venue-stats?venue=robinhood&asset_class=crypto", 15000);
   const { data: paper } = usePoll<PaperProgress>("/api/paper");
   const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
@@ -31,7 +36,7 @@ export function Overview() {
   // dropped — a total that does not reconcile is worse than an odd label.
   const unattributed = Math.max(
     0, (rec?.closed ?? 0)
-       - ((polyStats?.fund.closed ?? 0) + (hoodStats?.fund.closed ?? 0)));
+       - ((eqStats?.fund.closed ?? 0) + (cryptoStats?.fund.closed ?? 0)));
 
   // The ground colour tracks the open trade, bounded by its own exit plan.
   const active = useActiveTrade();
@@ -51,23 +56,30 @@ export function Overview() {
             <Pill>{fund?.session ?? "—"}</Pill>
           </div>
         }>
-          Dual market · live feed
+          Robinhood · live feed
         </PanelTitle>
-        {/* Each venue owns its column, stats included. One shared row of
-            numbers under two charts reads as though both venues produced them;
-            the divider is there so a Polymarket loss is never mistaken for the
-            broker's. */}
+
+        {/* One engine, one switch. The two columns below are the same account
+            on two calendars, not two venues — giving each its own button would
+            imply they can be run independently, and they cannot. */}
+        <div className="mb-3">
+          <EngineButton venue="robinhood" label="Robinhood Engine"
+                        state={engineData?.engines?.robinhood} onDone={refreshEngines} />
+        </div>
+
+        {/* Each strategy owns its column, stats included. One shared row of
+            numbers under two charts reads as though both produced them; the
+            divider is there so a weekend crypto loss is never mistaken for the
+            weekday equity book. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <VenuePanel
-            label="Polymarket" skin="polymarket" dot="bg-poly-blue" colour="#2d52f3"
-            venue="polymarket_us" engineLabel="Polymarket Engine"
-            engine={engineData?.engines?.polymarket_us} onEngine={refreshEngines}
-            stats={polyStats} cycles={fund?.metrics?.cycles ?? 0} />
+            label="Equities · Mon–Fri" skin="robinhood" dot="bg-hood-green" colour="#00c805"
+            active={!!fund?.equities_open}
+            stats={eqStats} cycles={fund?.metrics?.cycles ?? 0} />
           <VenuePanel
-            label="Robinhood" skin="robinhood" dot="bg-hood-green" colour="#00c805"
-            venue="robinhood" engineLabel="Robinhood Engine"
-            engine={engineData?.engines?.robinhood} onEngine={refreshEngines}
-            stats={hoodStats} cycles={fund?.metrics?.cycles ?? 0} />
+            label="Crypto · weekends" skin="robinhood" dot="bg-hood-green" colour="#00c805"
+            active={!fund?.equities_open}
+            stats={cryptoStats} cycles={fund?.metrics?.cycles ?? 0} />
         </div>
       </GlassCard>
 
@@ -204,10 +216,9 @@ interface ActiveTrade {
 function useActiveTrade(): ActiveTrade | undefined {
   const { data: positions } = usePoll<Position[]>("/api/positions");
   const { data: hood } = usePoll<Feed[]>("/api/feeds?venue=robinhood", 4000);
-  const { data: poly } = usePoll<Feed[]>("/api/feeds?venue=polymarket_us", 4000);
 
   const marks = new Map<string, number>();
-  for (const f of [...(hood ?? []), ...(poly ?? [])]) {
+  for (const f of hood ?? []) {
     if (f.last != null) marks.set(f.symbol, f.last);
   }
   for (const p of positions ?? []) {
@@ -268,10 +279,13 @@ const LABELS: Record<string, string> = {
  * the fund never made and the fund's paper record contains fills the broker
  * never saw.
  */
-function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEngine, stats, cycles }: {
+function VenuePanel({ label, skin, dot, colour, active, stats, cycles }: {
   label: string; skin: "polymarket" | "robinhood"; dot: string; colour: string;
-  venue: string; engineLabel: string;
-  engine?: EngineState; onEngine: () => void; stats?: VenueStats | null;
+  // Whether this strategy is the one on the clock right now. The fund rotates
+  // rather than running both, so a column showing a flat week is only alarming
+  // if it was supposed to be trading.
+  active?: boolean;
+  stats?: VenueStats | null;
   cycles: number;
 }) {
   const hood = skin === "robinhood";
@@ -318,8 +332,10 @@ function VenuePanel({ label, skin, dot, colour, venue, engineLabel, engine, onEn
         <Pill tone={live ? "good" : "neutral"}>
           {live ? `broker · ${broker!.span ?? "all"}` : "fund paper record"}
         </Pill>
+        {active !== undefined && (
+          <Pill tone={active ? "good" : "neutral"}>{active ? "on the clock" : "off-session"}</Pill>
+        )}
       </div>
-      <EngineButton venue={venue} label={engineLabel} state={engine} onDone={onEngine} />
       {/* One size for both. Robinhood's 80px ticker is right on a page that is
           nothing but that number; in a two-up panel it just shouted over the
           other venue. */}

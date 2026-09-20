@@ -1,9 +1,27 @@
 # Project धन — Kalshi KXBTC15M
 
-**Ripping out Polymarket, replacing it with one 15-minute BTC binary.**
+> ## 📕 RESEARCH RECORD — not adopted. Closed 2026-09-20.
+>
+> This document was written as an architecture of record for migrating the fund
+> onto Kalshi's 15-minute BTC binary. **It was not adopted.** Build order step 2
+> (§11) is a deliberate go/no-go: replayed over real settled windows, against
+> the book that was actually quoted, after the fee Kalshi actually charges — is
+> the edge positive?
+>
+> **It is not.** The evidence is [§14](#14-kill-switch-result). Steps 3–11 were
+> never built, which is the outcome step 2 exists to produce.
+>
+> §§1–13 are preserved as written, *before* the result was known. They describe
+> a system that does not exist and should be read as the hypothesis, not as a
+> plan. The only sections that describe reality are §0 (API facts, still true),
+> §3 (the averaging derivation, since **confirmed** empirically) and §14.
+>
+> **The fund trades Robinhood only** — equities on weekdays, crypto at weekends.
+> Polymarket is retired; see [§15](#15-what-this-closed-out).
 
-Architecture of record. Written 2026-09-19. To be implemented verbatim, in one
-commit. Nothing here is built yet.
+**The hypothesis: rip out Polymarket, replace it with one 15-minute BTC binary.**
+
+Written 2026-09-19. Tested and rejected 2026-09-20 at step 2 of 11.
 
 ---
 
@@ -975,3 +993,176 @@ orders, WebSocket channels, rate limits and the July 2026 fee schedule. The
 τ_eff derivation and the σ estimator are the architect's and are testable
 offline — build them first and check them against hand arithmetic, not against
 the market.*
+
+
+---
+
+## 14. Kill-switch result
+
+Run: `python -m trading.kalshi.replay`. Data: **300 settled KXBTC15M windows**
+pulled from the public API, split **chronologically** (no shuffle) into 180
+train / 120 test. All numbers below are **held-out** unless labelled otherwise.
+
+### 14.1 The verdict
+
+**STOP.** A diffusion model of BRTI does not beat the Kalshi order book on this
+contract, in any time regime, at any edge threshold.
+
+| Held-out, 120 windows, 100-contract clips | Brier | mean net ¢/contract |
+|---|---|---|
+| **Kalshi's book (the mid)** | **0.1635** | — |
+| Our model, σ-corrected, best config | 0.1724 | −1.59 (taker, 1¢ threshold) |
+| Coin flip on the same quotes | 0.25 | −3.27 |
+
+Our model lands between the book and a coin flip, and much nearer the coin
+flip than the headline Brier gap suggests — the hit rate across every threshold
+is **41–47%**, i.e. *below* even money. It picks the wrong side slightly more
+often than chance, and the fee does the rest.
+
+### 14.2 The harness is not the problem
+
+Before accepting a negative result this strong, the replay was checked against
+strategies whose answers are known in advance:
+
+| Control | mean ¢/contract | expected |
+|---|---|---|
+| Oracle (knows the result, pays the quote) | **+44.96** | ≈ +50 less fees ✓ |
+| Anti-oracle (always the losing side) | **−49.26** | ≈ −50 ✓ |
+| Coin flip on the quoted book | **−3.27** | ≈ −(½ spread + fee) = −2.25 ✓ |
+
+Median quoted spread is **1.00¢**; base rate is 52.5% YES. The fill and P&L
+arithmetic reproduces all three controls, so the model result is the model's.
+
+### 14.3 What was actually wrong, and why fixing it did not help
+
+The first replay looked *worse* — it traded 150 of 150 windows at a 3¢
+threshold, which is not a strategy finding an edge, it is a model that disagrees
+with the market everywhere. Two real bugs came out of chasing it, and both are
+fixed in the code:
+
+**The fee was rounded per contract, not per order.** The CFTC-filed schedule is
+`round up(0.07 × C × P × (1−P))` — *once, for the whole order*. Rounding each
+contract charged 2¢ at the money where the exchange charges 1.75¢, 14% too much
+on a hundred-lot. Fixed in `fair_value.order_fee`; pinned by
+`tests/test_kalshi_fees.py` against the two rows Kalshi publishes.
+
+**BRTI is a smoothed index, so σ was ~2× too low.** Measured σ rises
+monotonically with sampling spacing and only plateaus past 120s:
+
+| sampling spacing | 1s | 5s | 15s | 30s | 60s | 120s | 300s |
+|---|---|---|---|---|---|---|---|
+| implied annualised σ | 2.6% | 5.7% | 9.7% | 13.1% | 16.6% | 18.4% | 18.1% |
+
+The original estimator sampled at 5s and 30s — 13% annualised for *bitcoin*.
+The true dispersion, measured directly as `stdev(log(settle / index at τ))`,
+implies **σ ≈ 5.0–5.7e-5/s (28–32% annualised)**, i.e. variance understated
+roughly fourfold, which is exactly the overconfidence the calibration table
+showed (model says 2.4%, truth is 12.7%).
+
+**One thing this validated: `tau_eff` is right.** That directly-measured σ is
+*flat* at 5.0–5.7e-5 across τ from 840s down to 90s once `tau_eff` is divided
+out. The average-to-average variance derivation in §3 — `τ−40` above the
+window, `τ³/10800` inside it — is confirmed against 300 real windows. It is the
+volatility *level* that was wrong, not the averaging maths.
+
+Correcting both, and fitting the σ multiplier on the training half, moves train
+Brier 0.174 → 0.163 and **test Brier only to 0.172**. The gap is the multiplier
+overfitting. The book stays ahead.
+
+### 14.4 It loses in every regime
+
+Model minus book Brier, held out — positive means the book wins:
+
+| τ (seconds to close) | n | model | book | Δ |
+|---|---|---|---|---|
+| 30–90 | 120 | 0.0704 | 0.0426 | **+0.0278** |
+| 90–240 | 240 | 0.1104 | 0.1055 | +0.0048 |
+| 240–480 | 480 | 0.1581 | 0.1441 | +0.0140 |
+| 480–900 | 720 | 0.2196 | 0.2160 | +0.0036 |
+
+The worst bucket is the final minute — the one place the model had a *structural*
+advantage, because it knows the settlement is already partly realised and can
+weight it (§3). The book knows that too, and prices it better.
+
+### 14.5 The maker column is a trap
+
+Resting rather than crossing replaces a 1.75¢ quadratic fee with a flat 0.25¢,
+and that alone flips some thresholds positive (+2.82¢ at 0.5¢, +2.42¢ at 1¢).
+It is not a strategy:
+
+- The signs do not order with the threshold (+2.8, +2.4, −1.0, +0.19, −0.36,
+  −3.8). A real edge strengthens as the filter tightens. This is noise.
+- Hit rate stays **below 50%** in every maker row too. The maker fee is masking
+  a model that picks the wrong side, not revealing one that picks the right one.
+- **It assumes fills.** A resting order on a 1¢-wide book this fast gets filled
+  precisely when the market is about to move through it. Modelling that adverse
+  selection requires queue position, which minute candles cannot provide — so
+  the honest version of this number is lower, not higher, than what is shown.
+
+### 14.6 Why this is the expected answer
+
+KXBTC15M is the most liquid, most-modelled short-dated crypto binary on a US
+exchange. The counterparties are market makers running this same model with
+better inputs — unsmoothed sub-second feeds rather than 1 Hz BRTI, full order
+flow rather than minute candles — while paying the maker rate we would only
+sometimes earn. Arriving with a 1 Hz public feed and a 5-minute cycle and
+expecting to find 2¢ of mispricing was the thing worth testing cheaply, which
+is what §11 step 2 was for.
+
+### 14.7 What survives
+
+Nothing here invalidates the *plumbing*, which is independent of the signal:
+
+- `fair_value.py` — correct, and needed to mark and grade any position.
+- `rest.py` — the public read surface; the live BTC feed for the UI is this.
+- `replay.py` — reusable for any future KXBTC15M signal.
+- §0's API facts, §3's averaging derivation (now empirically confirmed), §7–§9.
+
+What does **not** survive is the claim in §1 that this contract is a source of
+edge for us. Any Kalshi UI or paper venue built from here on must be presented
+as a data and simulation surface, not as a strategy with an expected return.
+
+### 14.8 Two facts found late that the design did not have
+
+- **`price_level_structure: "tapered_deci_cent"`** — the tick is $0.001 below
+  10¢ and above 90¢, $0.01 between. The tails are priced ten times more finely
+  than the middle. `rest.tick_size` / `rest.round_to_tick` implement it; an
+  order rounded to the wrong grid is rejected.
+- **Money is decimal strings** (`"0.6400"`), not integer cents. Parsed at the
+  boundary in `rest.dollars`, because 0.64 and 64 both look plausible in a
+  float and differ by a hundredfold.
+
+
+---
+
+## 15. What this closed out
+
+The research answered a narrower question than it set out to, and the answer
+settled a wider one.
+
+**Kalshi: not adopted.** No venue adapter, no signing path, no live gate entry,
+no UI. `trading/kalshi/` remains as the reproducible evidence behind §14 —
+`fair_value.py`, `rest.py`, `replay.py`, 82 tests — and is wired into nothing.
+`python -m trading.kalshi.replay` re-runs the whole finding against the live
+public API. Delete it whenever the record is no longer wanted.
+
+**Polymarket: retired.** The migration was proposed because the fund had
+outgrown prediction markets, and that reasoning survives the Kalshi result
+intact — it was never contingent on Kalshi being good. Polymarket is disabled in
+the backend and rendered as a disabled page in the UI rather than deleted, so
+the decision is visible and reversible.
+
+**Robinhood: the whole fund.** Equities Monday–Friday, crypto at weekends, on
+the rotation `trading/sessions.py` already implements and `FundLoop._universe_for`
+already follows. This was not a change of plan so much as the removal of
+everything that was not this.
+
+### The one transferable lesson
+
+The order of §11 was the point. Step 2 cost four modules; steps 3–11 would have
+cost a venue adapter, an RSA signing path, a paper engine, a persistence schema,
+a dashboard API, a themed UI, and a migration touching every Polymarket
+reference in the repo — all of it load-bearing on an edge nobody had measured.
+
+Put the falsification test first, and make it cheap enough that running it is
+never the expensive option.

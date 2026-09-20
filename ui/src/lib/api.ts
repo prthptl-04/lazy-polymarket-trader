@@ -144,6 +144,9 @@ export interface ModeState { on: boolean; attached: boolean }
 export interface EngineState {
   adapter: string | null; attached: boolean; authenticated: boolean;
   reason: string | null; on: boolean; system_running: boolean;
+  // Retired venues keep their entry so the UI can say so rather than showing
+  // an empty page. See trading/venues/retired.py.
+  retired?: boolean;
 }
 export interface AgentMatrixRow {
   id: string; name: string; mandate: string; round: number; icon: string;

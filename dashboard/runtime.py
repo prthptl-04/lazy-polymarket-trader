@@ -16,6 +16,7 @@ from typing import Any, Optional
 from dashboard.ws_hub import WebSocketHub
 from finance.risk_metrics import max_drawdown
 from memory.store import MemoryStore
+from trading.venues.retired import is_retired, retirement_reason
 
 
 @dataclass
@@ -327,13 +328,17 @@ class DashboardRuntime:
         sched = self.fund_scheduler
         return getattr(getattr(sched, "fund", None), "router", None) if sched else None
 
-    # Prediction markets are Polymarket; everything else is the broker.
+    # Kept so CLOSED prediction trades still attribute to the venue that made
+    # them. Polymarket is retired (trading/venues/retired.py), so nothing new
+    # can land here — but deleting the mapping would orphan the history rather
+    # than retire the venue.
     VENUE_OF_ASSET = {"prediction": "polymarket_us"}
 
     # Below this a win/loss ratio describes the exit geometry rather than skill.
     MIN_TRADES_FOR_RATIOS = 50
 
-    def record(self, venue: Optional[str] = None) -> dict:
+    def record(self, venue: Optional[str] = None, *,
+               asset_class: Optional[str] = None) -> dict:
         """Wins, losses and the equity curve — the 'am I making money' view.
 
         Built from closed positions, which is the only honest source: an open
@@ -342,6 +347,12 @@ class DashboardRuntime:
         `venue` narrows it to one book. Trades closed before asset class was
         recorded have no venue and are counted only in the fund-wide view —
         silently filing them under the broker would invent a history.
+
+        `asset_class` narrows it further, and is the slice that actually means
+        something now the fund trades one venue: equities run Monday to Friday
+        and crypto runs at weekends, so they are two different strategies on
+        two different calendars sharing one account. A single blended Robinhood
+        number hides which of the two is working.
         """
         closed = self._closed_trades()
         if venue is not None:
@@ -350,6 +361,8 @@ class DashboardRuntime:
                 if c.get("asset_class")
                 and self.VENUE_OF_ASSET.get(c["asset_class"], "robinhood") == venue
             ]
+        if asset_class is not None:
+            closed = [c for c in closed if c.get("asset_class") == asset_class]
         wins = [c for c in closed if c.get("realized_usd", 0) > 0]
         losses = [c for c in closed if c.get("realized_usd", 0) < 0]
         realized = sum(c.get("realized_usd", 0.0) for c in closed)
@@ -771,7 +784,8 @@ class DashboardRuntime:
 
     # ---------- per-venue statistics ----------
 
-    async def venue_stats(self, venue: str) -> dict:
+    async def venue_stats(self, venue: str, *,
+                          asset_class: Optional[str] = None) -> dict:
         """Two records for one venue, each labelled.
 
         `fund` is what THIS FUND did at that venue, from the position book.
@@ -783,13 +797,19 @@ class DashboardRuntime:
         `primary` names the one the panel should headline — the broker when it
         is reachable, because a panel labelled with a venue's name should show
         that venue's money.
+
+        `asset_class` slices the FUND record only. The broker's ledger is not
+        sliceable by asset class, so asking for one suppresses it rather than
+        showing an account-wide number under an "equities" heading — which
+        would read as the equity strategy's P&L and be wrong by every crypto
+        trade in the account.
         """
-        fund = self.record(venue)
+        fund = self.record(venue, asset_class=asset_class)
         adapter = next(
             (a for a in (self._router().adapters if self._router() else [])
              if a.name == venue), None)
         broker: Optional[dict] = None
-        if adapter is not None and hasattr(adapter, "realized_stats"):
+        if asset_class is None and adapter is not None and hasattr(adapter, "realized_stats"):
             try:
                 broker = await adapter.realized_stats()
             except Exception as e:
@@ -804,6 +824,7 @@ class DashboardRuntime:
                     pass                      # the P&L is still worth showing
         return {
             "venue": venue,
+            "asset_class": asset_class,
             "fund": fund,
             "broker": broker,
             "primary": "broker" if (broker or {}).get("available") else "fund",
@@ -829,8 +850,9 @@ class DashboardRuntime:
         live_traded = any(
             (getattr(self._router(), "opened_at", {}) or {}).values()
         ) if self._router() else False
-        paper_earned = self.record("robinhood")["realized_usd"] + \
-            self.record("polymarket_us")["realized_usd"]
+        # Robinhood is the only venue the fund trades, so it is the only one
+        # whose earnings can pay for the tokens spent deciding them.
+        paper_earned = self.record("robinhood")["realized_usd"]
 
         summary = ledger.summary(earnings={
             "paper": paper_earned,
@@ -863,12 +885,18 @@ class DashboardRuntime:
             adapter_name = next((c for c in candidates if c in adapters), None)
             adapter = adapters.get(adapter_name) if adapter_name else None
             authed, reason = self._venue_auth(venue, adapter)
+            retired = is_retired(venue)
             out[venue] = {
                 "adapter": adapter_name,
                 "attached": adapter is not None,
                 "authenticated": authed,
-                "reason": reason,
-                "on": bool(adapter_name and router and router.is_enabled(adapter_name)),
+                # A retired venue's "reason" is its retirement, not a missing
+                # adapter. Reporting "no adapter registered" would read as a
+                # fixable configuration gap rather than a decision.
+                "reason": retirement_reason(venue) if retired else reason,
+                "retired": retired,
+                "on": bool(not retired and adapter_name and router
+                           and router.is_enabled(adapter_name)),
                 # The engine is a no-op while the fund is stopped; saying so is
                 # better than a button that appears to work and changes nothing.
                 "system_running": running,
@@ -897,6 +925,9 @@ class DashboardRuntime:
         an engine that connects to nothing is a light, not a switch."""
         if venue not in self.ENGINE_ADAPTERS:
             return {"ok": False, "reason": f"unknown venue {venue!r}", "engines": self.engines()}
+        if is_retired(venue):
+            return {"ok": False, "reason": retirement_reason(venue),
+                    "engines": self.engines()}
         state = self.engines()[venue]
         if not state["attached"]:
             return {"ok": False, "reason": state["reason"], "engines": self.engines()}
