@@ -77,7 +77,12 @@ export interface Record_ {
   bridge?: Bridge; concentration?: Concentration;
 }
 export interface PaperProgress {
+  // graded_paper_trades is CLOSED PAPER ROUND TRIPS — the rule-#13 bar, and
+  // the same number LiveTradingGate enforces. graded_orders is orders that
+  // passed the grader, which is a different and much larger number: an order
+  // can be accepted and never trade.
   graded_paper_trades: number; required: number; pct_complete: number;
+  graded_orders: number;
   deliberations: number; resolved: number; seats_calibrated: number;
   seats_scored: number; lessons_learned: number;
   seats: SeatScore[];

@@ -1,9 +1,10 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6 and B11 are FIXED.** The fund books and closes
+**Status: B0, B18, B2, B3, B6, B11 and B1 are FIXED.** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
-quote rather than yesterday's daily close. Fourteen blockers remain.
+quote rather than yesterday's daily close, and the rule-#13 bar on the page is
+the same number the gate enforces. Thirteen blockers remain.
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -137,7 +138,29 @@ Other false positives worth deleting or fixing:
 
 ## 3. The operator-facing number is wrong
 
-- [ ] **B1 · Make `paper_progress()` and `LiveTradingGate` count the same thing**
+- [x] **B1 · Make `paper_progress()` and `LiveTradingGate` count the same thing**
+      — **DONE.** `LiveTradingGate.graded_paper_trades()` is now the single
+      public definition, and `paper_progress()` defers to the router's own gate
+      (falling back to a read-only stand-in when no fund is attached) so the
+      page reports what the executor will enforce rather than a second opinion
+      about it. The same sixty-order scenario now reads:
+
+      ```
+      dashboard graded_paper_trades : 0  (pct 0.0)
+      dashboard graded_orders       : 60
+      live gate                     : 0
+      agree: True
+      ```
+
+      The orders count is kept, not dropped — sixty orders that produced no
+      round trip is a real fact — but under `graded_orders`, and the Overview
+      panel now reads *"N of 50 closed round trips"* with *"M orders passed the
+      grader; a round trip needs a fill and a close"* beneath it. Conflating
+      them is what broke this; hiding one would hide the diagnosis.
+
+      `tests/test_live_gate.py::test_paper_progress_reports_the_rule_13_bar`
+      was encoding the bug — it seeded seven graded ORDERS and asserted the bar
+      read 7. Rewritten to assert both numbers under their correct names.
 
 Reproduced with sixty **live, never-filled** premarket orders and zero closed
 round trips:

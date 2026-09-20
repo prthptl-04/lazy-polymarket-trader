@@ -144,7 +144,7 @@ export function Overview() {
             <div className="flex items-baseline justify-between">
               <div className="font-mono text-[27px] font-semibold">
                 {paper.graded_paper_trades}
-                <span className="text-[14px] text-white/40 font-normal"> of {paper.required} graded</span>
+                <span className="text-[14px] text-white/40 font-normal"> of {paper.required} closed round trips</span>
               </div>
               <span className="text-[13px] text-white/50">{paper.pct_complete.toFixed(0)}%</span>
             </div>
@@ -153,6 +153,14 @@ export function Overview() {
                 style={{ background: "linear-gradient(90deg,#2d52f3,#00c805)" }}
                 initial={{ width: 0 }} animate={{ width: `${Math.max(2, paper.pct_complete)}%` }}
                 transition={{ duration: 0.6, ease: "easeOut" }} />
+            </div>
+            {/* An order that was accepted and never traded is not progress.
+                Showing both stops the larger number being read as the bar —
+                which is exactly how this panel once said "ready for live" on
+                sixty premarket orders that never filled. */}
+            <div className="text-[11px] text-white/35 mt-2">
+              {paper.graded_orders} orders passed the grader; a round trip needs a
+              fill and a close.
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 mt-4 text-[12px]">
               <Row k="Deliberations held" v={paper.deliberations} />

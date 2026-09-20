@@ -112,6 +112,17 @@ class LiveTradingGate:
             return False
         return 0 < self.criteria.max_position_usd <= self.bankroll_usd
 
+    def graded_paper_trades(self) -> int:
+        """Progress toward rule #13's condition 4, for anything that displays it.
+
+        Public because it was being re-implemented: the dashboard counted
+        `trade_log` rows with `grade_pass` — orders, including live ones and
+        ones that never traded — and called the result by the same name. Sixty
+        unfilled premarket orders read as "60 of 50, ready for live" on the
+        page and 0 here. One definition, one place.
+        """
+        return self._graded_count()
+
     def _graded_count(self) -> int:
         """Closed PAPER round trips — not orders.
 

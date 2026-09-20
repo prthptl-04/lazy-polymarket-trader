@@ -504,6 +504,20 @@ class DashboardRuntime:
             return {"attached": False}
         return {"attached": True, **router.status()}
 
+    def _live_gate(self):
+        """The gate the fund actually routes through, or a read-only stand-in.
+
+        Preferring the router's own gate means the page reports what the
+        executor will enforce, not a second opinion about it.
+        """
+        router = self._router()
+        gate = getattr(router, "live_gate", None) if router is not None else None
+        if gate is not None:
+            return gate
+        from trading.live_gate import LiveTradingGate
+        return LiveTradingGate(memory=self.memory,
+                               bankroll_usd=self.starting_bankroll_usd)
+
     def paper_progress(self) -> dict:
         """Progress toward the rule-#13 bar, and what the record looks like.
 
@@ -516,7 +530,14 @@ class DashboardRuntime:
             trades = self.memory.recent_trades(limit=100_000)
         except Exception:
             trades = []
-        graded = [t for t in trades if t.get("grade_pass")]
+        # Graded ORDERS. Worth showing — sixty orders that produced no round
+        # trip is a real fact — but it is not the bar, and calling it by the
+        # bar's name is what let the page read "ready for live" on orders that
+        # never traded.
+        graded_orders = [t for t in trades if t.get("grade_pass")]
+        # The bar itself comes from the gate that enforces it, never from a
+        # second count that can drift away from it.
+        graded = self._live_gate().graded_paper_trades()
 
         card = self.scorecard()
         record = self.record()
@@ -527,9 +548,10 @@ class DashboardRuntime:
         improving = [s for s in seats if s.get("calibrated") and s.get("beats_coin_flip")]
 
         return {
-            "graded_paper_trades": len(graded),
+            "graded_paper_trades": graded,
             "required": MIN_PAPER_TRADES_FOR_LIVE,
-            "pct_complete": round(min(100.0, len(graded) / MIN_PAPER_TRADES_FOR_LIVE * 100), 1),
+            "pct_complete": round(min(100.0, graded / MIN_PAPER_TRADES_FOR_LIVE * 100), 1),
+            "graded_orders": len(graded_orders),
             "total_trades_logged": len(trades),
             "deliberations": len(self.deliberations(limit=500)),
             "resolved": card.get("resolved", 0),

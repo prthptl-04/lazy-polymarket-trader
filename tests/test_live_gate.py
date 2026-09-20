@@ -191,7 +191,15 @@ def test_router_status_exposes_the_checklist():
 
 # ---------------- paper progress panel ----------------
 
-def test_paper_progress_reports_the_rule_13_bar(tmp_path):
+def test_paper_progress_counts_orders_and_the_bar_separately(tmp_path):
+    """This test used to seed seven graded ORDERS and assert the bar read 7.
+
+    It was encoding the bug: an order that was accepted and never traded is not
+    a paper trade, and counting it let the page read "ready for live" on orders
+    that never happened. Rule #13's condition 4 is closed paper ROUND TRIPS.
+
+    Both numbers are still reported, under names that say which is which.
+    """
     from dashboard.runtime import build_runtime
     from memory.store import MemoryStore
 
@@ -201,10 +209,11 @@ def test_paper_progress_reports_the_rule_13_bar(tmp_path):
     store.log_trade("fund", "UGLY", "buy", 1.0, 0.5, True, False, "rejected")
 
     p = build_runtime(memory=store).paper_progress()
-    assert p["graded_paper_trades"] == 7        # the rejected one does not count
+    assert p["graded_orders"] == 7              # the rejected one does not count
     assert p["total_trades_logged"] == 8
+    assert p["graded_paper_trades"] == 0        # none of them closed
+    assert p["pct_complete"] == 0.0
     assert p["required"] == MIN_PAPER_TRADES_FOR_LIVE
-    assert p["pct_complete"] == pytest.approx(14.0)
 
 
 def test_paper_progress_is_empty_but_explicit_on_a_fresh_fund(tmp_path):
