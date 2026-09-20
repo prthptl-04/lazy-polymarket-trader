@@ -54,8 +54,19 @@ from roundtable.types import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOKENS = 1024
-CHAIR_MAX_TOKENS = 2048
+# Measured against the live API on a real candidate: completing seats spent
+# 656-964 output tokens, and the two most verbose — Risk and the Devil's
+# Advocate — hit the old 1024 ceiling and were cut off mid-JSON. The Chair,
+# which restates six positions plus a transcript, hit the old 2048.
+#
+# A truncated response is not a degraded answer, it is a silent abstention: the
+# seat vanishes from the table and the committee reports a neutral consensus
+# that looks considered. So these are sized with real headroom rather than to
+# the observed peak. Raising a ceiling costs nothing when it is not reached —
+# the model stops at end_turn — so the only calls that get more expensive are
+# the ones that were previously broken.
+DEFAULT_MAX_TOKENS = 4096
+CHAIR_MAX_TOKENS = 8192
 
 
 @dataclass
@@ -132,7 +143,7 @@ class RoundTable:
 
         parsed = _parse_json(raw)
         if parsed is None:
-            return self._failed_seat(seat, "unparseable response")
+            return self._failed_seat(seat, _parse_failure(raw, self.max_tokens))
 
         return SeatOpinion(
             seat_id=seat.id,
@@ -177,7 +188,8 @@ class RoundTable:
 
         parsed = _parse_json(raw)
         if parsed is None:
-            return self._fallback_consensus(thesis, "chair response unparseable")
+            return self._fallback_consensus(
+                thesis, f"chair response {_parse_failure(raw, CHAIR_MAX_TOKENS)}")
 
         return Consensus(
             signal=_coerce_signal(parsed.get("signal")),
@@ -320,6 +332,50 @@ def _extract_text(response: Any) -> str:
     return "\n".join(parts)
 
 
+def _looks_truncated(raw: str) -> bool:
+    """Did this response start a JSON object and never finish it?
+
+    Worth separating from "unparseable", because the two have different fixes
+    and the wrong label sends the next investigation somewhere useless. A
+    refusal or a prose answer means the prompt is wrong; an unterminated object
+    means the token budget is. The previous single label cost an API probe to
+    tell apart.
+    """
+    if not raw:
+        return False
+    text = raw.strip()
+    if "```" in text:
+        for chunk in text.split("```"):
+            chunk = chunk.strip()
+            if chunk.startswith("json"):
+                chunk = chunk[4:].strip()
+            if chunk.startswith("{"):
+                text = chunk
+                break
+    start = text.find("{")
+    if start == -1:
+        return False
+    # Balanced braces would have parsed; an excess of opens means it was cut.
+    depth = 0
+    in_string = escaped = False
+    for ch in text[start:]:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+    return depth > 0 or in_string
+
+
 def _parse_json(raw: str) -> Optional[dict]:
     if not raw:
         return None
@@ -342,6 +398,17 @@ def _parse_json(raw: str) -> Optional[dict]:
     except (ValueError, TypeError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_failure(raw: str, budget: int) -> str:
+    """Why the response could not be read, in terms that name the fix."""
+    if _looks_truncated(raw):
+        logger.warning(
+            "response truncated at max_tokens=%s (%d chars); raise the budget",
+            budget, len(raw or ""),
+        )
+        return f"response truncated at max_tokens={budget} — the budget is too small"
+    return "unparseable response"
 
 
 def _coerce_signal(value: Any) -> Signal:

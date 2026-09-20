@@ -1,7 +1,9 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0 is FIXED. The fund can book and close a position; the rule-#13
-counter reads `1 of 50` instead of `0 of 50`. Nineteen blockers remain.**
+**Status: B0 and B18 are FIXED. The fund can book and close a position (the
+rule-#13 counter reads `1 of 50` instead of `0 of 50`), and all seven round-table
+calls now complete instead of three being silently truncated. Eighteen blockers
+remain.**
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -345,22 +347,54 @@ Chair                → "Fallback tally (chair response unparseable)"
 consensus: neutral 36.2 → no trade
 ```
 
-- [ ] **B18 · Three of seven LLM calls fail to parse**
-      `DEFAULT_MAX_TOKENS = 1024` (`roundtable/engine.py:57`). The two most
-      verbose seats and the Chair — the call that must summarise all six — are
-      the ones that fail, which is the signature of **JSON truncated before its
-      closing brace**; `_parse_json` then returns `None` and the seat abstains.
-      A third of the committee silently abstaining is not a quorum failure the
-      system reports — it reports a neutral consensus, which looks like a
-      considered decision.
-      Next step: raise `max_tokens` for the round-two seats and the Chair, and
-      log the raw response on a parse failure so this is diagnosable without a
-      probe. `MIN_RESPONDING_SEATS = 3` means 4 responding seats still counts as
-      quorate, which is how this stayed invisible.
+- [x] **B18 · Three of seven LLM calls fail to parse** — **DONE**
 
-Until this is fixed the fund will deliberate, pay for seven LLM calls, and
-decline to trade — so the 50 round trips accrue at zero per cycle even once B0
-is fixed.
+      Confirmed by capturing `stop_reason` from the live API, not inferred:
+
+      | call | budget | stop_reason | output | parsed |
+      |---|---|---|---|---|
+      | 4 round-one seats | 1024 | `end_turn` | 656–**964** | ✓ |
+      | Risk Manager | 1024 | **`max_tokens`** | 1024 | ✗ |
+      | Devil's Advocate | 1024 | **`max_tokens`** | 1024 | ✗ |
+      | Chair | 2048 | **`max_tokens`** | 2048 | ✗ |
+
+      Note the 964 — the seats that *passed* were one verbose run from failing
+      too, so this was never a two-seat problem.
+
+      Fix: `DEFAULT_MAX_TOKENS` 1024 → **4096**, `CHAIR_MAX_TOKENS` 2048 →
+      **8192**. Raising a ceiling costs nothing when it is not reached (the
+      model stops at `end_turn`), so only the previously-broken calls get more
+      expensive. Plus `_looks_truncated` / `_parse_failure`, so a cut-off
+      response now reports *"response truncated at max_tokens=N — the budget is
+      too small"* instead of *"unparseable response"*. A refusal and a
+      truncation need different fixes, and the single label cost an API probe
+      to tell apart.
+
+      Re-measured after the fix — **all seven `end_turn`, zero failures**, and
+      the Chair produced a real synthesis rather than a fallback tally:
+
+      ```
+      seats  4096  end_turn  721 / 839 / 880 / 989 / 844 / 2017
+      CHAIR  8192  end_turn  2757
+      consensus: neutral 36.0  synthesized_by_llm=True
+      ```
+
+      **The Devil's Advocate spent 2017 tokens and the Chair 2757** — so a
+      cautious bump to 2048/4096 would have left both still broken. The
+      headroom is the point.
+
+      Still open, deliberately: `MIN_RESPONDING_SEATS = 3` means four responding
+      seats is quorate, which is how a third of the table going dark stayed
+      invisible. Worth revisiting, but quorum policy is a separate decision from
+      a token budget — see B22.
+
+- [ ] **B22 · Quorum hides a partially dead committee**
+      `MIN_RESPONDING_SEATS = 3` of 6. With B18 fixed nothing is currently
+      abstaining, but the next cause of abstention (a rate limit, a timeout, a
+      provider outage) will again produce a confident-looking neutral rather
+      than a reported failure. A thesis built on half a table should be
+      distinguishable downstream from one built on all of it — the seat count
+      is already carried on the `Thesis`; nothing acts on it.
 
 ---
 
@@ -464,9 +498,10 @@ no work can be measured.
 
 1. ~~**B0** — define `_venue_mode`.~~ **DONE.**
 2. ~~**T1** — the end-to-end test.~~ **DONE** (`tests/test_fund_e2e.py`, 9 tests).
-3. **B18** — the round table's parse failures, or every cycle declines to trade.
-4. **B2** — route quotes through the venue, with a Massive fallback. This one
-   change also fixes B3's frozen mark-to-market, the always-`None` spread, and
+3. ~~**B18** — the round table's parse failures.~~ **DONE.**
+4. **B2 (was 4)** — the round table's parse failures, or every cycle declines to trade.
+   Route quotes through the venue, with a Massive fallback. This one change
+   also fixes B3's frozen mark-to-market, the always-`None` spread, and
    therefore B11's dead extended hours.
 5. **B1** — make the displayed bar the gate's number.
 6. **B4, B6** — book the close on a bearish exit; make a dead feed loud.
