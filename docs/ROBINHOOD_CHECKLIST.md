@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14, B15, B26 and B27 are FIXED.** The fund books and closes
+**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14, B15, B19, B20, B26 and B27 are FIXED.** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Ten blockers remain, plus four filed. **B19 and B20 need your decision — see §16.**
+record instead of leaving a phantom. Eight blockers remain, plus six filed.
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -658,11 +658,55 @@ consensus: neutral 36.2 → no trade
 
 ---
 
-## 16. B19 / B20 — your decision
+## 16. B19 / B20 — DECIDED and implemented
 
-Both live in `verification/criteria.py`, whose own docstring says the values
-are **user-chosen** and that *"loosening these is a code review event, not a
-config tweak."* So they are recorded here rather than changed.
+**Account owner's decision, 2026-09-20: option C, $150 — maximum Kelly
+expression.** Recorded here because `verification/criteria.py` says its values
+are user-chosen and that loosening them is a code review event.
+
+### What it does in practice
+
+The $150 cap **never binds** in realistic ranges — that is what "Kelly fully
+expressed" means. Three other constraints take over, all measured:
+
+| stop distance | size @ conf 80 | risk | binding |
+|---|---|---|---|
+| 4–8% | $104.17 | $4–8 | **Kelly** |
+| 12% | $83.33 | $10.00 | **risk budget** |
+| 24% | $41.67 | $10.00 | **risk budget** |
+| tight stop, 5th name | $100.00 | — | **concentration** |
+
+Sizing now varies **$20.83 → $104.17** with chair confidence and
+**$41.67 → $104.17** with volatility, so the record stops being
+constant-notional and `max_drawdown` / `profit_factor` / the equity curve
+become scalable to the book you intend to run.
+
+`risk_usd` tops out at exactly **$10 = 2% of book**, so five full stop-outs
+equal the $50 daily limit — the relationship `DEFAULT_RISK_BUDGET` was designed
+around, and which was unreachable at the old $10 cap (it needed 167 stop-outs,
+i.e. the kill-switch was decoration).
+
+**The accepted trade-off, stated plainly:** with the cap non-binding, size is
+driven by the chair's confidence, which is an LLM number that is **not yet
+calibrated**. `roundtable/calibration.py` is what will eventually say whether
+it deserves that weight, and it needs ~30 resolved theses before it can.
+Until then the fund is sizing on an unvalidated signal, by choice. B29 also
+applies: if the chair reports a narrow confidence band, sizing will be flatter
+than the range above suggests — worth checking against real deliberations
+after ~10 cycles.
+
+This was only safe to do because **B27 was fixed first**. At a $150 cap with
+the old off-by-one, position #2 could have taken the entire book.
+
+### B20 — resolved by deletion
+
+My original filing was wrong: there were never two competing numbers.
+`criteria.max_daily_loss_usd` had **zero code readers** — removing it broke
+nothing across 1,223 tests. The daily limit lives in `config/fund.toml` ($50,
+10% of bankroll) and reaches `DailyLossKillSwitch` through `FundConfig`, which
+is the only path that enforces it. CLAUDE.md #11 and
+`docs/LOW_LEVEL_DESIGN.md` both cited the dead field and now point at the live
+one.
 
 ### B19 — `max_position_usd`
 

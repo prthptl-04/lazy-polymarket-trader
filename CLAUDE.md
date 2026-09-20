@@ -162,8 +162,11 @@ This is a financial product. Sizing decisions are not allowed to be ad hoc.
 - Forward Deployment: monitor live P&L via `finance.pnl.compute_pnl` +
   `finance.risk_metrics.{sharpe_ratio,max_drawdown,value_at_risk,brier_score}`
   over `MemoryStore.recent_trades`. When `max_drawdown` exceeds
-  `criteria.max_daily_loss_usd / starting_bankroll` (as a fraction), pause
-  live trading via a lesson + tightened `VerifiedOutcomeCriteria`.
+  `FundConfig.max_daily_loss_usd / bankroll_usd` (as a fraction), pause live
+  trading via a lesson + tightened `VerifiedOutcomeCriteria`. That limit lives
+  in `config/fund.toml` and reaches `DailyLossKillSwitch` through `FundConfig`
+  — it is NOT in `verification/criteria.py`, which used to carry a second copy
+  with no readers (removed 2026-09-20).
 - The Outcome Grader is still the final word. Even a half-Kelly-sized trade
   must pass `OutcomeGrader.evaluate` before reaching `Executor`.
 - Defaults: **half-Kelly** (`kelly_multiplier=0.5`). Full Kelly is permitted

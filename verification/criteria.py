@@ -5,13 +5,37 @@ from dataclasses import dataclass
 class VerifiedOutcomeCriteria:
     """Acceptance criteria the Outcome Grader checks for every proposed trade.
 
-    Defaults are sized for a $100 smoke-test bankroll (user-chosen 2026-05-13).
-    Adjust before scaling — but never silently. Loosening these is a code
-    review event, not a config tweak.
+    Sized for the funded $500 Robinhood account (user-chosen 2026-09-20,
+    superseding the $100 smoke-test defaults of 2026-05-13). Adjust before
+    scaling — but never silently. Loosening these is a code review event, not
+    a config tweak.
     """
 
-    max_position_usd: float = 10.0          # 10% of a $100 bankroll per position
-    max_daily_loss_usd: float = 20.0        # 20% of bankroll as the daily kill-switch
+    # 30% of the $500 bankroll. Chosen to let half-Kelly express itself: under
+    # the fund's fixed 2xATR/3xATR geometry the payoff ratio is a constant 1.5,
+    # so half-Kelly peaks at $145.83 at chair confidence 100 and this cap never
+    # binds. Sizing is therefore driven by the chair's confidence, which is an
+    # LLM number that is not yet calibrated — `roundtable/calibration.py` is
+    # what will eventually say whether it deserves the weight.
+    #
+    # What actually bounds a filling book is `finance.sizing.concentration_limit`:
+    # the cap governs the first three names, concentration governs the fourth
+    # onward (25% = $125, then a 20% = $100 floor). That division only holds
+    # because the off-by-one in `concentration_limit` was fixed first — before
+    # that, position #2 could have taken the entire book at this cap.
+    #
+    # The previous value, $10, was correct for a $100 book and wrong from the
+    # moment the account was funded: `FundLoop.run_cycle` sets
+    # `pipeline.bankroll_usd = equity_usd`, so Kelly sized off the live $500
+    # while the cap pinned every position at $10 — it had stopped being a cap
+    # and become the size.
+    max_position_usd: float = 150.0
+
+    # NOTE: there is deliberately no `max_daily_loss_usd` here. The daily loss
+    # limit lives in `config/fund.toml` and reaches `DailyLossKillSwitch` via
+    # `FundConfig` — the only path that enforces it. The copy that used to sit
+    # in this class had zero code readers and existed only to drift out of step
+    # with the one that is real.
     min_orderbook_depth_usd: float = 500.0
     max_slippage_bps: int = 50              # 0.50%
     min_expected_edge_bps: int = 20         # 0.20%

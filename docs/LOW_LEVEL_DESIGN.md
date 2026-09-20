@@ -568,8 +568,8 @@ Documented in [CLAUDE.md](../CLAUDE.md):
 
 | Constant | Default | Effect |
 |----------|---------|--------|
-| `max_position_usd` | `10.0` | Hard cap per trade; grader rejects oversize |
-| `max_daily_loss_usd` | `20.0` | Daily kill-switch (declared; enforcement is on the roadmap) |
+| `max_position_usd` | `150.0` | Hard cap per trade; grader rejects oversize |
+| `max_daily_loss_usd` | — | **Moved 2026-09-20.** Not in `verification/criteria.py`; it lives in `config/fund.toml` (`50.0`) and is ENFORCED by `DailyLossKillSwitch` via `VenueRouter`. |
 | `min_orderbook_depth_usd` | `500.0` | Refuses thin-book trades |
 | `max_slippage_bps` | `50` | Refuses trades where strategy's slippage estimate is too high |
 | `min_expected_edge_bps` | `20` | Refuses low-edge trades |
