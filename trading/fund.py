@@ -344,7 +344,21 @@ class FundLoop:
         once the price has moved, which is exactly the state a stopped-out
         position is in.
         """
-        quotes = await self._quotes(self.position_book.open_symbols())
+        open_symbols = self.position_book.open_symbols()
+        quotes = await self._quotes(open_symbols)
+
+        # A position we cannot mark is a position whose stop is NOT being
+        # watched. That used to be silent — an early return, and a cycle report
+        # reading `exits: 0`, which is indistinguishable from "nothing hit its
+        # stop". An hour of feed outage left every stop in the book unwatched
+        # and said nothing. Naming the symbols is the difference between a
+        # degraded cycle and an invisible one.
+        for symbol in open_symbols:
+            if symbol not in quotes:
+                report.errors.append(
+                    f"NO MARK {symbol}: no quote this cycle, so its stop and "
+                    "target were not checked. The position is still open."
+                )
         if not quotes:
             return []
         marks = {s: q.mid for s, q in quotes.items()}

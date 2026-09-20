@@ -62,9 +62,21 @@ def build_data_provider(config: FundConfig, venue: Any) -> Optional[Any]:
     if provider == "static":
         return StaticProvider()
     if provider == "massive":
-        # Bars from Massive; fundamentals from SEC EDGAR, because Massive's
-        # plan returns NOT_ENTITLED for financial statements.
-        return MassiveProvider(financials=SecEdgarFundamentals())
+        # Quotes from the VENUE, because the number that matters is the one the
+        # broker would fill at. Massive's `get_quote` is the previous DAILY
+        # close on a 15-minute-delayed plan, and using it meant exit plans were
+        # drawn off yesterday, the exit mark did not move between cycles (so an
+        # intraday stop could only fire on a day boundary), and `spread_bps`
+        # was permanently None — which told the grader trading is free and made
+        # every extended-hours candidate unpriceable.
+        #
+        # Massive stays behind it for the things a venue cannot supply: bars,
+        # news, and — via SEC EDGAR, since Massive's plan returns NOT_ENTITLED
+        # for financial statements — fundamentals.
+        return VenueQuoteProvider(
+            adapter=venue,
+            fallback=MassiveProvider(financials=SecEdgarFundamentals()),
+        )
     if provider in ("", "none"):
         return VenueQuoteProvider(adapter=venue)
     logger.warning(

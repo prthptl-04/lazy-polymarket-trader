@@ -192,10 +192,18 @@ def test_unknown_provider_degrades_to_quotes_only():
 
 
 def test_massive_is_a_real_provider_now():
-    """It used to be the example of an unknown vendor; it is wired as of 52b574d."""
+    """It used to be the example of an unknown vendor; it is wired as of 52b574d.
+
+    It is no longer the TOP of the stack: quotes come from the venue, because
+    the price that matters is the one the broker would fill at. Massive remains
+    the source of bars and news behind it.
+    """
+    from trading.market_data import VenueQuoteProvider
     from trading.massive_provider import MassiveProvider
     cfg = FundConfig(equity_watchlist=("AAPL",), data_provider="massive")
-    assert isinstance(build_data_provider(cfg, venue=object()), MassiveProvider)
+    provider = build_data_provider(cfg, venue=object())
+    assert isinstance(provider, VenueQuoteProvider)
+    assert isinstance(provider.fallback, MassiveProvider)
 
 
 def test_shipped_config_trades_nothing():

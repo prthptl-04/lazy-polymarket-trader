@@ -1,9 +1,9 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0 and B18 are FIXED. The fund can book and close a position (the
-rule-#13 counter reads `1 of 50` instead of `0 of 50`), and all seven round-table
-calls now complete instead of three being silently truncated. Eighteen blockers
-remain.**
+**Status: B0, B18, B2, B3, B6 and B11 are FIXED.** The fund books and closes
+positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
+round-table calls complete, and decisions and stops now run on the venue's live
+quote rather than yesterday's daily close. Fourteen blockers remain.
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -164,7 +164,37 @@ the gate's, everywhere.
 
 These do not stop a trade being booked; they make the resulting record a lie.
 
-- [ ] **B2 · Every fund-side price is the previous daily close**
+- [x] **B2 · Every fund-side price is the previous daily close** — **DONE**
+
+      `build_data_provider("massive")` now returns
+      `VenueQuoteProvider(adapter=venue, fallback=MassiveProvider(...))` —
+      quotes from the thing that fills, Massive behind it for bars, news and
+      (via EDGAR) fundamentals. Verified live:
+
+      | symbol | quote | spread | bars | news |
+      |---|---|---|---|---|
+      | AAPL | 334.76 / 334.94 | **5 bps** | 60 | 2 |
+      | MSFT | 493.00 / 494.00 | **20 bps** | 60 | 2 |
+      | BTC-USD | 80498.70 / 82016.55 | **187 bps** | 0 (B7) | 0 |
+
+      `spread_bps` was permanently `None`; it is now real, which has three
+      knock-on effects: exit marks move between cycles (so an intraday stop can
+      fire intraday), `_slippage_estimate` returns a real number instead of a
+      `0` that told the grader trading is free, and **B11 is resolved** — see
+      below.
+
+      Required alongside it: `VenueQuoteProvider.get_news`. `_news_notes` looks
+      the method up with `getattr(..., None)` and returns `()` when absent, so
+      wrapping without a passthrough would have muted the Sentiment seat
+      permanently and said nothing — a six-seat committee quietly running on
+      five.
+
+      **Consequence worth watching:** at a 187 bps BTC spread the slippage
+      estimate is ~93 bps against a 50 bps cap in `verification/criteria.py`, so
+      the grader will now *refuse* crypto on cost. That is the correct outcome
+      of being able to see a cost that was previously invisible, not a new bug.
+
+- [ ] ~~**B2 (original text, for the record)**~~
       `dashboard/fund_wiring.py:64` → `trading/massive_provider.py:72`
       `MassiveProvider.get_quote` returns `Quote(bid=None, ask=None, last=prev_close)`
       by design. Robinhood's live quote is wired **only** into
@@ -175,12 +205,23 @@ These do not stop a trade being booked; they make the resulting record a lie.
       only fire on a day boundary** because the mark does not change between
       cycles; `spread_bps=None` means the grader is told trading is free.
 
-- [ ] **B3 · The paper account never marks to market, so the kill-switch is blind**
-      `trading/venues/paper.py:143` — `account()` marks from `self._quotes`,
-      written only by `get_quote`, called only from `place_order`. A held symbol
-      keeps its entry-time mark forever, so `equity ≈ cash + cost`.
-      $10 of AAPL at 335 → AAPL falls to 250 → `account()` still reports 500.00
-      and `DailyLossKillSwitch` sees zero daily P&L. It cannot trip.
+- [x] **B3 · The paper account never marks to market, so the kill-switch is blind**
+      — **DONE, as a side effect of B2.** `account()` marks from `_quotes`,
+      which only `get_quote` writes; before B2 that was called solely from
+      `place_order`. Now the cycle reads a quote for every open symbol through
+      the venue, and each read refreshes the cache. Measured:
+
+      ```
+      after buy @100                        : 999.75
+      market -> 50, WITHOUT a provider read : 999.75   <- the old frozen mark
+      after the provider read               : 749.88   <- marks correctly
+      ```
+
+      Caveat, honestly: `FundScheduler._read_account` calls `account()` *before*
+      `run_cycle` runs its exit pass, so the kill-switch observes equity marked
+      as of the previous cycle's read — a one-cycle (5 min) lag, not a freeze.
+      Worth closing eventually; it is no longer the difference between a
+      kill-switch that works and one that cannot fire.
 
 - [ ] **B4 · A bearish close leaves the position in the book permanently**
       `trading/pipeline.py:249` sells at the venue; `fund.py:259` books only
@@ -198,11 +239,13 @@ These do not stop a trade being booked; they make the resulting record a lie.
       the 50-trade record is **survivorship-biased by restart** — the exact
       record that is meant to justify live trading.
 
-- [ ] **B6 · A dead quote feed disables every stop, silently**
-      `fund.py:347` — `if not quotes: return []`, nothing appended to
-      `report.errors`; per-symbol failures `continue` at `:412`. An hour of feed
-      outage leaves every stop unwatched and the report says `exits: 0`,
-      indistinguishable from "nothing hit its stop".
+- [x] **B6 · A dead quote feed disables every stop, silently** — **DONE**
+      Done *with* B2 rather than after it, because B2 converts a wrong mark into
+      an absent one and absence had to stop being silent. `_process_exits` now
+      appends `NO MARK <symbol>: no quote this cycle, so its stop and target
+      were not checked. The position is still open.` for every open symbol it
+      cannot mark — naming the symbols actually gone dark, not all of them, and
+      staying quiet when the feed is healthy.
 
 ---
 
@@ -279,11 +322,11 @@ and nothing else until Monday 04:00 ET. It cannot.
 Premarket (04:00–09:30) and after-hours (16:00–20:00) are structurally dead.
 Because of B2, `spread_bps` is always `None`, and:
 
-- [ ] **B11 · `needs_two_sided_quote` skips every extended-hours candidate**
-      `trading/pipeline.py:421` — after paying **six LLM calls** per candidate.
-      `_exit_order_kwargs` likewise returns `None` for every extended-hours
-      exit, so a position opened in regular hours cannot be stopped out
-      premarket ("EXIT UNPRICEABLE").
+- [x] **B11 · `needs_two_sided_quote` skips every extended-hours candidate** —
+      **DONE, as a consequence of B2.** It trips only when `spread_bps is None`,
+      which is no longer the case. Extended-hours candidates are priceable and
+      extended-hours exits can be worded. **The live path is still blocked by
+      B12 and B13** (the order shape Robinhood accepts); the paper path is not.
 
 - [ ] **B12 · `extended_hours: True` is not a parameter Robinhood accepts**
       `robinhood.py:338`. The live schema declares `market_hours` ∈
@@ -299,7 +342,8 @@ Because of B2, `spread_bps` is always `None`, and:
       market-only and regular-hours-only. Fix: send `size.quantity` when
       `order_type != "market"`.
 
-Until B11–B13 are fixed, **press GO only between 09:30 and 16:00 ET**.
+B12 and B13 still block extended hours on the **live** path. Paper is fine at
+any hour now.
 
 ---
 
@@ -505,7 +549,6 @@ no work can be measured.
    therefore B11's dead extended hours.
 5. **B1** — make the displayed bar the gate's number.
 6. **B4, B6** — book the close on a bearish exit; make a dead feed loud.
-7. **B19** — raise `max_position_usd` so the record measures the strategy.
 8. **B7, B8, B9, B10** — the weekend crypto path, as one piece of work.
 9. **B14, B15, B16, B17** — precision and error-handling, before live is ever
    discussed.

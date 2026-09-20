@@ -133,3 +133,17 @@ class VenueQuoteProvider:
         if self.fallback is None:
             return None
         return await self.fallback.get_financials(symbol)
+
+    async def get_news(self, symbol: str, *, limit: int = 5) -> list[dict]:
+        """Headlines, from the fallback — a venue adapter has none.
+
+        This passthrough is load-bearing in a way that is easy to miss:
+        `FundLoop._news_notes` looks the method up with `getattr(..., None)`
+        and returns an empty tuple when it is absent. So a wrapper without it
+        does not raise — it mutes the Sentiment seat permanently and says
+        nothing, leaving a six-seat committee quietly running on five.
+        """
+        getter = getattr(self.fallback, "get_news", None) if self.fallback else None
+        if getter is None:
+            return []
+        return await getter(symbol, limit=limit)

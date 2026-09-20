@@ -204,8 +204,11 @@ def test_massive_provider_gets_edgar_for_fundamentals():
     from trading.fund_config import FundConfig
     from trading.sec_edgar import SecEdgarFundamentals
 
+    # Massive now sits BEHIND a VenueQuoteProvider — quotes come from the venue
+    # that fills — but it is still what supplies bars and news, and EDGAR is
+    # still what supplies fundamentals.
     p = build_data_provider(FundConfig(data_provider="massive"), venue=None)
-    assert isinstance(p.financials, SecEdgarFundamentals)
+    assert isinstance(p.fallback.financials, SecEdgarFundamentals)
 
 
 def test_unknown_provider_falls_back_to_quotes_only():
