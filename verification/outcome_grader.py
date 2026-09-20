@@ -126,6 +126,12 @@ class GradeResult:
     rejected_rule: Optional[str] = None
 
 
+# One part per billion. Large enough to absorb IEEE-754 noise on a ratio built
+# from four float operations, far too small to widen the floor in any way a
+# risk committee would notice: at a 1.5 floor this admits 1.4999999985.
+_R_TOLERANCE = 1e-9
+
+
 class OutcomeGrader:
     """Deterministic gate. Rejects any trade that violates the criteria."""
 
@@ -244,7 +250,17 @@ class OutcomeGrader:
             )
 
         r = trade.r_multiple
-        if r is not None and r < c.min_reward_risk_ratio:
+        # Compared with a relative tolerance, because the fund's OWN planner
+        # sits exactly on this floor: build_exit_plan uses a 2xATR stop and a
+        # 3xATR target, so r is 3.0/2.0 = 1.5 and the floor is 1.5. Recomputing
+        # it from (target - entry)/(entry - stop) in binary lands either side —
+        # measured over 2000 real (entry, ATR) pairs, 640 came out at
+        # 1.4999999999999805 and were refused with rejected_rule=
+        # "min_reward_risk_ratio", which reads as a risk decision rather than
+        # as rounding. The rejection is deterministic per price level, so it
+        # was a systematic, price-correlated filter on which trades ever
+        # reached the track record.
+        if r is not None and r < c.min_reward_risk_ratio * (1 - _R_TOLERANCE):
             return GradeResult(
                 False,
                 f"reward:risk {r:.2f} below the {c.min_reward_risk_ratio} floor",

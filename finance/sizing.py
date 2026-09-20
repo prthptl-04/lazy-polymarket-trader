@@ -58,10 +58,19 @@ class SizeResult:
 
 
 def concentration_limit(open_positions: int) -> float:
-    """Max fraction of the book one position may occupy."""
-    if open_positions <= 0:
-        return CONCENTRATION_LIMITS[1]
-    return CONCENTRATION_LIMITS.get(open_positions, CONCENTRATION_FLOOR)
+    """Max fraction of the book one position may occupy.
+
+    `open_positions` is what is held BEFORE this one — that is what the caller
+    has (`len(holdings)` in `FundLoop.run_cycle`) — so the limit that applies is
+    the one for the book *after* it opens, hence the +1.
+
+    Without it the second position was handed `CONCENTRATION_LIMITS[1] = 1.0`
+    and could be sized at the entire book. That was invisible only because
+    `max_position_usd` was $10 against a $500 bankroll and shadowed every other
+    cap; it would have gone live the moment that cap was raised.
+    """
+    after_opening = max(1, open_positions + 1)
+    return CONCENTRATION_LIMITS.get(after_opening, CONCENTRATION_FLOOR)
 
 
 def directional_kelly_fraction(win_probability: float, payoff_ratio: float) -> float:

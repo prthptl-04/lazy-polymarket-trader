@@ -318,11 +318,15 @@ def test_kelly_rejects_impossible_probability():
         directional_kelly_fraction(1.0, 2.0)
 
 
-@pytest.mark.parametrize("n,expected", [
-    (1, 1.0), (2, 0.5), (3, 0.34), (4, 0.25), (5, 0.20), (12, 0.20), (0, 1.0),
+@pytest.mark.parametrize("already_open,expected", [
+    # The argument is what is held BEFORE this position opens, so the limit
+    # that applies is the one for the book AFTER it does. This test used to
+    # read the dict straight through, which is why the second position could
+    # be sized at 100% of the book.
+    (0, 1.0), (1, 0.5), (2, 0.34), (3, 0.25), (4, 0.20), (11, 0.20),
 ])
-def test_concentration_limits(n, expected):
-    assert concentration_limit(n) == expected
+def test_concentration_limits(already_open, expected):
+    assert concentration_limit(already_open) == expected
 
 
 @pytest.fixture
@@ -407,8 +411,16 @@ def test_invalid_multiplier_raises(plan):
 
 
 def test_half_kelly_is_half_of_full(plan):
+    """`open_positions=0` so the CONCENTRATION cap cannot bind.
+
+    It used to pass 1, which returned a 100% limit under the old off-by-one.
+    Now one position already open means this is the second, capped at 50% —
+    which binds on full Kelly at p=0.8 and not on half, so the two stop being
+    proportional. That is the cap working; this test is about the multiplier,
+    so it isolates it.
+    """
     half = size_position(win_probability=0.8, plan=plan, bankroll_usd=10_000,
-                         kelly_multiplier=0.5, risk_budget=0.99, open_positions=1)
+                         kelly_multiplier=0.5, risk_budget=0.99, open_positions=0)
     full = size_position(win_probability=0.8, plan=plan, bankroll_usd=10_000,
-                         kelly_multiplier=1.0, risk_budget=0.99, open_positions=1)
+                         kelly_multiplier=1.0, risk_budget=0.99, open_positions=0)
     assert half.size_usd == pytest.approx(full.size_usd / 2)

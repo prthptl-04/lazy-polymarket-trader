@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14 and B15 are FIXED.** The fund books and closes
+**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14, B15, B26 and B27 are FIXED.** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Ten blockers remain, plus four filed.
+record instead of leaving a phantom. Ten blockers remain, plus four filed. **B19 and B20 need your decision — see §16.**
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -615,6 +615,138 @@ consensus: neutral 36.2 → no trade
 - [ ] **B20 · Two numbers for one concept** — `criteria.max_daily_loss_usd = 20`
       vs `config/fund.toml max_daily_loss_usd = 50`. The kill-switch uses the
       config value; the live gate's bankroll check uses criteria.
+
+- [x] **B26 · The reward:risk floor sat exactly on the fund's own geometry** —
+      **DONE.** `DEFAULT_TARGET_MULTIPLIER / DEFAULT_STOP_MULTIPLIER` is
+      3.0/2.0 = 1.5, `min_reward_risk_ratio` is 1.5, and the grader tested
+      `r < 1.5`. `r_multiple` is recomputed from
+      `(target − entry)/(entry − stop)` in binary, so it landed either side of
+      the floor depending on the entry price and ATR. Measured over 2000 real
+      (entry, ATR) pairs: **640 rejected**, values spanning
+      1.4999999999999805 to 1.5000000000000175.
+
+      A third of otherwise-valid entries were refused with
+      `rejected_rule="min_reward_risk_ratio"`, which reads as a considered risk
+      decision. And the rejection is **deterministic per price level**, so it
+      was a systematic, price-correlated filter on which trades ever reached
+      the record — not noise that averages out. Any 50-trade record built on it
+      would have been a subsample chosen by IEEE-754.
+
+      Fixed with a 1e-9 relative tolerance — enough to absorb noise from four
+      float operations, far too small to widen the floor in a way a risk
+      committee would notice (it admits 1.4999999985). **Now 0/2000.** A
+      genuinely thin 1.0R trade is still refused.
+
+- [x] **B27 · The concentration cap was off by one** — **DONE**, and it was a
+      **prerequisite for B19**. `concentration_limit` is passed `len(holdings)`
+      — the positions open *before* this one — and returned
+      `CONCENTRATION_LIMITS[1] = 1.0` when one was already open, so **position
+      #2 could be sized at the entire book**.
+
+      ```
+      0 already open -> position #1 may take 100% of the book
+      1 already open -> position #2 may take  50%   (was 100%)
+      2 already open -> position #3 may take  34%
+      ```
+
+      Latent only because `max_position_usd = $10` shadowed every other cap. It
+      would have gone live the moment that cap was raised — which is exactly
+      what B19 proposes. Fixed inside `concentration_limit` rather than at the
+      caller: the parameter is named `open_positions` at three levels and
+      genuinely means *currently open*, so making callers pass `+1` would turn
+      the name into a lie three times over.
+
+---
+
+## 16. B19 / B20 — your decision
+
+Both live in `verification/criteria.py`, whose own docstring says the values
+are **user-chosen** and that *"loosening these is a code review event, not a
+config tweak."* So they are recorded here rather than changed.
+
+### B19 — `max_position_usd`
+
+**The cap is not a cap, it is the size.** `FundLoop.run_cycle` sets
+`pipeline.bankroll_usd = equity_usd`, so Kelly already sizes off the live
+**$500**. And because every plan is 2×ATR/3×ATR, the payoff ratio is a constant
+1.5, which collapses half-Kelly to one variable:
+
+| chair confidence | half-Kelly wants | actual size | binding |
+|---|---|---|---|
+| 40 | $20.83 | **$10** | `max_position` |
+| 60 | $62.50 | **$10** | `max_position` |
+| 80 | $104.17 | **$10** | `max_position` |
+| 100 | $145.83 | **$10** | `max_position` |
+
+The cap binds at every confidence above ~35. It stopped being a cap and became
+the size once the account passed roughly **$60–80** — it was correct for the
+$100 book it was written for and has been wrong since funding.
+
+**What that costs.** `max_drawdown` scales linearly in notional, so at $10
+clips the dashboard will print a drawdown around 0.3–0.5% — arithmetically
+true and unrelated to the book you intend to run. CLAUDE.md #11's rule (pause
+when drawdown exceeds 10%) is **unreachable by construction**. `profit_factor`
+and the equity curve are similarly unscalable. The fitted `confidence_shrink`
+loop is connected at the input and severed at the output: the shrink changes
+`p`, `p` changes `f*`, and `f*` changes nothing.
+
+**Still valid at any size:** `r_multiples` and everything on it (`t_statistic`,
+`bootstrap_mean_p5`, `binomial_p_value`), win rate, and all seat calibration —
+these are notional-independent and are the honest view of the paper record.
+
+| | **A — $50** (10%) | **B — $100** (20%) | **C — $150** (30%) |
+|---|---|---|---|
+| Cap binds above confidence | 54 | **78** | never |
+| Max concurrent names | 10 | 5 | 3 |
+| Typical stop-out (3% stop) | $1.50 (0.3%) | $3.00 (0.6%) | $4.50 (0.9%) |
+| Worst case (15% stop) | $7.50 (1.5%) | $15.00 (3.0%) | $22.50 (4.5%) |
+| Trade-off | Safest, but still near-constant sizing and drawdown ~5× too small to read | Sizing varies with confidence across the realistic range; equals `CONCENTRATION_FLOOR × bankroll`, so the two caps agree instead of one shadowing the other | Kelly fully expressed, cap decorative; 30% of the book on one name on an uncalibrated LLM confidence number |
+
+**Recommended: B ($100)** — the only one that is derived rather than picked.
+
+**The honest counter-argument:** constant sizing during the 50-trade phase is
+defensible on its own terms. With the payoff ratio fixed, Kelly's only input is
+a single uncalibrated LLM number, and holding size fixed to isolate the entry
+rule is sound experimental design. The problem with $10 is not that it is
+constant — it is that it is 2% of book, small enough that drawdown, equity
+curve and profit factor are all unreadable. If you prefer a deliberately fixed
+clip, **$50 used as a fixed size rather than a cap** is the coherent version,
+and the record should say "sizing rule not under test".
+
+### B20 — the checklist was wrong, and the truth is simpler
+
+I recorded B20 as "two numbers for one concept". That is **not** what is
+happening. `LiveTradingGate._caps_ok()` reads only `criteria.max_position_usd`;
+it never touches `max_daily_loss_usd`. Grepping the whole repo,
+**`criteria.max_daily_loss_usd` has zero code readers** — its only mentions
+outside its own definition are prose.
+
+So it is one live number and one dead field that *reads* like a contradiction.
+The live path is already single-sourced: `config/fund.toml` → `FundConfig` →
+`DailyLossKillSwitch`. The two values are not even the same intent — `20` is
+20% of a $100 book, `50` is 10% of a $500 one, and `fund_config` warns above
+25%, which makes 10% the house-consistent reading. **Keep 50.**
+
+The fix is to delete the dead field so it cannot drift back into looking
+authoritative. That needs a one-line CLAUDE.md #11 edit (it cites
+`criteria.max_daily_loss_usd` for the drawdown monitor) and a correction to
+`docs/LOW_LEVEL_DESIGN.md:572`, which still says enforcement is on the roadmap.
+
+### Two findings from the same review, filed
+
+- **B28 · Crypto cannot pass the grader on spread, independent of B7.**
+  `CRYPTO_ONLY` is not in `ExtendedSession`, so weekend crypto gets the
+  *regular-session* 50 bps limit. Against the live BTC quote (187 bps) the
+  grader returns `spread 187bps exceeds 50bps limit for the crypto_only
+  session`, and it fails slippage too (93 bps vs 50). **Even with B7 fixed, the
+  weekend half of the rotation contributes zero trades** and the 50 will be an
+  equities-only record.
+- **B29 · Size varies only with chair confidence.** With the payoff ratio
+  fixed, `size = bankroll × 0.5 × ((5/3)p − 2/3)` and `p` is affine in one LLM
+  number. If the chair reports a narrow band, sizes stay nearly constant even
+  with the cap lifted. `deliberations` is currently empty so the distribution
+  is unmeasurable — worth logging over the first ~10 cycles before concluding
+  B19 is actually fixed.
 
 ---
 
