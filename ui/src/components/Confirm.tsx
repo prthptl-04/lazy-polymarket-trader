@@ -30,7 +30,10 @@ export function Confirm({ open, title, body, confirmLabel = "Start", tone = "goo
             className="relative w-full max-w-[420px] rounded-3xl border border-white/12
                        bg-[#0c1016]/95 p-6 shadow-glass">
             <h2 className="text-[15px] font-semibold text-white">{title}</h2>
-            <div className="text-[12px] text-white/55 mt-2 leading-relaxed">{body}</div>
+            {/* Full white, not a muted grey. This dialog is the last thing read
+                before the fund starts trading, and the sentence explaining what
+                paper mode does is the one sentence that must not be skimmed. */}
+            <div className="text-[12px] text-white mt-2 leading-relaxed">{body}</div>
             <div className="flex gap-2 mt-5">
               <button onClick={onCancel}
                 className="flex-1 py-2 rounded-xl text-[12px] font-medium

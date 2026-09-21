@@ -223,7 +223,7 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
         title="Start Project धन?"
         confirmLabel="Start"
         body={<>
-          The fund begins cycling in <b className="text-white/80">paper mode only</b>.
+          The fund begins cycling in <b>paper mode only</b>.
           Live trading needs two more things you have to switch on yourself: the
           venue engine, and Go&nbsp;Live in that venue&rsquo;s live section — which
           the rule-#13 checklist still has to allow.
@@ -238,7 +238,7 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
         tone="bad"
         body={<>
           Stops the whole service. In-flight cycles are cancelled; orders already
-          resting at a venue are <b className="text-white/80">not</b> cancelled,
+          resting at a venue are <b>not</b> cancelled,
           and open positions stay open.
         </>}
         onCancel={() => setAsk(null)}
