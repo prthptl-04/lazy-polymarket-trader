@@ -333,6 +333,11 @@ class DashboardRuntime:
             "tally": payload.get("tally", {}),
             "unanimous": _is_unanimous(payload.get("tally", {})),
             "abstentions": [o["seat_name"] for o in opinions if o.get("failed")],
+            # What the seats were shown, and how old it was. A transcript
+            # without its evidence records the verdict and destroys the inputs,
+            # which is the wrong half to keep.
+            "evidence": payload.get("evidence"),
+            "sources": payload.get("sources") or [],
         }
 
     # ---------- overview ----------
@@ -838,6 +843,7 @@ class DashboardRuntime:
         icons = {
             "analyst": "\U0001F4D8", "sentiment": "\U0001F4AC", "quant": "\U0001F4C8",
             "risk": "\U0001F6E1", "corroborator": "\U0001F50D", "devils_advocate": "\U0001F608",
+            "catalyst": "\U0001F4C5",
         }
         out = [
             {"id": s.id, "name": s.name, "mandate": s.mandate,

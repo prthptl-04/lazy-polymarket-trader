@@ -156,6 +156,7 @@ everything a seat will see, **before any seat is consulted**:
 | execution note | computed | **rests at mark** vs **crosses the spread** |
 | catalysts | [`openbb_provider.py`](trading/openbb_provider.py) | dated headlines + net Form 4 flow, via OpenBB |
 | lessons | [`postmortem.relevant_lesson_lines`](roundtable/postmortem.py) | scoped to crypto — see §6 |
+| provenance | [`knowledge.SourceRef`](roundtable/knowledge.py) | age of every block above; **undated counts as stale** |
 | exit plan | [`finance/exits.py`](finance/exits.py) | 2×ATR stop, 3×ATR target |
 
 Then `_prescreen` applies cheap vetoes. **No exit plan → no debate**: without a
@@ -177,6 +178,13 @@ calls, and the only ones in the cycle.
    attack the emerging consensus.
 3. **Round three** — the Chair synthesises: a signal, a confidence, and a
    **surviving objection** it is required to carry forward.
+
+Every block carries its **provenance**: the seats are told how old each source
+is, and anything over an hour — or with no timestamp at all — is marked `STALE`
+with an instruction to lower confidence rather than assume it still holds.
+Undated is treated as stale because the costs are asymmetric: discounting fresh
+evidence loses one cycle's conviction, trusting stale evidence sizes a position
+against a market that has already moved.
 
 A seat that errors is an **abstention**, not a neutral vote — a crashed API
 call must never outvote a seat that answered. The transcript keeps the raw
@@ -454,6 +462,7 @@ nothing stored to replay. That needs real calls and real spend.
 | [`calibration.py`](roundtable/calibration.py) | Brier, seat weights, shrink fit |
 | [`postmortem.py`](roundtable/postmortem.py) | Deterministic findings → scoped lessons |
 | [`replay.py`](roundtable/replay.py) | Zero-cost falsification of a decision rule |
+| [`knowledge.py`](roundtable/knowledge.py) | `SourceRef` — where evidence came from, when it was true, whether it is stale |
 
 ### `finance/` — the arithmetic (rule #11)
 
@@ -514,7 +523,7 @@ SQLite at `memory/state.db` ([`memory/store.py`](memory/store.py), rule #22):
 
 | Table | Holds |
 |---|---|
-| `deliberations` | Full transcripts, resumable mid-debate |
+| `deliberations` | Full transcripts **and the evidence behind them**, resumable mid-debate |
 | `thesis_outcomes` | What actually happened — the only teacher |
 | `closed_trades` · `trade_log` | P&L, sliced by venue and asset class |
 | `agent_lessons` | Post-mortem findings, scoped by asset class |
@@ -562,7 +571,8 @@ python -m dashboard                        # http://127.0.0.1:8765
 ```
 
 ```bash
-pytest -q                                  # 1484 tests
+./scripts/verify.sh                        # tests, self-checks, ui build, vuln scan
+pytest -q                                  # 1498 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"
@@ -593,13 +603,16 @@ Things this codebase will not trade away.
 6. **The picture must not drift from the behaviour.** Every dashboard number is
    read from the component that acts on it. A decorative animation on the
    self-evolution page would imply learning that is not happening.
-7. **Retire, don't delete.** A retired venue keeps its adapter, tests, history
+7. **Keep the evidence, not just the verdict.** A stored deliberation carries
+   what the seats were shown and how old it was. A decision whose inputs are
+   gone cannot be audited, and the verdict is the cheap half.
+8. **Retire, don't delete.** A retired venue keeps its adapter, tests, history
    and tab. A venue that silently vanishes reads as a bug six months later.
-8. **Build the falsification test first.** Kalshi was killed at step 2 of 11 —
+9. **Build the falsification test first.** Kalshi was killed at step 2 of 11 —
    four modules instead of eleven. `roundtable/replay.py` is the same instinct
    applied to the committee.
-9. **Scraping, publishing and secrets are gated, always.** Rules #5, #8, #9,
-   #10 are not advisory.
+10. **Scraping, publishing and secrets are gated, always.** Rules #5, #8, #9,
+    #10 are not advisory.
 
 ---
 

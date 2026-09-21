@@ -91,7 +91,10 @@ class RoundTable:
     # ---------- public API ----------
 
     async def deliberate(self, candidate: Candidate) -> Thesis:
-        thesis = Thesis(symbol=candidate.symbol, asset_class=candidate.asset_class)
+        # Carrying the candidate is what makes the persisted deliberation a
+        # self-contained artifact: the verdict AND what produced it.
+        thesis = Thesis(symbol=candidate.symbol, asset_class=candidate.asset_class,
+                        candidate=candidate)
         self._persist(thesis, "in_progress")
         # Announce the sitting so a watcher can clear the previous debate
         # before the first seat answers, rather than showing the last symbol's

@@ -310,3 +310,15 @@ export interface Catalysts {
   reason: string;
   degraded: string[];
 }
+
+// ---- provenance --------------------------------------------------------
+// Where each evidence block came from and when it was true. `derived` means
+// computed from this cycle's own evidence, so it has no independent age.
+export interface SourceRef {
+  kind: string; source: string; as_of: number | null; derived: boolean;
+}
+export interface Provenance {
+  thesis_id?: string;
+  evidence?: string | null;
+  sources: SourceRef[];
+}

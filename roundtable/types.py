@@ -18,6 +18,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
+from roundtable.knowledge import SourceRef
+
 
 Signal = Literal["bullish", "bearish", "neutral"]
 VALID_SIGNALS: tuple[Signal, ...] = ("bullish", "bearish", "neutral")
@@ -66,6 +68,9 @@ class Candidate:
     # than a system prompt, same as lessons: the system prompt carries the
     # cache tag (rule #2) and must stay byte-identical between deliberations.
     budget_notes: tuple[str, ...] = ()
+    # Where each block above came from and when it was true. Empty renders
+    # exactly as before, so every existing caller is unaffected.
+    sources: tuple[SourceRef, ...] = ()
 
     @property
     def r_multiple(self) -> Optional[float]:
@@ -74,8 +79,12 @@ class Candidate:
         risk = abs(self.entry - self.stop)
         return abs(self.target - self.entry) / risk if risk else None
 
-    def evidence_block(self) -> str:
-        """Rendered once per deliberation and sent as the variable message."""
+    def evidence_block(self, now: Optional[float] = None) -> str:
+        """Rendered once per deliberation and sent as the variable message.
+
+        `now` is injectable so the provenance section is deterministic in tests;
+        production passes nothing and it reads the clock.
+        """
         lines = [f"INSTRUMENT: {self.symbol} ({self.asset_class})",
                  f"Session: {self.session}",
                  f"Last price: {self.price}"]
@@ -110,6 +119,16 @@ class Candidate:
             if notes:
                 lines.append(f"\n{header}:")
                 lines.extend(f"  - {n}" for n in notes)
+
+        if self.sources:
+            # Last, not first: a seat should read the evidence and then learn
+            # how much to trust it. Leading with provenance buries the content.
+            lines.append("\nPROVENANCE (how old is what you just read):")
+            lines.extend(f"  - {ref.describe(now)}" for ref in self.sources)
+            if any(ref.is_stale(now) for ref in self.sources):
+                lines.append(
+                    "  Anything marked STALE may have been overtaken by the market. "
+                    "Lower your confidence rather than assuming it still holds.")
 
         if self.asset_class == "crypto":
             lines.append(
@@ -198,6 +217,11 @@ class Thesis:
     opinions: list[SeatOpinion] = field(default_factory=list)
     consensus: Optional[Consensus] = None
     status: str = "in_progress"
+    # What the seats were shown. Optional because a resumed or abandoned thesis
+    # is rebuilt from a stored row rather than from a live candidate — but when
+    # it is present the deliberation is a self-contained artifact rather than a
+    # verdict whose inputs are gone.
+    candidate: Optional[Candidate] = None
 
     @property
     def signal(self) -> Optional[Signal]:
@@ -272,7 +296,15 @@ class Thesis:
         return sum(1 for n in counts.values() if n > 0) > 1
 
     def as_payload(self) -> dict:
+        """The whole artifact: what was decided AND what it was decided from.
+
+        `evidence` and `sources` were the missing half. A resolved thesis used
+        to record the verdict and destroy the inputs, which makes a decision
+        impossible to audit later and makes the deliberation un-replayable.
+        """
         return {
+            "evidence": self.candidate.evidence_block() if self.candidate else None,
+            "sources": [r.as_dict() for r in self.candidate.sources] if self.candidate else [],
             "thesis_id": self.thesis_id,
             "symbol": self.symbol,
             "asset_class": self.asset_class,

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
+from roundtable.knowledge import SourceRef
 from roundtable.postmortem import Postmortem, relevant_lesson_lines
 from trading.candidate_builder import build_candidate
 from trading.fund_config import is_thesis_stale
@@ -264,6 +265,7 @@ class FundLoop:
 
         history = await self.data.get_history(symbol, lookback=self.lookback_bars)
         quote = await self.data.get_quote(symbol)
+        quote_at = time.time()
         price = (quote.mid if quote else None) or (
             history.closes[-1] if history and history.closes else None
         )
@@ -273,7 +275,9 @@ class FundLoop:
             )
             return False
 
+        news_at = time.time()
         sentiment_notes = await self._news_notes(symbol)
+        catalysts_at = time.time()
         catalyst_notes = await self._catalyst_notes(symbol, asset_class)
         corroboration_notes = await self._corroboration_notes(symbol)
         financials = await self.data.get_financials(symbol)
@@ -296,6 +300,10 @@ class FundLoop:
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
             lessons=relevant_lesson_lines(
                 self.memory, asset_class=asset_class, symbol=symbol),
+            # Where each block came from and when it was true. Recorded at the
+            # point of fetch — anywhere later and the timestamp would be the
+            # time we got round to writing it down, not the time it was true.
+            sources=self._sources(quote_at, news_at, catalysts_at),
             budget_notes=self._budget_notes(),
         )
 
@@ -510,6 +518,23 @@ class FundLoop:
             return ("Corroboration unavailable — this cycle could not build a "
                     "second fact set. Treat every figure as single-sourced.",)
         return tuple(report.evidence_lines())
+
+    @staticmethod
+    def _sources(quote_at: Optional[float], news_at: float,
+                 catalysts_at: float) -> tuple[SourceRef, ...]:
+        """Provenance for the evidence block.
+
+        Technicals and the exit plan are marked `derived`: they are computed
+        from the bars in this same cycle, so they carry no independent age and
+        a second staleness warning on them would train the seats to ignore the
+        first one.
+        """
+        return (
+            SourceRef("prices", "venue quote + bars", quote_at),
+            SourceRef("news", "market-data news feed", news_at),
+            SourceRef("catalysts", "OpenBB (headlines, SEC Form 4)", catalysts_at),
+            SourceRef("technicals", "computed", None, derived=True),
+        )
 
     async def _catalyst_notes(self, symbol: str, asset_class: str) -> tuple[str, ...]:
         """Dated events and insider flow, for the Catalyst seat.

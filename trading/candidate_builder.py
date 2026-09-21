@@ -58,6 +58,7 @@ def build_candidate(
     portfolio_notes: Sequence[str] = (),
     corroboration_notes: Sequence[str] = (),
     lessons: Sequence[str] = (),
+    sources: Sequence[object] = (),
     budget_notes: Sequence[str] = (),
     stop_multiplier: float = 2.0,
     target_multiplier: float = 3.0,
@@ -118,6 +119,7 @@ def build_candidate(
         portfolio_notes=tuple(portfolio_notes),
         corroboration_notes=tuple(corroboration_notes),
         lessons=tuple(lessons),
+        sources=tuple(sources),
         budget_notes=tuple(budget_notes),
     )
 
