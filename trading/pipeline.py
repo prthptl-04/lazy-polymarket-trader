@@ -182,18 +182,9 @@ class ThesisPipeline:
             )
 
         # --- 3. sizing ---
-        p = calibrated_win_probability(
-            thesis.consensus.confidence, shrink=self.confidence_shrink
-        )
-        size = size_position(
-            win_probability=p,
-            plan=plan,
-            bankroll_usd=self.bankroll_usd,
-            available_cash_usd=available_cash_usd,
-            open_positions=open_positions,
-            max_position_usd=self.criteria.max_position_usd,
-            cvar=candidate.cvar_pct,
-        )
+        p, size = self._size_for(thesis, candidate, plan,
+                                 available_cash_usd=available_cash_usd,
+                                 open_positions=open_positions)
         if not size.is_actionable:
             return stop("sizing", size.reason, win_probability=p, size=size)
 
@@ -315,6 +306,34 @@ class ThesisPipeline:
             symbol=candidate.symbol, side=side, asset_class=candidate.asset_class,
             thesis_id=candidate.symbol, **sizing, **kwargs,
         )
+
+    def _size_for(self, thesis: Thesis, candidate: Candidate, plan: ExitPlan, *,
+                  available_cash_usd: float | None = None,
+                  open_positions: int = 0) -> tuple[float, SizeResult]:
+        """Kelly size for one thesis. Returns (win_probability, size).
+
+        Confidence is scaled by PARTICIPATION before the shrink is applied.
+        Conviction earned by six seats is not the same as conviction asserted
+        by three, and `MIN_RESPONDING_SEATS` is 3 of 6 — so a thesis built on
+        three abstentions used to size exactly like one the whole table stood
+        behind. That is how a committee half of which never answered could
+        still move money at full conviction.
+
+        Scaled rather than discarded: a thin committee still knows something,
+        it just knows it less certainly.
+        """
+        stated = thesis.effective_confidence(thesis.consensus)
+        p = calibrated_win_probability(stated, shrink=self.confidence_shrink)
+        size = size_position(
+            win_probability=p,
+            plan=plan,
+            bankroll_usd=self.bankroll_usd,
+            available_cash_usd=available_cash_usd,
+            open_positions=open_positions,
+            max_position_usd=self.criteria.max_position_usd,
+            cvar=candidate.cvar_pct,
+        )
+        return p, size
 
     def _notes(self, thesis: Thesis, size: SizeResult) -> list[str]:
         notes = [f"sizing bound by {size.binding_constraint}"]

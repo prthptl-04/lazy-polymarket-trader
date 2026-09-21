@@ -190,6 +190,52 @@ class Thesis:
                 counts[o.signal] += 1
         return counts
 
+    @property
+    def abstentions(self) -> int:
+        return sum(1 for o in self.opinions if o.failed)
+
+    @property
+    def participation(self) -> float:
+        """Fraction of the table that actually spoke.
+
+        `MIN_RESPONDING_SEATS = 3` of 6 means a thesis built on half a table is
+        quorate, and nothing downstream could tell it apart from one built on
+        all six. That is how three truncated seats stayed invisible: the
+        committee reported a neutral consensus, which reads as a decision
+        rather than as an absence.
+        """
+        if not self.opinions:
+            return 0.0
+        return 1.0 - self.abstentions / len(self.opinions)
+
+    def effective_confidence(self, consensus) -> float:
+        """Stated conviction, scaled by how much of the table stood behind it.
+
+        Conviction earned by six seats is not the same as conviction asserted
+        by three. Scaled rather than discarded: a thin committee still knows
+        something, it just knows it less certainly, and the pipeline sizes on
+        this number.
+        """
+        if consensus is None:
+            return 0.0
+        return round(float(consensus.confidence or 0.0) * self.participation, 2)
+
+    def weighted_tally(self, weights: dict[str, float]) -> dict[str, float]:
+        """The vote count, scaled by each seat's demonstrated record.
+
+        `tally()` stays the raw count — it is the transcript of who said what,
+        and a transcript that silently re-weights itself is not one. This is
+        the number a decision is made on.
+
+        A seat with no entry in `weights` counts as 1.0: an unknown seat is not
+        a discredited one.
+        """
+        counts = {s: 0.0 for s in VALID_SIGNALS}
+        for o in self.opinions:
+            if not o.failed:
+                counts[o.signal] += float(weights.get(o.seat_id, 1.0))
+        return counts
+
     def has_dissent(self) -> bool:
         """True when the seats did not all agree.
 

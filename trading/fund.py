@@ -408,6 +408,24 @@ class FundLoop:
         if fit.usable and fit.shrink is not None:
             self.pipeline.confidence_shrink = fit.shrink
 
+        # And re-grade the seats themselves. The scorecard has always measured
+        # them; until now nothing consumed it, so a seat with a Brier of 0.30
+        # that had been wrong for fifty trades voted exactly as loudly as one
+        # at 0.15. Refreshed at the same cycle boundary as the shrink, for the
+        # same reason: grading computed once at boot is grading the fund cannot
+        # act on.
+        table = getattr(self, "round_table", None)
+        if table is not None and hasattr(table, "seat_weights"):
+            try:
+                from roundtable.calibration import score_seats, seat_weights
+                delibs = self.memory.recent_deliberations(limit=500)
+                outcomes = {o["thesis_id"]: o
+                            for o in self.memory.resolved_outcomes(limit=500)}
+                table.seat_weights = seat_weights(
+                    score_seats(delibs, outcomes).seats)
+            except Exception:
+                logger.exception("could not re-grade the seats")
+
     async def _corroboration_notes(self, symbol: str) -> tuple[str, ...]:
         """Cross-check the primary provider's figures against a second source.
 

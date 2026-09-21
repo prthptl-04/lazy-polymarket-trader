@@ -68,6 +68,55 @@ MIN_SHRINK = -MAX_SHRINK
 REPORTING_PAYOFF_RATIO = 1.5
 
 
+# How far a seat's demonstrated record may move its vote.
+#
+# Bounded on BOTH sides, and neither bound is decoration. The floor keeps a
+# discredited seat audible: the Devil's Advocate exists to be unpopular,
+# `has_dissent` treats unanimity as a warning rather than a green light, and a
+# scheme that can zero a seat would quietly delete the fund's only source of
+# disagreement. The ceiling stops one seat outvoting the table, which is not a
+# committee.
+MIN_SEAT_WEIGHT = 0.4
+# 1.5 is exactly what a Brier of 0 yields, so the ceiling is the
+# achievable maximum rather than a decorative bound above it.
+MAX_SEAT_WEIGHT = 1.5
+
+# Brier of a seat that always says 50%. Above this a seat is adding noise.
+COIN_FLIP_BRIER = 0.25
+
+
+def seat_weights(scores: Sequence[SeatScore]) -> dict[str, float]:
+    """How loudly each seat should be counted, from its own record.
+
+    The scorecard has always measured these seats; nothing consumed it. A seat
+    with a Brier of 0.30 that had been wrong for fifty trades voted exactly as
+    loudly as one at 0.15.
+
+    **An unscored seat carries full weight.** Below `MIN_SAMPLES_FOR_SEAT_SCORE`
+    there is no evidence, and down-weighting on a handful of calls is how a
+    committee converges on whoever was lucky first. Refuse to judge, rather
+    than judge badly.
+
+    Brier is the base because it prices confidence: a seat right 55% of the
+    time while claiming 95% is the behaviour that costs money, and accuracy
+    cannot see it. Overconfidence is then penalised on top, so a loud seat and
+    a calibrated seat with the same hit rate are not treated alike.
+    """
+    weights: dict[str, float] = {}
+    for score in scores:
+        if not score.is_scored:
+            weights[score.seat_id] = 1.0
+            continue
+        # 1.0 at a coin flip, rising as Brier falls toward 0, falling as it
+        # rises toward 1.
+        quality = 1.0 + (COIN_FLIP_BRIER - score.brier) * 2.0
+        # Every 10 points of overstated confidence costs a tenth of a vote.
+        quality -= max(0.0, score.overconfidence) / 100.0
+        weights[score.seat_id] = round(
+            max(MIN_SEAT_WEIGHT, min(MAX_SEAT_WEIGHT, quality)), 3)
+    return weights
+
+
 @dataclass(frozen=True)
 class SeatScore:
     seat_id: str

@@ -79,6 +79,10 @@ class RoundTable:
     model: Optional[str] = None
     max_tokens: int = DEFAULT_MAX_TOKENS
     seat_timeout_seconds: float = 60.0
+    # seat_id -> weight from its own record. Refreshed each cycle by the fund;
+    # an absent seat counts as 1.0, because an unknown seat is not a
+    # discredited one.
+    seat_weights: dict = field(default_factory=dict)
     on_opinion: Any = None                   # callback(SeatOpinion) for live UI
     on_thesis: Any = None                    # callback(Thesis) when complete
     _last_provider: Optional[str] = None
@@ -207,7 +211,10 @@ class RoundTable:
         the pipeline downstream should treat it as a weak signal rather than
         inheriting whatever conviction the seats happened to express.
         """
-        tally = thesis.tally()
+        # Weighted, because the fallback is a DECISION and the raw count is a
+        # transcript. Two seats the record has discredited must not outvote one
+        # that has earned its place.
+        tally = thesis.weighted_tally(self.seat_weights)
         bullish, bearish = tally["bullish"], tally["bearish"]
         if bullish > bearish:
             signal: Signal = "bullish"
@@ -223,8 +230,9 @@ class RoundTable:
             signal=signal,
             confidence=round(confidence, 1),
             summary=(
-                f"Fallback tally ({why}): {bullish} bullish / {bearish} bearish / "
-                f"{tally['neutral']} neutral across {len(live)} responding seats. "
+                f"Fallback tally ({why}): {bullish:.1f} bullish / {bearish:.1f} "
+                f"bearish / {tally['neutral']:.1f} neutral (weighted by each "
+                f"seat's record) across {len(live)} responding seats. "
                 "Confidence capped — this is a vote count, not a synthesis."
             ),
             transcript=self._render_opinions(thesis.opinions),
@@ -258,15 +266,29 @@ class RoundTable:
         response = cached_create(self.client, **kwargs)
         return _extract_text(response)
 
-    @staticmethod
-    def _render_opinions(opinions: Sequence[SeatOpinion]) -> str:
+    def _render_opinions(self, opinions: Sequence[SeatOpinion]) -> str:
+        """The seat positions, each annotated with that seat's own record.
+
+        The Chair is TOLD which colleagues have been reliable rather than
+        having their votes silently re-weighted behind it. Telling the seat
+        that synthesises is strictly more information than adjusting the
+        arithmetic afterwards — and it keeps the transcript honest, because a
+        reader can see both the vote and the reason it was discounted.
+        """
         blocks = []
         for o in opinions:
             if o.failed:
                 blocks.append(f"[{o.seat_name}] ABSTAINED ({o.error})")
                 continue
+            weight = self.seat_weights.get(o.seat_id)
+            record = ""
+            if weight is not None and abs(weight - 1.0) > 0.01:
+                record = (f" [track record: this seat's calls have been "
+                          f"{'better' if weight > 1 else 'worse'} than average; "
+                          f"weight {weight:.2f}]")
             parts = [
-                f"[{o.seat_name}] {o.signal.upper()} (confidence {o.confidence:.0f})",
+                f"[{o.seat_name}] {o.signal.upper()} "
+                f"(confidence {o.confidence:.0f}){record}",
                 o.reasoning,
             ]
             if o.key_points:
