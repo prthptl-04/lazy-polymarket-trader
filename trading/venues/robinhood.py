@@ -367,8 +367,19 @@ class RobinhoodVenue:
         payload["time_in_force"] = (
             _CRYPTO_TIF if crypto else _EQUITY_TIF).get(request.time_in_force, "gfd" if not crypto else "gtc")
 
-        if request.extended_hours and not crypto:
-            payload["extended_hours"] = True
+        if not crypto:
+            # `extended_hours: True` is NOT a parameter of place_equity_order.
+            # The live schema declares `market_hours` in {regular_hours,
+            # extended_hours, all_day_hours} with additionalProperties: false,
+            # so the old key was either rejected at validation or dropped —
+            # and dropped is worse, because the order is then treated as
+            # regular_hours and QUEUED FOR THE NEXT OPEN while the fund
+            # believes it holds a premarket position.
+            #
+            # Sent explicitly in both cases: if the key is absent the gateway
+            # chooses, and an order silently queued is worse than a rejection.
+            payload["market_hours"] = (
+                "extended_hours" if request.extended_hours else "regular_hours")
         return payload, None
 
     def _reject(self, request: OrderRequest, reason: str) -> OrderAck:

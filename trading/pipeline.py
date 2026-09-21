@@ -298,10 +298,22 @@ class ThesisPipeline:
     def _build_order(
         self, candidate: Candidate, size_usd: float, plan: ExitPlan, *, side: str
     ) -> OrderRequest:
+        kwargs = _session_order_kwargs(candidate, limit_price=plan.entry, side=side)
+        # A LIMIT order must be sized in SHARES; only a market order may carry a
+        # dollar amount. Robinhood rejects the combination, and every
+        # extended-hours order is a limit — so sending a notional made each one
+        # fail before it left the process. Read off `order_type` rather than a
+        # flag, because the kwargs are splatted straight into OrderRequest and
+        # any key that is not a field of it is a trap for the next caller.
+        if kwargs.get("order_type") == "limit":
+            reference = kwargs.get("limit_price") or candidate.price
+            sizing = {"quantity": size_usd / reference} if reference > 0 else {
+                "notional_usd": size_usd}
+        else:
+            sizing = {"notional_usd": size_usd}
         return OrderRequest(
             symbol=candidate.symbol, side=side, asset_class=candidate.asset_class,
-            notional_usd=size_usd, thesis_id=candidate.symbol,
-            **_session_order_kwargs(candidate, limit_price=plan.entry, side=side),
+            thesis_id=candidate.symbol, **sizing, **kwargs,
         )
 
     def _notes(self, thesis: Thesis, size: SizeResult) -> list[str]:
