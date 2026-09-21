@@ -83,6 +83,7 @@ class RoundTable:
     # an absent seat counts as 1.0, because an unknown seat is not a
     # discredited one.
     seat_weights: dict = field(default_factory=dict)
+    on_debate_start: Any = None              # callback(symbol) when a sitting opens
     on_opinion: Any = None                   # callback(SeatOpinion) for live UI
     on_thesis: Any = None                    # callback(Thesis) when complete
     _last_provider: Optional[str] = None
@@ -92,6 +93,14 @@ class RoundTable:
     async def deliberate(self, candidate: Candidate) -> Thesis:
         thesis = Thesis(symbol=candidate.symbol, asset_class=candidate.asset_class)
         self._persist(thesis, "in_progress")
+        # Announce the sitting so a watcher can clear the previous debate
+        # before the first seat answers, rather than showing the last symbol's
+        # argument under this symbol's name.
+        if self.on_debate_start is not None:
+            try:
+                self.on_debate_start(candidate.symbol)
+            except Exception:
+                logger.exception("on_debate_start callback failed")
 
         evidence = candidate.evidence_block()
 

@@ -4,6 +4,7 @@ import { Preflight, type Step } from "../components/Preflight";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { LiveFeed } from "../components/LiveFeed";
 import { MarketStance } from "../components/MarketStance";
+import { LiveDebate } from "../components/LiveDebate";
 import { LivePrices } from "../components/LivePrices";
 import { RoundTableFeed } from "../components/RoundTableFeed";
 import { RoundTableThread } from "../components/RoundTableThread";
@@ -200,6 +201,8 @@ export function VenueView({ venue }: { venue: Venue }) {
               equity curve is a single point until something closes, so this is
               the only chart on the page with anything to draw for now. */}
           <LivePrices venue={venue} />
+
+          <LiveDebate />
 
           {poly && <MarketStance />}
 

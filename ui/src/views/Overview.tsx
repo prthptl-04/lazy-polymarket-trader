@@ -4,6 +4,7 @@ import { CostMatrix } from "../components/CostMatrix";
 import { AgentScorecard } from "../components/AgentScorecard";
 import { EngineButton } from "../components/EngineButton";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
+import { LiveDebate } from "../components/LiveDebate";
 import { LivePrices } from "../components/LivePrices";
 import { EquityArea, Sparkline } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
@@ -86,6 +87,10 @@ export function Overview() {
 
       <div className="col-span-full">
         <LivePrices venue="robinhood" />
+      </div>
+
+      <div className="col-span-full">
+        <LiveDebate />
       </div>
 
       {/* ---------------- wallets ---------------- */}

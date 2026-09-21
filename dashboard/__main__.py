@@ -48,7 +48,15 @@ def main() -> None:
     # Attach the hedge-fund engine if it can be built. Returns None when the
     # watchlist is empty or no Anthropic key is set, in which case the
     # dashboard still runs and reports the fund as not attached.
-    runtime.fund_scheduler = build_fund(config=config, memory=runtime.memory)
+    # The runtime watches the committee think. The fund does not know what a
+    # dashboard is — it announces, and a failure in any watcher can never stop
+    # it deliberating.
+    runtime.fund_scheduler = build_fund(
+        config=config, memory=runtime.memory,
+        on_debate_start=runtime.begin_debate,
+        on_opinion=runtime.record_opinion,
+        on_thesis=lambda _thesis: runtime.finish_debate(),
+    )
     if runtime.fund_scheduler is None:
         print(
             "[dashboard] fund NOT attached — "

@@ -10,6 +10,7 @@ Read-only except for GO/STOP, which is delegated to the scheduler.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -209,6 +210,61 @@ class DashboardRuntime:
         }
 
     # ---------- round table ----------
+
+    # The debate currently in flight. Display only, and deliberately not
+    # persisted: an in-progress argument is not a record of anything, and the
+    # finished thesis reaches `deliberations` through its own path.
+    _live_debate: dict = field(default_factory=dict)
+
+    def begin_debate(self, symbol: str) -> None:
+        """A new committee sits. One room, one symbol — carrying opinions
+        between symbols would attribute one instrument's argument to another."""
+        self._live_debate = {"symbol": symbol, "opinions": [], "in_progress": True,
+                             "started": time.time()}
+
+    def record_opinion(self, opinion) -> None:
+        """One seat has answered. Called from `RoundTable.on_opinion`."""
+        if not self._live_debate:
+            return
+        self._live_debate.setdefault("opinions", []).append({
+            "seat_id": getattr(opinion, "seat_id", None),
+            "seat_name": getattr(opinion, "seat_name", None),
+            "signal": getattr(opinion, "signal", None),
+            "confidence": getattr(opinion, "confidence", None),
+            "reasoning": getattr(opinion, "reasoning", None),
+            "failed": bool(getattr(opinion, "failed", False)),
+            "error": getattr(opinion, "error", None),
+        })
+
+    def finish_debate(self) -> None:
+        if self._live_debate:
+            self._live_debate["in_progress"] = False
+
+    def live_debate(self) -> dict:
+        """The committee mid-thought.
+
+        A deliberation is seven LLM calls over 30-60 seconds and the panel used
+        to show the PREVIOUS thesis for all of it, then jump. The reasoning
+        arrives long before the conclusion and is the interesting part.
+
+        `expected_seats` matters as much as the opinions: two of six answered
+        reads very differently from two of two, and without it a half-finished
+        debate looks like a decisive one.
+        """
+        from roundtable.seats import ALL_SEATS
+        live = dict(self._live_debate or {})
+        opinions = live.get("opinions", [])
+        return {
+            "symbol": live.get("symbol"),
+            "opinions": opinions,
+            "answered": len(opinions),
+            "expected_seats": len(ALL_SEATS),
+            "in_progress": bool(live.get("in_progress")),
+            "started": live.get("started"),
+            # Never a verdict while it is running. Four seats in is not a
+            # decision, and a panel implying otherwise is worse than no panel.
+            "consensus": None,
+        }
 
     def deliberations(self, limit: int = 25, *,
                       mode: Optional[str] = None) -> list[dict]:

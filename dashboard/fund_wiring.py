@@ -93,6 +93,12 @@ def build_fund(
     anthropic_client: Any = None,
     venue: Any = None,
     criteria: VerifiedOutcomeCriteria = DEFAULT_CRITERIA,
+    # Optional watchers for the live debate panel. The fund does not know what
+    # a dashboard is; it just announces, and a failure in any of these can
+    # never stop it thinking.
+    on_debate_start: Any = None,
+    on_opinion: Any = None,
+    on_thesis: Any = None,
 ) -> Optional[FundScheduler]:
     """Assemble the fund. Returns None when it cannot be built."""
     cfg = config or load_config()
@@ -254,7 +260,9 @@ def build_fund(
         notifier=notifier,
         cost_ledger=cost_ledger,
         pipeline=pipeline,
-        round_table=RoundTable(client=client, router=llm_router, memory=memory),
+        round_table=RoundTable(client=client, router=llm_router, memory=memory,
+                               on_debate_start=on_debate_start,
+                               on_opinion=on_opinion, on_thesis=on_thesis),
         data=data_provider,
         corroborator=corroborator,
         equity_watchlist=cfg.equity_watchlist,

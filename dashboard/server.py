@@ -212,6 +212,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_trade_history(limit: int = 25) -> list[dict]:
         return runtime.trade_history(limit=max(1, min(200, limit)))
 
+    @app.get("/api/roundtable/live")
+    def api_roundtable_live() -> dict:
+        return runtime.live_debate()
+
     @app.get("/api/roundtable/latest")
     def api_latest_deliberation() -> Any:
         found = runtime.latest_deliberation()
