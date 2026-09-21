@@ -1002,6 +1002,10 @@ class DashboardRuntime:
         recent = {s.seat_id: s for s in score_seats(delibs[: self.RECENT_WINDOW], outcomes).seats}
         prior = {s.seat_id: s for s in score_seats(delibs[self.RECENT_WINDOW :], outcomes).seats}
 
+        from roundtable.calibration import seat_weights as _seat_weights
+        weights = _seat_weights(list(overall.values()))
+        from roundtable.calibration import seat_weights as _seat_weights
+        weights = _seat_weights(list(overall.values()))
         blame = self._blame_by_seat()
         fit = (self.scorecard().get("fit") or {})
         shrink = fit.get("shrink")
@@ -1037,6 +1041,10 @@ class DashboardRuntime:
                 "blamed_losses": failure.get("count", 0),
                 "top_failure": failure.get("top"),
                 "failure_note": failure.get("note"),
+                # What the seat's record is ALREADY costing it. Not a
+                # recommendation — `FundLoop._recalibrate` refreshes this every
+                # cycle and `Thesis.weighted_tally` multiplies by it.
+                "vote_weight": weights.get(sid, 1.0),
                 "enforced": self._enforcement_for(o, shrink),
                 "target": self._target_for(o),
             })

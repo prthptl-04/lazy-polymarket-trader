@@ -1,11 +1,18 @@
 # Robinhood — the road to a paper track record
 
-**Status: 21 items FIXED** — B0–B7, B11, B14–B20, B24, B26, B27, B30, B31. The fund books and closes
-positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
-round-table calls complete, and decisions and stops now run on the venue's live
-quote rather than yesterday's daily close, and the rule-#13 bar on the page is
-the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Four blockers remain, plus seven filed. B28 is **decided: keep the limit** (§17).
+**Status: every blocker is closed.** All 32 items are fixed, filed as measured
+limitations, or decided. The fund books and closes positions, survives a
+restart, grades its own committee and acts on the grade, and refuses to trade
+what it cannot price.
+
+**1,357 tests passing. Vulnerability scan clean. UI builds; all three UI
+checks pass.**
+
+| | |
+|---|---|
+| Fixed | B0–B27 except the decided/filed items below, plus B30, B31, B32 |
+| Decided | **B19/B20** sizing caps ($150, max Kelly expression) · **B28** keep the 50 bps spread limit |
+| Filed as measured limits | **B29** size varies only with chair confidence · **B18** residual: MIN_RESPONDING_SEATS now scales conviction rather than blocking |
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -769,7 +776,40 @@ consensus: neutral 36.2 → no trade
       invisible. Worth revisiting, but quorum policy is a separate decision from
       a token budget — see B22.
 
-- [ ] **B22 · Quorum hides a partially dead committee**
+- [x] **B22 · Quorum hides a partially dead committee** — **DONE.**
+      `Thesis.participation` and `effective_confidence` scale stated conviction
+      by how much of the table actually spoke, and `ThesisPipeline._size_for`
+      sizes on that. A thesis built on three abstentions used to size exactly
+      like one the whole table stood behind — which is how B18's three
+      truncated seats stayed invisible. Scaled rather than discarded: a thin
+      committee still knows something, it just knows it less certainly.
+
+- [x] **B33 · The seats were graded and the grade was never used** — **DONE.**
+      The scorecard measured every seat and the dashboard displayed it, but
+      `Thesis.tally()` counted them equally — a seat with a Brier of 0.30,
+      wrong for fifty trades, voted as loudly as one at 0.15.
+
+      ```
+      seat                        n    hit   brier  overconf  weight
+      Fundamental Analyst        60    68%    0.16      +2.0    1.16
+      Quantitative Analyst       60    58%    0.23      +7.0    0.97
+      Sentiment Analyst          60    40%    0.34     +48.0    0.40
+      New Seat                    4    25%    0.50     +65.0    1.00
+
+      raw tally      : bullish 2, bearish 2
+      weighted tally : bullish 1.37, bearish 2.16
+      ```
+
+      Three rules keep it from becoming a machine that silences dissent:
+      **no evidence means no adjustment** (an unscored seat is 1.00 — see "New
+      Seat", four calls and 25% right); **no seat is ever silenced** (floor
+      0.4, because the Devil's Advocate exists to be unpopular and a scheme
+      that can zero a seat deletes the fund's only disagreement); and **the
+      Chair is told, not silently overruled** — each seat's record is rendered
+      into its evidence, so a reader sees both the vote and why it was
+      discounted. `tally()` stays the raw transcript; `weighted_tally` is what
+      a decision uses. Refreshed every cycle by `_recalibrate`, because
+      grading computed once at boot is grading the fund cannot act on.
       `MIN_RESPONDING_SEATS = 3` of 6. With B18 fixed nothing is currently
       abstaining, but the next cause of abstention (a rate limit, a timeout, a
       provider outage) will again produce a confident-looking neutral rather

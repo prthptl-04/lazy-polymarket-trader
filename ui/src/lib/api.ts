@@ -159,6 +159,9 @@ export interface AgentMatrixRow {
   hit_rate: number | null; brier: number | null;
   mean_confidence: number | null; overconfidence: number | null;
   calibrated: boolean; beats_coin_flip: boolean;
+  // How loudly this seat is counted, from its own record. 1.0 = unweighted
+  // (or not yet scored); < 1 = the record is costing it votes.
+  vote_weight: number;
   recent: { window: number; samples: number; hit_rate: number | null };
   prior: { samples: number; hit_rate: number | null };
   improvement_pts: number | null;

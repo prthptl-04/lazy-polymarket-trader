@@ -277,3 +277,16 @@ async def test_a_record_too_thin_to_judge_leaves_every_seat_at_full_weight(tmp_p
     loop, _, _, _ = _stack(tmp_path)
     await loop.run_cycle(WEDNESDAY, equity_usd=BANKROLL, available_cash_usd=BANKROLL)
     assert all(w == 1.0 for w in loop.round_table.seat_weights.values())
+
+
+def test_the_matrix_reports_what_the_record_costs_each_seat(tmp_path):
+    """The panel must show the weight the fund is ACTUALLY applying, not a
+    recommendation. A displayed enforcement computed separately from the
+    enforcing code drifts the moment one of them changes."""
+    from memory.store import MemoryStore
+    from dashboard.runtime import DashboardRuntime
+
+    rows = DashboardRuntime(memory=MemoryStore(db_path=str(tmp_path / "m.db"))).agent_matrix()
+    assert rows, "the matrix must list the seats even with no record"
+    assert all(r["vote_weight"] == 1.0 for r in rows), "unscored means unweighted"
+    assert all("improvement_pts" in r and "enforced" in r for r in rows)
