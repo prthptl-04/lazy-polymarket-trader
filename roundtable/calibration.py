@@ -42,10 +42,30 @@ MIN_SAMPLES_FOR_FIT = 30
 # n are noise by construction, not merely by sample size.
 MIN_SAMPLES_FOR_SEAT_SCORE = 30
 
-# Never let a fit recommend taking stated confidence at face value, and never
-# let it collapse sizing to a coin flip either.
-MIN_SHRINK = 0.1
+# Never let a fit recommend taking stated confidence at face value — hence the
+# ceiling. The FLOOR is symmetric, and used to be 0.1, which made a whole class
+# of measurement inexpressible: the one this strategy actually lives in.
+#
+# The fund's break-even hit rate is not 50%. Under the fixed 2xATR stop /
+# 3xATR target geometry the payoff ratio is 1.5, so break-even is 1/(1+1.5) =
+# 40%, and a profitable configuration wins 40-52%. Every one of those was
+# pinned at the old floor, so the calibration could not tell a committee
+# winning 40% from one winning 52% — and the floor was not even conservative:
+# at a true p of 0.45 it forced p = 0.53, sizing 2.6x LARGER than the truth.
+#
+# A negative shrink is not nonsense. It says the committee is wrong more often
+# when it is confident, which is real, measurable, and the single most
+# important thing this loop could ever discover. Kelly does the refusing:
+# below break-even `f*` is negative and `size_position` declines. A floor that
+# made that unreachable meant the fund could never stop trading on the evidence
+# of its own record, which is what the loop is FOR.
 MAX_SHRINK = 0.9
+MIN_SHRINK = -MAX_SHRINK
+
+# The fund's payoff ratio, for reporting expectancy. A hit rate alone is
+# unreadable when break-even is 40% rather than 50% — "realized 45%" looks like
+# failure and is in fact +0.125R per trade.
+REPORTING_PAYOFF_RATIO = 1.5
 
 
 @dataclass(frozen=True)
@@ -246,10 +266,17 @@ def fit_confidence_shrink(
     note = ""
     if raw != shrink:
         note = f" (clamped from {raw:.2f})"
+
+    # Expectancy, in R, so the number is readable against the right reference.
+    b = REPORTING_PAYOFF_RATIO
+    expectancy = realized * b - (1 - realized)
+    verdict = "above" if realized > 1 / (1 + b) else "below"
     return ShrinkFit(
         shrink, len(rows), realized, mean_conf,
         f"fitted over {len(rows)} theses: mean confidence {mean_conf:.0f}, "
-        f"realized hit rate {realized:.0%} → shrink {shrink:.2f}{note}",
+        f"realized hit rate {realized:.0%} ({expectancy:+.2f}R per trade, "
+        f"{verdict} the {1 / (1 + b):.0%} break-even at {b}R) → "
+        f"shrink {shrink:.2f}{note}",
     )
 
 

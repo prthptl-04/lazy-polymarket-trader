@@ -124,9 +124,20 @@ def test_an_overconfident_committee_is_shrunk_hard():
     assert fit.usable and fit.shrink < 0.3
 
 
-def test_the_fit_is_clamped_so_a_bad_run_cannot_zero_the_fund():
+def test_a_committee_that_is_wrong_when_confident_is_allowed_to_stop_the_fund():
+    """This used to assert `shrink >= 0.1`, i.e. that a bad run could NEVER
+    stop the fund. That floor was the bug: it also made every profitable
+    sub-50% hit rate inexpressible, and the fund's break-even at 1.5R is 40%.
+
+    Claiming 90 and hitting 20 is not noise to be floored away — it is the
+    single most important thing this loop could discover. The clamp still
+    exists; it is symmetric now, and Kelly does the refusing.
+    """
+    from roundtable.calibration import MIN_SHRINK
     fit = fit_confidence_shrink(_outcomes(60, 90, 0.20))
-    assert fit.usable and fit.shrink >= 0.1
+    assert fit.usable
+    assert MIN_SHRINK <= fit.shrink < 0
+    assert 0.5 + (0.9 - 0.5) * fit.shrink < 0.4, "below break-even -> no trade"
 
 
 # ---------- the loop actually closes, per cycle ----------
