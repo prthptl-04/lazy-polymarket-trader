@@ -13,6 +13,11 @@ dependencies = [
     "uvicorn>=0.46.0",
     "polymarket-us>=0.1.2",
     "playwright>=1.62.0",
+    # Imported by trading/mcp_client.py. Without it a fresh clone constructs a
+    # RobinhoodVenue whose every call fails at `import mcp` -> connect() returns
+    # False -> every order is rejected, with the error blaming the quote rather
+    # than the missing package.
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]

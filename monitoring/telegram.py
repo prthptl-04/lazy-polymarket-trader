@@ -138,3 +138,44 @@ def _plain(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.8f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    # `python -m monitoring.telegram` — sends one test message and says exactly
+    # what is missing if it cannot. Setup is easy to get subtly wrong (the chat
+    # id is not the bot id, and the bot cannot message you until you message it
+    # first), so the check reports which half is absent.
+    import sys
+
+    notifier = TelegramNotifier.from_env()
+    if not notifier.token:
+        print("TELEGRAM_BOT_TOKEN is not set.\n"
+              "  1. Open Telegram, message @BotFather, send /newbot\n"
+              "  2. Copy the token it gives you into .env")
+        sys.exit(1)
+    if not notifier.chat_id:
+        print("TELEGRAM_CHAT_ID is not set.\n"
+              "  1. Send your new bot any message from your own account\n"
+              "  2. Open https://api.telegram.org/bot<TOKEN>/getUpdates\n"
+              '  3. Copy result[0].message.chat.id into .env')
+        sys.exit(1)
+
+    sent: list = []
+    original = notifier.send
+
+    def _watched(url, payload):
+        original(url, payload)
+        sent.append(payload)
+
+    notifier.send = _watched
+    notifier.notify(format_fill({
+        "symbol": "AAPL", "side": "buy", "quantity": 0.5, "price": 334.94,
+        "mode": "paper", "venue": "paper",
+    }))
+    if sent:
+        print(f"sent a test fill to chat {notifier.chat_id}. Check your phone.")
+    else:
+        print("the send failed — the token or chat id is wrong, or the network "
+              "is unreachable. Nothing was logged, because the URL carries the "
+              "token.")
+        sys.exit(1)
