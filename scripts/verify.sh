@@ -32,7 +32,7 @@ step "1/4  tests"
 $PY -m pytest -q || fail=1
 
 step "2/4  module self-checks"
-for m in roundtable.replay roundtable.knowledge trading.openbb_provider; do
+for m in roundtable.replay roundtable.knowledge trading.catalysts; do
   if $PY -m "$m" --demo >/dev/null 2>&1; then echo "  ok   $m"
   else echo "  FAIL $m"; fail=1; fi
 done

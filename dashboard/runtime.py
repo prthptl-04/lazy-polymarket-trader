@@ -30,7 +30,7 @@ class DashboardRuntime:
     # name -> VenueAdapter, for the header balance strip.
     venues: dict[str, Any] = field(default_factory=dict)
     data_provider: Optional[Any] = None
-    # trading.openbb_provider.CatalystFeed, for the news + insider panels.
+    # trading.catalysts.CatalystFeed, for the news + insider panels.
     catalyst_feed: Optional[Any] = None
     _catalysts: dict = field(default_factory=dict)
 

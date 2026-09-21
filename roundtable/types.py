@@ -52,7 +52,7 @@ class Candidate:
     # Context the seats need but must not confuse with evidence.
     sentiment_notes: tuple[str, ...] = ()
     technical_notes: tuple[str, ...] = ()
-    # Dated events and insider flow (trading/openbb_provider.py). Separate from
+    # Dated events and insider flow (trading/catalysts.py). Separate from
     # sentiment because these are FACTS WITH DATES — a filing, a scheduled
     # print — while sentiment is what people are saying about them. Conflating
     # the two lets a loud opinion inherit a filing's credibility.

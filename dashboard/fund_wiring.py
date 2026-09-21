@@ -34,7 +34,7 @@ from trading.fund_scheduler import FundScheduler
 from trading.kill_switch import DailyLossKillSwitch
 from trading.live_gate import LiveTradingGate
 from trading.market_data import StaticProvider, VenueQuoteProvider
-from trading.openbb_provider import CatalystFeed
+from trading.catalysts import CatalystFeed
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
 from trading.discovery import MarketScout
@@ -280,7 +280,10 @@ def build_fund(
         # needs no third-party data key, and one market-wide call per cycle
         # serves every candidate.
         catalysts=CatalystFeed(
-            earnings_source=getattr(trading_venue, "earnings_calendar", None)),
+            earnings_source=getattr(trading_venue, "earnings_calendar", None),
+            filing_source=getattr(trading_venue, "sec_filings", None),
+            depth_source=getattr(trading_venue, "price_book", None),
+            implied_move_source=getattr(trading_venue, "implied_move_pct", None)),
         lookback_bars=cfg.lookback_bars,
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,
         resume_max_age_seconds=cfg.resume_max_age_seconds,

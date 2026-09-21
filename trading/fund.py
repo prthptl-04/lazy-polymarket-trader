@@ -111,7 +111,7 @@ class FundLoop:
     scout: Any = None
     memory: Any = None
     postmortem: Any = None
-    # trading.openbb_provider.CatalystFeed. Optional: None disables the
+    # trading.catalysts.CatalystFeed. Optional: None disables the
     # Catalyst seat's evidence without disabling the seat, which then
     # correctly reports that it has nothing to reason from.
     catalysts: Any = None
@@ -278,7 +278,9 @@ class FundLoop:
         news_at = time.time()
         sentiment_notes = await self._news_notes(symbol)
         catalysts_at = time.time()
-        catalyst_notes = await self._catalyst_notes(symbol, asset_class)
+        catalyst_notes = await self._catalyst_notes(
+            symbol, asset_class, spot=price, session=session,
+            stop_distance_pct=_stop_distance_pct(history.bars, price))
         corroboration_notes = await self._corroboration_notes(symbol)
         financials = await self.data.get_financials(symbol)
         current_fin, prior_fin = financials if financials else (None, None)
@@ -536,7 +538,10 @@ class FundLoop:
             SourceRef("technicals", "computed", None, derived=True),
         )
 
-    async def _catalyst_notes(self, symbol: str, asset_class: str) -> tuple[str, ...]:
+    async def _catalyst_notes(self, symbol: str, asset_class: str, *,
+                              spot: Optional[float] = None,
+                              stop_distance_pct: Optional[float] = None,
+                              session: Any = None) -> tuple[str, ...]:
         """Dated events and insider flow, for the Catalyst seat.
 
         Optional by construction. `catalysts` never raises — it returns an
@@ -548,7 +553,15 @@ class FundLoop:
         if self.catalysts is None:
             return ()
         try:
-            evidence = await self.catalysts.catalysts(symbol, asset_class)
+            evidence = await self.catalysts.catalysts(
+                symbol, asset_class, spot=spot,
+                # The exit plan itself is built inside `build_candidate`, after
+                # this — but the geometry is fixed (2xATR), so the distance the
+                # fund WILL use is knowable now from the same bars. Computing
+                # it here beats reordering the cycle for one line, and without
+                # it the implied-move comparison has nothing to compare to.
+                stop_distance_pct=stop_distance_pct,
+                equities_open=bool(getattr(session, "equities_open", True)))
         except Exception:
             logger.exception("catalyst feed failed for %s", symbol)
             return ()
@@ -1030,6 +1043,27 @@ class FundLoop:
             )
         except Exception:
             logger.exception("failed to abandon stale thesis %s", row.get("thesis_id"))
+
+
+def _stop_distance_pct(bars: Sequence[Any], price: float) -> Optional[float]:
+    """How far the 2xATR stop will sit from entry, as a percent.
+
+    Duplicates nothing: it reads `DEFAULT_STOP_MULTIPLIER` and
+    `average_true_range` from `finance.exits`, so if the geometry changes this
+    follows it. Returns None rather than a guess when the bars cannot support
+    an ATR — a fabricated stop distance would make the implied-move line read
+    as a real comparison when it is not one.
+    """
+    from finance.exits import DEFAULT_STOP_MULTIPLIER, average_true_range
+    if not bars or not price or price <= 0:
+        return None
+    try:
+        atr = average_true_range(bars)
+    except Exception:
+        return None
+    if not atr or atr <= 0:
+        return None
+    return round(atr * DEFAULT_STOP_MULTIPLIER / price * 100.0, 2)
 
 
 def _trading_day(moment: datetime):

@@ -252,6 +252,19 @@ def test_tool_names_match_the_verified_surface():
         # `report.verified` false means the DATE is tentative — both are
         # distinctions `summarise_earnings` depends on.
         "get_earnings_calendar",
+        # Verified 2026-09-21 against the live server:
+        #   get_sec_filing_index -> {"data": {"symbol", "filings": [
+        #       {"filing_id", "form_type", "description", "date_filed"}]}}
+        #   get_equity_price_book -> {"data": {"books": [{"symbol",
+        #       "updated_at", "bids": [], "asks": []}]}} — both sides EMPTY
+        #       outside market hours, which is not an absence of liquidity.
+        #   get_option_chains -> {"data": {"chains": [{"id",
+        #       "expiration_dates": [...]}]}}
+        #   get_option_instruments -> {"data": {"instruments": [{"id",
+        #       "strike_price", "type"}], "next": <cursor|null>}} — ~100 rows
+        #       for one weekly expiry, which is why implied move is gated.
+        "get_sec_filing_index", "get_equity_price_book",
+        "get_option_chains", "get_option_instruments", "get_option_quotes",
     }
     assert set(TOOL_NAMES.values()) == verified
 

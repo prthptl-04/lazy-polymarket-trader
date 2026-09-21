@@ -22,7 +22,7 @@ import asyncio
 
 import pytest
 
-from trading.openbb_provider import (
+from trading.catalysts import (
     CatalystEvidence, CatalystFeed, summarise_insiders, summarise_news,
 )
 
@@ -220,7 +220,7 @@ def test_an_earnings_date_inside_the_window_is_a_dated_warning():
     """The single most decision-relevant catalyst a swing fund has. A
     technically perfect setup entered before a print is a coin flip, and this
     is the only line on the page that says so."""
-    from trading.openbb_provider import summarise_earnings
+    from trading.catalysts import summarise_earnings
     rows = [{"symbol": "COST", "report": {"date": "2026-09-24", "timing": "pm",
                                           "verified": True},
              "eps": {"estimate": "6.52", "actual": None}}]
@@ -231,7 +231,7 @@ def test_an_earnings_date_inside_the_window_is_a_dated_warning():
 def test_an_unverified_date_is_called_tentative():
     """Robinhood flags unverified dates. Presenting a guess as a fact is how a
     seat vetoes a good trade for nothing."""
-    from trading.openbb_provider import summarise_earnings
+    from trading.catalysts import summarise_earnings
     rows = [{"symbol": "X", "report": {"date": "2026-09-24", "timing": "am",
                                        "verified": False}, "eps": {}}]
     assert "tentative" in summarise_earnings(rows, "X", today="2026-09-21").lower()
@@ -240,7 +240,7 @@ def test_an_unverified_date_is_called_tentative():
 def test_already_reported_is_not_an_upcoming_event():
     """`eps.actual` populated means it has happened. Reading a past print as
     an upcoming one inverts the advice."""
-    from trading.openbb_provider import summarise_earnings
+    from trading.catalysts import summarise_earnings
     rows = [{"symbol": "X", "report": {"date": "2026-09-19", "timing": "am",
                                        "verified": True},
              "eps": {"estimate": "1.0", "actual": "1.2"}}]
@@ -250,12 +250,124 @@ def test_already_reported_is_not_an_upcoming_event():
 
 def test_a_quiet_window_says_so_explicitly():
     """Silence and 'we did not look' must not render identically."""
-    from trading.openbb_provider import summarise_earnings
+    from trading.catalysts import summarise_earnings
     assert "no earnings" in summarise_earnings([], "AAPL", today="2026-09-21").lower()
 
 
 def test_another_companys_earnings_are_not_this_symbols():
-    from trading.openbb_provider import summarise_earnings
+    from trading.catalysts import summarise_earnings
     rows = [{"symbol": "COST", "report": {"date": "2026-09-24", "verified": True},
              "eps": {}}]
     assert "no earnings" in summarise_earnings(rows, "AAPL", today="2026-09-21").lower()
+
+
+# ---------------------------------------------------------------- implied move
+
+def test_the_implied_move_is_compared_against_our_own_stop():
+    """The whole point. "Earnings Thursday" is trivia; "the options price a
+    move twice your stop distance" is a decision.
+
+    This is the one number that connects the catalyst block to the exit plan,
+    and it is why the options call is worth making at all."""
+    from trading.catalysts import summarise_implied_move
+    note = summarise_implied_move(implied_move_pct=6.8, stop_distance_pct=4.1,
+                                  expiry="2026-09-25", symbol="COST")
+    assert "6.8%" in note and "4.1%" in note
+    assert "wider than" in note.lower() or "exceeds" in note.lower()
+
+
+def test_a_stop_that_survives_the_print_is_said_to_survive_it():
+    from trading.catalysts import summarise_implied_move
+    note = summarise_implied_move(implied_move_pct=2.0, stop_distance_pct=5.0,
+                                  expiry="2026-09-25", symbol="X")
+    assert "survive" in note.lower()
+
+
+def test_no_stop_means_no_comparison_rather_than_a_guessed_one():
+    """A candidate with no exit plan is pre-screened out anyway; inventing a
+    stop distance to make the sentence work would be a fabricated number in an
+    evidence block."""
+    from trading.catalysts import summarise_implied_move
+    note = summarise_implied_move(implied_move_pct=6.8, stop_distance_pct=None,
+                                  expiry="2026-09-25", symbol="X")
+    assert "6.8%" in note and "stop" not in note.split(".")[0].lower()
+
+
+# ---------------------------------------------------------------- filings
+
+def test_a_recent_8k_is_a_dated_material_event():
+    from trading.catalysts import summarise_filings
+    rows = [{"form_type": "8-K", "description": "Current report",
+             "date_filed": "2026-09-19"}]
+    note = summarise_filings(rows, today="2026-09-21")
+    assert "8-K" in note and "2 days ago" in note
+
+
+def test_an_old_filing_is_not_presented_as_news():
+    from trading.catalysts import summarise_filings
+    rows = [{"form_type": "10-K", "date_filed": "2025-01-05"}]
+    assert "no material filings" in summarise_filings(rows, today="2026-09-21").lower()
+
+
+def test_no_filings_is_stated_as_a_checked_absence():
+    from trading.catalysts import summarise_filings
+    assert "no material filings" in summarise_filings([], today="2026-09-21").lower()
+
+
+# ---------------------------------------------------------------- depth
+
+def test_a_closed_market_is_not_reported_as_no_liquidity():
+    """Robinhood returns an empty book when the market is shut. Rendering that
+    as "no resting liquidity" would tell the Risk seat the name is untradeable
+    every weekend — and the fund trades crypto at weekends, so a seat primed
+    that way is primed at exactly the wrong time."""
+    from trading.catalysts import summarise_depth
+    note = summarise_depth({"bids": [], "asks": []}, equities_open=False)
+    assert "closed" in note.lower() and "no liquidity" not in note.lower()
+
+
+def test_an_empty_book_in_open_hours_is_a_real_warning():
+    from trading.catalysts import summarise_depth
+    note = summarise_depth({"bids": [], "asks": []}, equities_open=True)
+    assert "no resting" in note.lower()
+
+
+def test_a_wall_is_called_out_for_stop_placement():
+    """The real use at this account size. $150 does not move a book, but a
+    stop sitting just below a large resting bid is in a different place from
+    one sitting in thin air."""
+    from trading.catalysts import summarise_depth
+    book = {"bids": [{"price": "100.00", "quantity": 100},
+                     {"price": "99.90", "quantity": 12000},
+                     {"price": "99.80", "quantity": 150}],
+            "asks": [{"price": "100.10", "quantity": 120}]}
+    note = summarise_depth(book, equities_open=True)
+    assert "99.9" in note and "wall" in note.lower()
+
+
+def test_an_even_book_reports_no_wall():
+    from trading.catalysts import summarise_depth
+    book = {"bids": [{"price": "100.0", "quantity": 100},
+                     {"price": "99.9", "quantity": 110}],
+            "asks": [{"price": "100.1", "quantity": 105}]}
+    assert "no outsized" in summarise_depth(book, equities_open=True).lower()
+
+
+def test_the_stop_distance_handed_to_the_options_line_is_the_real_geometry():
+    """If this drifted from `finance.exits`, the implied-move comparison would
+    read as a real one while comparing against a stop the fund never places."""
+    from finance.exits import DEFAULT_STOP_MULTIPLIER, average_true_range
+    from trading.fund import _stop_distance_pct
+
+    class _Bar:
+        def __init__(s, h, l, c): s.high, s.low, s.close, s.open = h, l, c, c
+
+    bars = [_Bar(101 + i * 0.1, 99 + i * 0.1, 100 + i * 0.1) for i in range(30)]
+    expected = average_true_range(bars) * DEFAULT_STOP_MULTIPLIER / 100.0 * 100.0
+    assert _stop_distance_pct(bars, 100.0) == round(expected, 2)
+
+
+def test_bars_too_thin_for_an_atr_yield_no_stop_distance():
+    from trading.fund import _stop_distance_pct
+    assert _stop_distance_pct([], 100.0) is None
+    assert _stop_distance_pct([object()], 0.0) is None

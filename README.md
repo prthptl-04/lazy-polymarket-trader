@@ -154,7 +154,7 @@ everything a seat will see, **before any seat is consulted**:
 | quality screens | [`finance/quality.py`](finance/quality.py) | Altman Z, Piotroski F |
 | corroboration | [`roundtable/corroboration.py`](roundtable/corroboration.py) | a second source checks the first |
 | execution note | computed | **rests at mark** vs **crosses the spread** |
-| catalysts | [`openbb_provider.py`](trading/openbb_provider.py) | dated headlines, net Form 4 flow, **earnings date** |
+| catalysts | [`catalysts.py`](trading/catalysts.py) | headlines, Form 4 flow, earnings date, 8-K filings, book depth, **implied move vs our stop** |
 | lessons | [`postmortem.relevant_lesson_lines`](roundtable/postmortem.py) | scoped to crypto — see §6 |
 | provenance | [`knowledge.SourceRef`](roundtable/knowledge.py) | age of every block above; **undated counts as stale** |
 | exit plan | [`finance/exits.py`](finance/exits.py) | 2×ATR stop, 3×ATR target |
@@ -446,7 +446,7 @@ nothing stored to replay. That needs real calls and real spend.
 | [`live_gate.py`](trading/live_gate.py) | Rule #13, refuses by default |
 | [`market_data.py`](trading/market_data.py) · [`massive_provider.py`](trading/massive_provider.py) | Provider interface and the live implementation |
 | [`sec_edgar.py`](trading/sec_edgar.py) | Free XBRL fundamentals — **requires `SEC_USER_AGENT`** or every fetch is refused |
-| [`openbb_provider.py`](trading/openbb_provider.py) | Catalysts via OpenBB — optional, degrades to a stated reason |
+| [`catalysts.py`](trading/catalysts.py) | Dated events from OpenBB + the Robinhood MCP research surface; each source degrades to a stated reason |
 | [`mcp_client.py`](trading/mcp_client.py) | The daemon's own MCP session |
 | [`venues/`](trading/venues/) | `base` · `paper` · `robinhood` · `router` · `retired` |
 
@@ -572,7 +572,7 @@ python -m dashboard                        # http://127.0.0.1:8765
 
 ```bash
 ./scripts/verify.sh                        # tests, self-checks, ui build, vuln scan
-pytest -q                                  # 1503 tests
+pytest -q                                  # 1512 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"

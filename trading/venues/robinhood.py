@@ -66,11 +66,29 @@ TOOL_NAMES = {
     "cancel_crypto": "cancel_crypto_order",
     "pnl_history": "get_pnl_trade_history",
     "earnings_calendar": "get_earnings_calendar",
+    "sec_filings": "get_sec_filing_index",
+    "price_book": "get_equity_price_book",
+    "option_chains": "get_option_chains",
+    "option_instruments": "get_option_instruments",
+    "option_quotes": "get_option_quotes",
 }
 
 # Our vocabulary -> Robinhood's.
 _EQUITY_TIF = {"day": "gfd", "gtc": "gtc", "ioc": "gfd"}
 _CRYPTO_TIF = {"day": "gtc", "gtc": "gtc", "ioc": "gtc"}
+
+
+def _rows(payload: Any, key: str) -> list[dict]:
+    """`{"data": {<key>: [...]}}`, defensively."""
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    return [r for r in ((data or {}).get(key) or []) if isinstance(r, dict)]
+
+
+def _f(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -208,6 +226,91 @@ class RobinhoodVenue:
         payload = data.get("data") if isinstance(data, dict) else None
         rows = (payload or {}).get("results") if isinstance(payload, dict) else None
         return list(rows or [])
+
+    async def sec_filings(self, symbol: str, since: str) -> list[dict]:
+        """Material filings since a date. An 8-K is a dated event, not background."""
+        try:
+            data = await self.session.call(TOOL_NAMES["sec_filings"], {
+                "symbol": symbol, "form_type": ["8-K"], "since": since})
+        except Exception as e:
+            logger.warning("filing index unavailable for %s: %s", symbol, redact(e))
+            return []
+        payload = (data or {}).get("data") if isinstance(data, dict) else None
+        return list((payload or {}).get("filings") or [])
+
+    async def price_book(self, symbol: str) -> dict:
+        """Level-2 ladder. Empty outside market hours — see `summarise_depth`."""
+        try:
+            data = await self.session.call(TOOL_NAMES["price_book"],
+                                           {"symbols": [symbol]})
+        except Exception as e:
+            logger.warning("price book unavailable for %s: %s", symbol, redact(e))
+            return {}
+        payload = (data or {}).get("data") if isinstance(data, dict) else None
+        books = (payload or {}).get("books") or []
+        return books[0] if books else {}
+
+    async def implied_move_pct(self, symbol: str, spot: float,
+                               after: str) -> Optional[float]:
+        """Expected move priced by the first expiry after `after`, as a percent.
+
+        THREE round trips and a hundred-row strike list, so the caller gates
+        this on an earnings date actually being near. It is not evidence worth
+        fetching for a name with no event — which is most names, most cycles.
+
+        The number is the ATM straddle over spot, which is the standard
+        back-of-envelope for an event move and needs no volatility model. It is
+        approximate by construction: it ignores the vol term structure and the
+        drift already in the forward. Approximate is fine — the question it
+        answers is "is my stop inside or outside the expected move", and that
+        is not a close call when it matters.
+
+        Returns None on anything unexpected. A missing number renders as no
+        line at all, never as a zero — a zero implied move would read as
+        "nothing priced in", which is the opposite of unknown.
+        """
+        if spot <= 0:
+            return None
+        try:
+            chains = await self.session.call(
+                TOOL_NAMES["option_chains"], {"underlying_symbol": symbol})
+            expiries = sorted(
+                d for c in _rows(chains, "chains")
+                for d in (c.get("expiration_dates") or []) if d > after)
+            if not expiries:
+                return None
+            expiry = expiries[0]
+
+            instruments = await self.session.call(TOOL_NAMES["option_instruments"], {
+                "chain_symbol": symbol, "expiration_dates": expiry})
+            rows = _rows(instruments, "instruments")
+            strikes = {float(r["strike_price"]) for r in rows if r.get("strike_price")}
+            if not strikes:
+                return None
+            atm = min(strikes, key=lambda k: abs(k - spot))
+            ids = [r["id"] for r in rows
+                   if r.get("strike_price") and float(r["strike_price"]) == atm][:2]
+            if not ids:
+                return None
+
+            quotes = await self.session.call(TOOL_NAMES["option_quotes"],
+                                             {"instrument_ids": ids})
+            mids = []
+            for q in _rows(quotes, "quotes"):
+                bid, ask = _f(q.get("bid_price")), _f(q.get("ask_price"))
+                if bid is not None and ask is not None and ask > 0:
+                    mids.append((bid + ask) / 2)
+                elif (last := _f(q.get("last_trade_price"))) is not None:
+                    mids.append(last)
+            if not mids:
+                return None
+            # One leg found: double it as a straddle proxy rather than halving
+            # the move. Understating event risk is the costly direction.
+            straddle = sum(mids) * (2.0 / len(mids)) if len(mids) < 2 else sum(mids)
+            return round(straddle / spot * 100.0, 2)
+        except Exception as e:
+            logger.warning("implied move unavailable for %s: %s", symbol, redact(e))
+            return None
 
     async def get_quote(self, symbol: str) -> Quote:
         crypto = _is_crypto(symbol)
