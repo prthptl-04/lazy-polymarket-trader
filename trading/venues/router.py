@@ -345,8 +345,14 @@ class VenueRouter:
         if ack.accepted and not request.is_close:
             self.opened_at[request.symbol] = adapter.name
 
-        # Keep the day-trade ledger honest: only count orders that were taken.
-        if ack.accepted and self.pdt is not None and request.asset_class == "equity":
+        # Keep the day-trade ledger honest: only count orders that were TAKEN.
+        # `is_filled`, not `accepted` — which is what every other consumer in
+        # the codebase reads, and what this comment always meant. An accepted
+        # limit that never traded used to record a phantom same-day open, and
+        # `evaluate_close` would then classify a genuine close of a position
+        # opened YESTERDAY as a day trade. At 3 used in the window that blocks
+        # the exit outright, trapping a position the fund is trying to leave.
+        if ack.is_filled and self.pdt is not None and request.asset_class == "equity":
             if request.is_close:
                 self.pdt.record_close(request.symbol, moment, asset_class="equity")
             else:

@@ -47,6 +47,9 @@ from trading.venues.base import (
 
 logger = logging.getLogger(__name__)
 
+# Equity and crypto. If BOTH reads fail we know nothing about the account.
+_POSITION_ASSET_CLASSES = 2
+
 MCP_URL = "https://agent.robinhood.com/mcp/trading"
 
 # Verified against the live tool list.
@@ -136,6 +139,7 @@ class RobinhoodVenue:
     async def positions(self) -> list[VenuePosition]:
         ids = await self.account_ids()
         out: list[VenuePosition] = []
+        failures: list[str] = []
         for tool, params, asset in (
             (TOOL_NAMES["equity_positions"], {"account_number": ids.account_number}, "equity"),
             (TOOL_NAMES["crypto_positions"], {"rhs_account_number": ids.rhs_account_number}, "crypto"),
@@ -145,6 +149,7 @@ class RobinhoodVenue:
             except Exception as e:
                 # One asset class failing must not hide the other.
                 logger.warning("robinhood %s failed: %s", tool, redact(e))
+                failures.append(asset)
                 continue
             for p in _rows(data, "positions"):
                 qty = _num(p.get("quantity"))
@@ -157,6 +162,22 @@ class RobinhoodVenue:
                                    or p.get("average_cost")) or 0.0,
                     venue=self.name,
                 ))
+        # "Nothing is held" and "we could not find out" are different answers,
+        # and only one of them is safe to act on. An unauthorised session used
+        # to return [] here, which the fund reads as a flat account — so it
+        # would re-buy everything it already owns, and the weekend flatten
+        # would report nothing to close.
+        #
+        # Gated on EVERY class failing, not on an empty result: one class
+        # failing must still not hide the other, and equities legitimately
+        # answering "none" is not a failure. The partial case — crypto
+        # unreadable while equities answer — is still a quiet omission, and is
+        # tracked separately under the crypto position-parsing work.
+        if len(failures) == _POSITION_ASSET_CLASSES:
+            raise VenueError(
+                f"Robinhood positions could not be read ({', '.join(failures)}); "
+                "treating this as a flat account would be wrong"
+            )
         return out
 
     async def get_quote(self, symbol: str) -> Quote:

@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14, B15, B19, B20, B26 and B27 are FIXED.** The fund books and closes
+**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14, B15, B16, B17, B19, B20, B26 and B27 are FIXED.** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Eight blockers remain, plus six filed.
+record instead of leaving a phantom. Six blockers remain, plus six filed.
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -524,19 +524,45 @@ any hour now.
       it covers any caller added later. Rule 612 is the basis for the 2dp
       figure; **not venue-tested**, since that would mean placing an order.
 
-- [ ] **B16 · PDT records an open on `accepted`, not `filled`** — `router.py:349`.
-      Everywhere else in the codebase reads `is_filled`. A premarket limit that
-      never trades creates a phantom same-day open; at 3 used, `evaluate_close`
-      then **blocks a genuine exit**.
+- [x] **B16 · PDT records an open on `accepted`, not `filled`** — **DONE.**
+      The comment directly above the line already said *"only count orders that
+      were taken"*, which is `is_filled`, and every other consumer in the
+      codebase reads `is_filled`. Mechanism confirmed: `record_open` adds today
+      to `_opens[symbol]`, and `evaluate_close` checks
+      `day in self._opens.get(symbol)` — so a phantom open from an unfilled
+      premarket limit made a genuine close of **yesterday's** position look
+      like a day trade, and at 3 used in the window the router refuses the
+      exit, trapping a position the fund is trying to leave.
 
-- [ ] **B17 · An MCP tool *error* returns a plain string and is not raised**
-      `mcp_client._unwrap` returns the text block without checking `isError`.
-      `place_order` and `account` then call `.get()` on a `str` → `AttributeError`
-      outside the `try`, so a venue rejection surfaces as a cycle exception
-      rather than `OrderAck(rejected)`. Worse, `positions()` routes through
-      `_rows`, which swallows the string: **an authorization error reads as a
-      flat account.** `realized_stats:218` already guards for this, which is the
-      proof the case is real.
+- [x] **B17 · An MCP tool *error* returns a plain string and is not raised** —
+      **DONE**, at the one place all four call sites route through.
+      `_unwrap` now raises `McpError` when the result carries `isError`, so a
+      refusal cannot be mistaken for content. Verified beforehand:
+      `_rows("Error: not authorized...", "positions")` → `[]`.
+
+      That alone was **necessary but not sufficient**, and finding out why was
+      the useful part: `positions()` catches per asset class so one class
+      failing cannot hide the other, and `McpError` is an Exception like any
+      other — so with *both* classes failing it still returned `[]`, which is
+      the flat-account reading one layer up. It now raises `VenueError` when
+      **every** class fails, gated on the failure count rather than on an empty
+      result, because equities legitimately answering "none" is not a failure.
+
+      The distinction that matters: *"nothing is held"* and *"we could not find
+      out"* are different answers and only one is safe to act on. Reading the
+      second as the first would have the fund re-buy everything it already owns
+      and the weekend flatten report nothing to close.
+
+      Still a quiet omission, and tracked under B10: crypto unreadable while
+      equities answer returns a partial book with no signal.
+
+      Live regression check after the change — real account reads still work,
+      and a genuinely flat account returns `0` without raising:
+      ```
+      account: equity=$500.0 cash=$500.0
+      positions: 0 (no raise -> genuinely flat)
+      AAPL: 334.94/335.0 spread=2bps
+      ```
 
 ---
 
@@ -888,8 +914,7 @@ no work can be measured.
 5. **B1** — make the displayed bar the gate's number.
 6. **B4, B6** — book the close on a bearish exit; make a dead feed loud.
 8. **B7, B8, B9, B10** — the weekend crypto path, as one piece of work.
-9. ~~**B14, B15**~~ **DONE.** **B16, B17** — error-handling, before live is
-   ever discussed.
+9. ~~**B14, B15, B16, B17**~~ **DONE.**
 10. **B5** — persist the state that currently dies on restart.
 11. **B21** — the post-stop cooldown.
 12. **O1–O4, P1–P2, D1–D8** — operator, packaging, docs.

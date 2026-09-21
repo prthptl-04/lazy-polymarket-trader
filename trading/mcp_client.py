@@ -254,13 +254,31 @@ class McpUnavailable(RuntimeError):
     """Raised when a call is attempted without a usable session."""
 
 
+class McpError(RuntimeError):
+    """A tool the server refused to run.
+
+    Raised rather than returned, because the failure mode of returning it was
+    much worse than a crash: a refusal arrives as a plain text block, and
+    `RobinhoodVenue.positions` routes that through `_rows`, which cannot find
+    a key in a string and returns `[]`. **An authorization error read as a flat
+    account** — so the fund would conclude it holds nothing and re-buy
+    everything. `place_order` and `account` meanwhile called `.get()` on the
+    string and raised AttributeError outside their own `try`, turning a venue
+    rejection into a cycle exception instead of an `OrderAck(rejected)`.
+    """
+
+
 def _unwrap(result: Any) -> Any:
     """Pull the payload out of an MCP tool result.
 
     Content is a list of blocks; text blocks usually carry JSON. Parsing it
-    here keeps every adapter from re-implementing the same unwrap.
+    here keeps every adapter from re-implementing the same unwrap — and so does
+    raising on `isError`, which is why the check belongs here and not in each
+    of the four call sites.
     """
     content = getattr(result, "content", None)
+    if getattr(result, "isError", False):
+        raise McpError(_error_text(content) or "the MCP server refused the call")
     if content is None:
         return result
     out = []
@@ -275,6 +293,14 @@ def _unwrap(result: Any) -> Any:
     if not out:
         return None
     return out[0] if len(out) == 1 else out
+
+
+def _error_text(content: Any) -> str:
+    """Whatever the server said, for the exception message."""
+    if not content:
+        return ""
+    parts = [t for t in (getattr(b, "text", None) for b in content) if t]
+    return " ".join(parts)[:400]
 
 
 def _model(name: str, data: Any) -> Any:
