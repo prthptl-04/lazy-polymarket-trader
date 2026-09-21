@@ -13,7 +13,7 @@ import { usePolymarketTheme } from "../lib/polymarketTheme";
 import { RH_GOLD as GOLD, RH_GOLD_DEEP as GOLD_DEEP, useRobinhoodTheme } from "../lib/robinhoodTheme";
 import {
   post, usePoll, type Balances, type EngineState, type FundStatus, type ModeState,
-  type Position, type Record_, type VenueModes,
+  type Position, type Record_, type VenueModes, LIVE, NEAR
 } from "../lib/api";
 
 type Venue = "polymarket_us" | "robinhood";
@@ -38,13 +38,13 @@ export function VenueView({ venue }: { venue: Venue }) {
   const colour = poly ? "#2d52f3" : "#00c805";
   const title = poly ? "Polymarket" : "Robinhood";
 
-  const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
+  const { data: fund } = usePoll<FundStatus>("/api/fund", LIVE);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
-  const { data: rec } = usePoll<Record_>("/api/record");
-  const { data: positions } = usePoll<Position[]>("/api/positions");
+  const { data: rec } = usePoll<Record_>("/api/record", LIVE);
+  const { data: positions } = usePoll<Position[]>("/api/positions", LIVE);
   const { data: modeData, refresh: refreshModes } =
-    usePoll<{ modes: VenueModes }>("/api/venue-modes", 8000);
-  const { data: engineData } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 6000);
+    usePoll<{ modes: VenueModes }>("/api/venue-modes", NEAR);
+  const { data: engineData } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", NEAR);
   const engine = engineData?.engines?.[venue];
 
   const wallet = bal?.[venue];

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { GlassCard, PanelTitle } from "./GlassCard";
 import { Empty, Pill } from "./primitives";
-import { usePoll, type LatestDebate } from "../lib/api";
+import { usePoll, type LatestDebate, NEAR
+} from "../lib/api";
 
 /**
  * YES / NO — the committee's side, not an order ticket.
@@ -12,7 +13,7 @@ import { usePoll, type LatestDebate } from "../lib/api";
  * you are reading. The default selection is the side the table actually took.
  */
 export function MarketStance() {
-  const { data: debate } = usePoll<LatestDebate>("/api/roundtable/latest", 6000);
+  const { data: debate } = usePoll<LatestDebate>("/api/roundtable/latest", NEAR);
   const [side, setSide] = useState<"yes" | "no" | null>(null);
 
   const consensus = debate?.consensus?.signal;

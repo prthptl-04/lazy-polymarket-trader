@@ -7,13 +7,13 @@ import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { EquityArea, Sparkline } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import {
-  usePoll, type Balances, type EngineState, type Feed, type FundStatus, type Lesson,
+  LIVE, NEAR, usePoll, type Balances, type EngineState, type Feed, type FundStatus, type Lesson,
   type PaperProgress, type Position, type Record_, type VenueStats,
 } from "../lib/api";
 import { useDynamicBackground } from "../lib/useDynamicBackground";
 
 export function Overview() {
-  const { data: rec } = usePoll<Record_>("/api/record");
+  const { data: rec } = usePoll<Record_>("/api/record", LIVE);
   // Robinhood is the only venue the fund trades, so the interesting split is
   // no longer venue vs venue but the two strategies inside it: equities on
   // weekdays, crypto at weekends. They run on different calendars and a single
@@ -22,11 +22,11 @@ export function Overview() {
     "/api/venue-stats?venue=robinhood&asset_class=equity", 15000);
   const { data: cryptoStats } = usePoll<VenueStats>(
     "/api/venue-stats?venue=robinhood&asset_class=crypto", 15000);
-  const { data: paper } = usePoll<PaperProgress>("/api/paper");
-  const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
+  const { data: paper } = usePoll<PaperProgress>("/api/paper", NEAR);
+  const { data: fund } = usePoll<FundStatus>("/api/fund", LIVE);
   const { data: bal } = usePoll<Balances>("/api/balances", 15000);
   const { data: engineData, refresh: refreshEngines } =
-    usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 6000);
+    usePoll<{ engines: Record<string, EngineState> }>("/api/engines", NEAR);
   const { data: lessons } = usePoll<Lesson[]>("/api/lessons?limit=6", 12000);
 
   const gate = fund?.router_live_gate;
@@ -222,8 +222,8 @@ interface ActiveTrade {
  * "at its stop", not "down some arbitrary dollar amount".
  */
 function useActiveTrade(): ActiveTrade | undefined {
-  const { data: positions } = usePoll<Position[]>("/api/positions");
-  const { data: hood } = usePoll<Feed[]>("/api/feeds?venue=robinhood", 4000);
+  const { data: positions } = usePoll<Position[]>("/api/positions", LIVE);
+  const { data: hood } = usePoll<Feed[]>("/api/feeds?venue=robinhood", LIVE);
 
   const marks = new Map<string, number>();
   for (const f of hood ?? []) {

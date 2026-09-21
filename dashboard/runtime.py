@@ -158,7 +158,7 @@ class DashboardRuntime:
                 row["reason"] = "venue not attached"
             else:
                 try:
-                    q = await adapter.get_quote(pos["symbol"])
+                    q = await self._cached_quote(adapter, pos["symbol"])
                     row.update(
                         bid=q.bid, ask=q.ask, last=q.last or q.mid,
                         spread_bps=q.spread_bps,
@@ -346,6 +346,20 @@ class DashboardRuntime:
             if name and mode in ("paper", "live"):
                 router.set_mode_enabled(name, mode, bool(on))
 
+    def _cached_quote(self, adapter, symbol: str):
+        """A quote for DISPLAY, served without waiting on the broker.
+
+        Deliberately not used by anything that prices an order: `PaperVenue`
+        and `VenueRouter` ask the adapter directly, because the number an order
+        trades against must never be a cached one.
+        """
+        cache = self._quote_caches.get(adapter.name)
+        if cache is None:
+            from dashboard.quote_cache import QuoteCache
+            cache = QuoteCache(fetch=adapter.get_quote)
+            self._quote_caches[adapter.name] = cache
+        return cache.get(symbol)
+
     def _watched_symbols(self) -> list[str]:
         """What the fund is looking at this session, whether or not it holds it."""
         fund = getattr(self.fund_scheduler, "fund", None)
@@ -354,6 +368,9 @@ class DashboardRuntime:
         equity = getattr(fund, "equity_watchlist", ()) or ()
         crypto = getattr(fund, "crypto_watchlist", ()) or ()
         return [*equity, *crypto]
+
+    # adapter name -> QuoteCache. Display only; see `_cached_quote`.
+    _quote_caches: dict = field(default_factory=dict)
 
     def _router(self):
         sched = self.fund_scheduler

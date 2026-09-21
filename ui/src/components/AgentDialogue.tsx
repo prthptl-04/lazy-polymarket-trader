@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Avatar } from "./Avatar";
 import { GlassCard, PanelTitle } from "./GlassCard";
 import { Empty, Pill } from "./primitives";
-import { usePoll, type LatestDebate } from "../lib/api";
+import { usePoll, type LatestDebate, NEAR
+} from "../lib/api";
 
 /**
  * The committee thinking out loud.
@@ -17,7 +18,7 @@ import { usePoll, type LatestDebate } from "../lib/api";
  * suggests, and that should look wrong.
  */
 export function AgentDialogue({ title = "Agent round table · deliberation" }: { title?: string }) {
-  const { data: debate } = usePoll<LatestDebate>("/api/roundtable/latest", 5000);
+  const { data: debate } = usePoll<LatestDebate>("/api/roundtable/latest", NEAR);
   const feed = useRef<HTMLDivElement>(null);
 
   // Follow the conversation, but only when the thesis changes — yanking the

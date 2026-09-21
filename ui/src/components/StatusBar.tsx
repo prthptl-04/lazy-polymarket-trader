@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Pause, Play, Sparkles } from "lucide-react";
-import { post, usePoll, type FundStatus, type LlmStatus } from "../lib/api";
+import { post, usePoll, type FundStatus, type LlmStatus, LIVE, NEAR
+} from "../lib/api";
 import { useState } from "react";
 import { Confirm } from "./Confirm";
 import { useDocumentSurface } from "../lib/useDynamicBackground";
@@ -127,8 +128,8 @@ function ExecButton({
 // ---------------------------------------------------------------- bar
 
 export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey) => void }) {
-  const { data: fund, refresh } = usePoll<FundStatus>("/api/fund", 4000);
-  const { data: llm } = usePoll<LlmStatus>("/api/llm", 6000);
+  const { data: fund, refresh } = usePoll<FundStatus>("/api/fund", LIVE);
+  const { data: llm } = usePoll<LlmStatus>("/api/llm", NEAR);
 
   const running = fund?.state === "running" || fund?.state === "starting";
   // The master switch. Both directions are confirmed: GO commits the machine to

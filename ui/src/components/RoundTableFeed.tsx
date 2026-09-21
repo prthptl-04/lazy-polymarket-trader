@@ -1,6 +1,7 @@
 import { GlassCard, PanelTitle } from "./GlassCard";
 import { Empty, Pill } from "./primitives";
-import { usePoll, type Deliberation } from "../lib/api";
+import { usePoll, type Deliberation, NEAR
+} from "../lib/api";
 
 /** What makes a decision worth marking. Unanimity is a caution flag, not a
  *  green light — the Devil's Advocate seat exists because a table that agrees
@@ -19,7 +20,7 @@ function critical(d: Deliberation, dissent: boolean):
 export function RoundTableFeed({ title = "Live agent round table", max = 330 }: {
   title?: string; max?: number;
 }) {
-  const { data } = usePoll<Deliberation[]>("/api/deliberations?limit=25", 6000);
+  const { data } = usePoll<Deliberation[]>("/api/deliberations?limit=25", NEAR);
   return (
     <GlassCard className="p-4 flex flex-col" inert>
       <PanelTitle right={<Pill>{data?.length ?? 0}</Pill>}>{title}</PanelTitle>

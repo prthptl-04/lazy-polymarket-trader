@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Avatar } from "./Avatar";
 import { LogLine, PulseDot, Skeleton } from "./lab";
-import { usePoll, type LatestDebate } from "../lib/api";
+import { usePoll, type LatestDebate, NEAR
+} from "../lib/api";
 
 const clock = (t: number | null | undefined) =>
   t ? new Date(t * 1000).toLocaleTimeString(undefined,
@@ -19,7 +20,7 @@ const clock = (t: number | null | undefined) =>
  * that plays over data we already have is decoration pretending to be latency.
  */
 export function LabDeliberation({ live }: { live: boolean }) {
-  const { data: debate, loaded } = usePoll<LatestDebate>("/api/roundtable/latest", 5000);
+  const { data: debate, loaded } = usePoll<LatestDebate>("/api/roundtable/latest", NEAR);
   const [revealed, setRevealed] = useState(0);
   const feed = useRef<HTMLDivElement>(null);
   const thesis = debate?.thesis_id;

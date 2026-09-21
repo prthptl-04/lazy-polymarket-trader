@@ -2,7 +2,8 @@ import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { Pill } from "../components/primitives";
-import { usePoll, type EngineState } from "../lib/api";
+import { usePoll, type EngineState, NEAR
+} from "../lib/api";
 
 /**
  * A venue the fund no longer trades.
@@ -20,7 +21,7 @@ import { usePoll, type EngineState } from "../lib/api";
  * source of truth for *why*.
  */
 export function RetiredVenue({ venue, title }: { venue: string; title: string }) {
-  const { data } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 30000);
+  const { data } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", NEAR);
   const engine = data?.engines?.[venue];
 
   // No theme hook. The venue palettes are branding for places the fund trades;

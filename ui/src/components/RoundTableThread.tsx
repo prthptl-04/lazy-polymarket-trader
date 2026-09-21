@@ -3,7 +3,8 @@ import { motion } from "framer-motion";
 import { Avatar } from "./Avatar";
 import { GlassCard, PanelTitle } from "./GlassCard";
 import { Empty, Pill } from "./primitives";
-import { usePoll, type ThreadMessage } from "../lib/api";
+import { usePoll, type ThreadMessage, NEAR
+} from "../lib/api";
 
 const clock = (t: number | null) =>
   t ? new Date(t * 1000).toLocaleTimeString(undefined,
@@ -22,7 +23,7 @@ const clock = (t: number | null) =>
  * becomes unreadable.
  */
 export function RoundTableThread({ title = "Live round table · discussion" }: { title?: string }) {
-  const { data } = usePoll<ThreadMessage[]>("/api/roundtable/thread?limit=6", 5000);
+  const { data } = usePoll<ThreadMessage[]>("/api/roundtable/thread?limit=6", NEAR);
   const box = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 

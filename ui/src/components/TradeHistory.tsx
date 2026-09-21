@@ -2,7 +2,8 @@ import { Fragment, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { GlassCard, PanelTitle } from "./GlassCard";
 import { Empty, Pill, toneOf } from "./primitives";
-import { usePoll, type TradeRow } from "../lib/api";
+import { usePoll, type TradeRow, NEAR
+} from "../lib/api";
 
 const stamp = (t: number | null) => {
   if (!t) return { d: "—", h: "" };
@@ -22,7 +23,7 @@ const stamp = (t: number | null) => {
  * matched the consensus — the backend refuses to blame a dissenter.
  */
 export function TradeHistory({ venue }: { venue: "polymarket_us" | "robinhood" }) {
-  const { data } = usePoll<TradeRow[]>("/api/trade-history?limit=40", 10000);
+  const { data } = usePoll<TradeRow[]>("/api/trade-history?limit=40", NEAR);
   const [open, setOpen] = useState<string | null>(null);
 
   // Prediction markets carry a slug, equities a ticker. Nothing in the row

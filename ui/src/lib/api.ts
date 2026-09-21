@@ -17,7 +17,18 @@ export async function getJSON<T>(path: string): Promise<T | null> {
  * stale data rather than blanking the panel — but `stale` says which it is, and
  * the UI is expected to surface that rather than quietly lying.
  */
-export function usePoll<T>(path: string, intervalMs = 5000) {
+/** How often a thing should be re-read, by what it is.
+ *
+ *  Named rather than sprinkled as numbers, because the right interval is a
+ *  property of the DATA, not of the panel that happens to show it. A price is
+ *  live; a token-cost summary is not, and polling it every second would be
+ *  noise with a server bill attached.
+ */
+export const LIVE = 1000;    // prices, fund state, positions — the trading view
+export const NEAR = 3000;    // things that change on a fill or a cycle
+export const SLOW = 20000;   // scorecards, costs, lessons — minutes, not seconds
+
+export function usePoll<T>(path: string, intervalMs = NEAR) {
   const [data, setData] = useState<T | null>(null);
   const [stale, setStale] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -33,9 +44,33 @@ export function usePoll<T>(path: string, intervalMs = 5000) {
 
   useEffect(() => {
     alive.current = true;
-    void tick();
-    const id = setInterval(() => void tick(), intervalMs);
-    return () => { alive.current = false; clearInterval(id); };
+    let timer: number | undefined;
+
+    /* SELF-SCHEDULING, not setInterval. At 1Hz an interval fires whether or
+       not the previous request came back, so a slow response makes the next
+       one overlap it and the queue grows until the UI is reading minutes-old
+       data as fast as it can. Waiting for the answer before asking again means
+       a slow endpoint degrades to a lower rate instead of to a backlog. */
+    const loop = async () => {
+      if (!alive.current) return;
+      /* A hidden tab is nobody watching. Browsers throttle background timers
+         anyway; skipping the fetch outright saves the request as well. */
+      if (!document.hidden) await tick();
+      if (!alive.current) return;
+      timer = window.setTimeout(loop, intervalMs);
+    };
+    void loop();
+
+    /* Re-reading the moment the tab comes back is the difference between a
+       live view and one that looks frozen for a second on every return. */
+    const onVisible = () => { if (!document.hidden) void tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      alive.current = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [tick, intervalMs]);
 
   return { data, stale, loaded, refresh: tick };

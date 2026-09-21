@@ -11,7 +11,7 @@ import { useSimulationLab } from "../lib/labTheme";
 import { paperPreflightSteps } from "../lib/preflight";
 import {
   post, usePoll, type Deliberation, type Edge, type EngineState, type FundStatus,
-  type ModeState, type PaperProgress, type Record_, type SeatAgreement, type VenueModes,
+  type ModeState, type PaperProgress, type Record_, type SeatAgreement, type VenueModes, LIVE, NEAR
 } from "../lib/api";
 
 const VENUE = { key: "robinhood", label: "Robinhood" } as const;
@@ -34,15 +34,15 @@ const VENUE = { key: "robinhood", label: "Robinhood" } as const;
 export function PaperTrading() {
   useSimulationLab(true);
 
-  const { data: fund } = usePoll<FundStatus>("/api/fund", 4000);
-  const { data: paper } = usePoll<PaperProgress>("/api/paper", 10000);
-  const { data: rec } = usePoll<Record_>("/api/record?venue=robinhood", 8000);
+  const { data: fund } = usePoll<FundStatus>("/api/fund", LIVE);
+  const { data: paper } = usePoll<PaperProgress>("/api/paper", NEAR);
+  const { data: rec } = usePoll<Record_>("/api/record?venue=robinhood", LIVE);
   const { data: edge } = usePoll<Edge>("/api/edge", 15000);
   const { data: agreement } = usePoll<SeatAgreement>("/api/seat-agreement", 20000);
-  const { data: delibs } = usePoll<Deliberation[]>("/api/deliberations?limit=12", 8000);
+  const { data: delibs } = usePoll<Deliberation[]>("/api/deliberations?limit=12", NEAR);
   const { data: modeData, refresh: refreshModes } =
-    usePoll<{ modes: VenueModes }>("/api/venue-modes", 8000);
-  const { data: engineData } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", 6000);
+    usePoll<{ modes: VenueModes }>("/api/venue-modes", NEAR);
+  const { data: engineData } = usePoll<{ engines: Record<string, EngineState> }>("/api/engines", NEAR);
 
   const [preflight, setPreflight] = useState(false);
   const systemOn = fund?.state === "running" || fund?.state === "starting";
