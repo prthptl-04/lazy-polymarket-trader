@@ -60,6 +60,25 @@ class VerifiedOutcomeCriteria:
     # rate to break even — at 1.0R you must win >50% just to pay the spread.
     min_reward_risk_ratio: float = 1.5
 
+    # The same ratio AFTER the round trip is paid. A separate, additional gate
+    # rather than a replacement: the gross floor above still applies unchanged,
+    # so nothing this constant does can loosen anything.
+    #
+    # Why it cannot also be 1.5. The fund's geometry is a fixed 2xATR stop and
+    # 3xATR target, so the gross ratio is exactly 1.5 for every candidate — the
+    # maximum achievable. Netting any cost at all puts it underneath, which
+    # would refuse 100% of the fund's own candidates (measured: 2000 of 2000).
+    #
+    # Derivation. With risk 2A, reward 3A and round-trip cost c:
+    #     (3A - c) / (2A + c) >= 1.35   =>   c <= 0.128 A
+    # so the fund tolerates a round trip up to ~12.8% of one ATR. At a typical
+    # ATR of 1-3% of price that is roughly 13-38 bps — tight enough to refuse a
+    # crossed wide book, loose enough not to refuse an ordinary equity fill.
+    #
+    # Break-even moves with it: 1/(1+1.35) = 42.6%, up from 40% at 1.5. That is
+    # the honest number, because the 40% never counted the cost of trading.
+    min_net_reward_risk_ratio: float = 1.35
+
     # A stop further than this from entry is not a stop, it is a hope. Also
     # caps how much of the book one position can lose at once.
     max_stop_distance_pct: float = 0.15

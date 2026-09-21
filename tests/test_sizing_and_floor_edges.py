@@ -62,13 +62,19 @@ def test_the_default_geometry_is_never_rejected_by_the_floor():
 
 def test_a_ratio_a_hair_under_the_floor_still_passes():
     """1.4999999999999805 is the floor, in binary. Treating it as a breach is
-    an arithmetic artefact, not a risk judgement."""
+    an arithmetic artefact, not a risk judgement.
+
+    Rests, so no spread is charged and the NET floor cannot be what decides —
+    this test is about the gross floor's float tolerance and nothing else. A
+    1%-ATR name paying 15bps is refused on cost, correctly, but that would be a
+    different test failing for a different reason.
+    """
     grader = OutcomeGrader(CRITERIA)
     trade = DirectionalTrade(
         symbol="AAPL", side="buy", size_usd=100.0, entry=100.0,
         stop=100.0 - 2.0, target=100.0 + 3.0 * (1 - 1e-15),
         win_probability=0.6, asset_class="equity", spread_bps=10,
-        estimated_slippage_bps=5, session="regular", is_entry=True,
+        estimated_slippage_bps=0, session="regular", is_entry=True, rests=True,
     )
     assert grader.evaluate(trade).passed
 
@@ -92,11 +98,13 @@ def test_a_genuinely_thin_ratio_is_still_refused():
 ])
 def test_the_floor_still_discriminates_away_from_the_knife_edge(r_mult, passes):
     grader = OutcomeGrader(CRITERIA)
+    # Rests: isolates the gross floor from the net one, which on a 1%-ATR name
+    # refuses a 15bps round trip on its own.
     trade = DirectionalTrade(
         symbol="AAPL", side="buy", size_usd=100.0, entry=100.0,
         stop=98.0, target=100.0 + 2.0 * r_mult,
         win_probability=0.6, asset_class="equity", spread_bps=10,
-        estimated_slippage_bps=5, session="regular", is_entry=True,
+        estimated_slippage_bps=0, session="regular", is_entry=True, rests=True,
     )
     assert grader.evaluate(trade).passed is passes
 

@@ -201,6 +201,13 @@ Undated is treated as stale because the costs are asymmetric: discounting fresh
 evidence loses one cycle's conviction, trusting stale evidence sizes a position
 against a market that has already moved.
 
+**The chair is given the committee's measured independence.** Mean pairwise
+Cohen's κ over stored opinions ([`agreement.py`](roundtable/agreement.py)) —
+currently **−0.02 across 21 pairs**, i.e. genuinely independent. It was
+previously guessing, and guessing wrong: it discarded a real two-seat majority
+on the grounds that the seats were "reading the same framing", when those two
+seats agree at κ = 0.04, which is chance.
+
 **The table changes size with the session.** A seat with no mandate for the
 asset class is not asked, rather than asked and answering neutral — because a
 neutral answer is *counted*, and four permanently-neutral votes made a crypto
@@ -259,7 +266,12 @@ that Robinhood's agentic surface has not been verified for.
 ### Step 6 — the grader judges merit
 
 [`verification/outcome_grader.py`](verification/outcome_grader.py) — no LLM,
-so it cannot be talked round. It dispatches on trade type, because a
+so it cannot be talked round. It gates reward:risk **twice**: the planned ratio
+against 1.5, and the ratio *after round-trip costs* against 1.35. The second
+exists because the fixed 2×ATR/3×ATR geometry makes the planned ratio exactly
+1.5 for every candidate — a number identical across trades cannot discriminate
+between them. Cost is what differs, and netting it refuses every candidate
+under 1% ATR at a 15 bps round trip while passing everything above 2%. It dispatches on trade type, because a
 probability-priced binary and a dollar-priced equity are genuinely different
 instruments. Caps live in [`verification/criteria.py`](verification/criteria.py);
 loosening them is a code review event, not a config tweak.
@@ -599,7 +611,7 @@ python -m dashboard                        # http://127.0.0.1:8765
 ```bash
 ./scripts/verify.sh                        # tests, self-checks, ui build, vuln scan
 python -m monitoring.paper_report          # what to change next, with pre-registered triggers
-pytest -q                                  # 1536 tests
+pytest -q                                  # 1556 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"

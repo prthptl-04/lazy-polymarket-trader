@@ -197,6 +197,7 @@ class RoundTable:
         content = (
             f"{candidate.evidence_block()}\n\n"
             f"{self._eligibility_note(candidate.asset_class)}"
+            f"{self._independence_note(self._measured_independence())}"
             f"--- SEAT POSITIONS ---\n{self._render_opinions(thesis.opinions)}"
         )
         try:
@@ -221,6 +222,63 @@ class RoundTable:
             transcript=str(parsed.get("transcript", "")).strip(),
             dissent=str(parsed.get("dissent", "")).strip(),
             synthesized_by_llm=True,
+        )
+
+    @staticmethod
+    def _independence_note(measured: Optional[dict]) -> str:
+        """Tell the chair how independent the seats measurably are.
+
+        It was guessing, and guessing wrong in a specific direction. From a
+        live transcript: "the two bullish seats were shown to be reading the
+        same single bar series and the same single-outlet headline feed, so
+        their agreement is one framing counted twice rather than corroboration."
+        Quant and Sentiment agree at kappa 0.04 — chance. A genuine two-seat
+        majority was discarded on a correlation the fund's own measurement
+        refutes.
+
+        `roundtable.agreement` has computed this from stored opinions all along
+        and nothing consumed it. This is the one place that needed it.
+
+        Supplies the measurement and stops. A line telling the chair what to
+        conclude from it would be doing the job the chair exists to do.
+
+        Silent below the sample gate: a chair told "the seats are independent"
+        on four debates would discount a real correlation it should have caught.
+        """
+        from roundtable.agreement import MIN_DELIBERATIONS_FOR_KAPPA
+        if not measured:
+            return ""
+        n = measured.get("n_deliberations") or 0
+        kappa = measured.get("mean_kappa")
+        if n < MIN_DELIBERATIONS_FOR_KAPPA or kappa is None:
+            return ""
+
+        duplicates = measured.get("duplicates") or 0
+        if kappa >= 0.7 or duplicates:
+            reading = ("the seats are echoing one view rather than reaching it "
+                       "separately, so agreement between them is weak evidence")
+        elif kappa >= 0.4:
+            reading = ("the seats share a good deal of framing, so agreement "
+                       "between them is worth less than its count suggests")
+        else:
+            reading = ("the seats are reaching their calls independently, so "
+                       "agreement between them is real corroboration rather "
+                       "than one framing counted twice")
+
+        worst = ""
+        pairs = [p for p in (measured.get("pairs") or []) if p.get("kappa") is not None]
+        if pairs:
+            top = max(pairs, key=lambda p: p["kappa"])
+            if top["kappa"] >= 0.7:
+                worst = (f" The most correlated pair is {top['a']} and {top['b']} "
+                         f"at {top['kappa']:.2f}.")
+
+        return (
+            f"--- SEAT INDEPENDENCE (measured over {n} past deliberations) ---\n"
+            f"Mean pairwise Cohen's kappa between seats is {kappa:.2f} "
+            f"({duplicates} pair(s) behaving as one seat): {reading}.{worst}\n"
+            f"This is a measurement of the committee's history, not of this "
+            f"debate. Weigh it against what the seats actually wrote.\n\n"
         )
 
     @staticmethod
@@ -249,6 +307,18 @@ class RoundTable:
             f"vote to stand aside. Judge the balance of opinion against the "
             f"seats that actually sat, not against the full committee.\n\n"
         )
+
+    def _measured_independence(self) -> Optional[dict]:
+        """Pairwise kappa over stored opinions. Never raises — a chair that
+        loses this line still works; a chair that loses the debate does not."""
+        if self.memory is None:
+            return None
+        try:
+            from roundtable.agreement import pairwise_agreement
+            return pairwise_agreement(self.memory.recent_deliberations(limit=200))
+        except Exception:
+            logger.exception("could not measure seat independence")
+            return None
 
     def _fallback_consensus(self, thesis: Thesis, why: str) -> Consensus:
         """Deterministic vote count when the chair is unavailable.

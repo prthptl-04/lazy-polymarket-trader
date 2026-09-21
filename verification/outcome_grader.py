@@ -83,10 +83,59 @@ class DirectionalTrade:
 
     @property
     def r_multiple(self) -> Optional[float]:
+        """The planned ratio, before costs. Kept because it is what the exit
+        plan promises and what the seats are shown."""
         risk, reward = self.risk_per_unit, self.reward_per_unit
         if not risk or reward is None:
             return None
         return reward / risk
+
+    @property
+    def round_trip_cost_per_unit(self) -> float:
+        """What getting in and out costs, in price terms.
+
+        A RESTING order does not cross, so it pays no spread — that is the
+        whole reason weekend crypto is viable at 185bps, and charging it here
+        would undo the finding. Slippage is charged either way: a resting fill
+        can still be reached at a worse price than the mark.
+
+        The two costs have DIFFERENT multipliers, which is easy to get wrong in
+        the expensive direction. Crossing costs half the spread on the way in
+        and half on the way out, so a round trip is ONE full spread, not two.
+        Slippage is per fill, so it is genuinely charged twice.
+        """
+        cost_bps = float(self.estimated_slippage_bps) * 2.0
+        if not self.rests and self.spread_bps is not None:
+            cost_bps += float(self.spread_bps)
+        return self.entry * (cost_bps / 10_000.0)
+
+    @property
+    def net_r_multiple(self) -> Optional[float]:
+        """Reward:risk after paying to trade it.
+
+        `r_multiple` is a constant. The fund's geometry is a fixed 2xATR stop
+        and 3xATR target, so every candidate on every instrument returns
+        exactly 1.5 — and the floor is also 1.5. A gate that returns the same
+        number for every trade cannot discriminate between two of them; it is
+        not a filter, it is a formality.
+
+        Cost is the thing that actually differs between candidates, so netting
+        it makes the ratio candidate-specific and the gate meaningful. It also
+        moves in the right direction: it is strictly harder to pass, and the
+        trades it now refuses are the ones whose edge the spread was eating.
+
+        `None` when cost swallows the reward entirely. A negative ratio would
+        sort ABOVE a small positive one in any comparison, which is the kind of
+        sign error that silently admits the worst trades.
+        """
+        risk, reward = self.risk_per_unit, self.reward_per_unit
+        if not risk or reward is None:
+            return None
+        cost = self.round_trip_cost_per_unit
+        net_reward, net_risk = reward - cost, risk + cost
+        if net_reward <= 0 or net_risk <= 0:
+            return None
+        return net_reward / net_risk
 
     @property
     def stop_distance_pct(self) -> Optional[float]:
@@ -293,6 +342,28 @@ class OutcomeGrader:
                 False,
                 f"reward:risk {r:.2f} below the {c.min_reward_risk_ratio} floor",
                 "min_reward_risk_ratio",
+            )
+
+        # ...and again after the round trip is paid. An ADDITIONAL gate, not a
+        # replacement: the gross floor above is untouched, so this can only
+        # refuse trades that previously passed. It exists because the gross
+        # ratio is a constant 1.5 under the fund's fixed geometry and therefore
+        # cannot discriminate between two candidates — cost is what differs.
+        net = trade.net_r_multiple
+        if net is None and trade.r_multiple is not None:
+            return GradeResult(
+                False,
+                "round-trip cost exceeds the entire planned reward",
+                "min_net_reward_risk_ratio",
+            )
+        if net is not None and net < c.min_net_reward_risk_ratio * (1 - _R_TOLERANCE):
+            return GradeResult(
+                False,
+                f"reward:risk after costs {net:.2f} below the "
+                f"{c.min_net_reward_risk_ratio} floor "
+                f"({trade.spread_bps}bps spread, "
+                f"{'resting' if trade.rests else 'crossing'})",
+                "min_net_reward_risk_ratio",
             )
 
         edge = trade.expected_edge_bps
