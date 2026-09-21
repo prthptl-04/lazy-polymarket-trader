@@ -151,15 +151,22 @@ class RobinhoodVenue:
                 logger.warning("robinhood %s failed: %s", tool, redact(e))
                 failures.append(asset)
                 continue
-            for p in _rows(data, "positions"):
+            # The two tools return DIFFERENT keys — equity under "positions",
+            # crypto under "results" — so reading only the first made the
+            # crypto book invisible: `_flatten_crypto` iterated nothing,
+            # reported nothing flattened, and the position rode into the equity
+            # session holding the capital the handoff exists to free.
+            for p in _rows(data, "positions", "results"):
                 qty = _num(p.get("quantity"))
                 if not qty:
                     continue
+                symbol = _position_symbol(p, asset)
+                if not symbol:
+                    continue
                 out.append(VenuePosition(
-                    symbol=str(p.get("symbol") or p.get("currency_code") or ""),
+                    symbol=symbol,
                     asset_class=asset, quantity=qty,
-                    avg_price=_num(p.get("average_buy_price")
-                                   or p.get("average_cost")) or 0.0,
+                    avg_price=_position_cost(p),
                     venue=self.name,
                 ))
         # "Nothing is held" and "we could not find out" are different answers,
@@ -407,6 +414,41 @@ _CRYPTO_QTY_DP = 8
 # SEC Rule 612: no sub-penny quoting for equities at or above $1. Below that,
 # and for crypto, finer increments are legal.
 _SUB_PENNY_FLOOR_USD = 1.0
+
+
+def _position_symbol(row: dict, asset: str) -> str:
+    """The asset a position row is in.
+
+    Equity rows carry `symbol`; crypto rows carry it nested at `currency.code`
+    and unhyphenated, so it is normalised to the pair form every other part of
+    the fund uses.
+    """
+    direct = row.get("symbol") or row.get("currency_code")
+    if not direct:
+        direct = ((row.get("currency") or {}).get("code")
+                  if isinstance(row.get("currency"), dict) else None)
+    if not direct:
+        return ""
+    return _crypto_pair(str(direct)) if asset == "crypto" else str(direct)
+
+
+def _position_cost(row: dict) -> float:
+    """Average entry price.
+
+    `average_buy_price` does not exist on a crypto row — it carries
+    `cost_bases[]` with a total basis and the quantity it covers. Reading the
+    equity key there yields 0.0, which makes every realised P&L on a crypto
+    position the full notional.
+    """
+    direct = _num(row.get("average_buy_price") or row.get("average_cost"))
+    if direct:
+        return direct
+    for basis in row.get("cost_bases") or []:
+        total = _num(basis.get("direct_cost_basis"))
+        quantity = _num(basis.get("direct_quantity"))
+        if total and quantity:
+            return total / quantity
+    return 0.0
 
 
 def _s(v: Any) -> str:

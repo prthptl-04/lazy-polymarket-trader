@@ -186,6 +186,14 @@ class LiveTradingGate:
                  "box cannot be ticked automatically"),
             item("edge", "Net-of-cost edge above zero on a bad draw", False,
                  "not measurable until 30 closed trades carry venue fills"),
+            item("close_mix", "How the record was actually closed",
+                 # DISPLAY ONLY — `ok` is always True. Rule #13 does not name a
+                 # mix requirement, and a gate that invents its own blocking
+                 # condition is a gate tightening itself. But "50 of 50" can
+                 # hide a record that is 95% discretionary, which tests the
+                 # committee's willingness to change its mind rather than the
+                 # risk system, so the mix is shown beside the count.
+                 True, self._close_mix()),
             item("stops_fired", "5 losses where the stop executed within tolerance",
                  len(within) >= 5,
                  f"{len(within)} of 5 — the risk system is untested until it has fired"),
@@ -199,6 +207,26 @@ class LiveTradingGate:
                  "not measurable: no live trade has been placed — and this is the "
                  "step rule #13 does not have"),
         ]
+
+    def _close_mix(self) -> str:
+        """The share of closed paper trades by exit reason, and median hold."""
+        try:
+            rows = [t for t in self.memory.closed_trades(limit=100_000)
+                    if t.get("mode") == "paper"]
+        except Exception:
+            return "not measurable: the closed-trade ledger could not be read"
+        if not rows:
+            return "no closed paper trades yet"
+        counts: dict[str, int] = {}
+        for row in rows:
+            reason = str(row.get("reason") or "unknown")
+            counts[reason] = counts.get(reason, 0) + 1
+        parts = ", ".join(
+            f"{reason} {count / len(rows):.0%}"
+            for reason, count in sorted(counts.items(), key=lambda kv: -kv[1]))
+        holds = sorted(float(r.get("held_seconds") or 0.0) for r in rows)
+        median = holds[len(holds) // 2] / 3600.0
+        return f"{len(rows)} closed: {parts}; median hold {median:.1f}h"
 
     def _ledgers_agree(self) -> bool:
         try:

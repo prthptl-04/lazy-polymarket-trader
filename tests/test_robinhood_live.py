@@ -191,7 +191,10 @@ async def test_positions_merge_both_books_and_skip_zero():
             {"currency_code": "BTC", "quantity": "0.5", "average_cost": "60000"}]}},
     })
     out = await RobinhoodVenue(session=s).positions()
-    assert {p.symbol for p in out} == {"AAPL", "BTC"}
+    # Crypto comes back as the PAIR, because "BTC" does not name an
+    # instrument and the venue's own tools only accept "BTC-USD". The fund
+    # matches holdings on both spellings so a watchlist may use either.
+    assert {p.symbol for p in out} == {"AAPL", "BTC-USD"}
     assert {p.asset_class for p in out} == {"equity", "crypto"}
 
 

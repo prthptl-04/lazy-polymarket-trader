@@ -197,7 +197,18 @@ class FundLoop:
         if equity_usd and hasattr(self.pipeline, "bankroll_usd"):
             self.pipeline.bankroll_usd = equity_usd
 
-        held = {h.symbol: h for h in holdings}
+        # Keyed on BOTH crypto spellings. The venue names a position
+        # "BTC-USD" (the pair actually traded) while a watchlist may say "BTC",
+        # and a miss here is invisible: the fund concludes it holds nothing,
+        # re-buys what it already owns, and the weekend flatten finds nothing
+        # to close.
+        held: dict[str, Holding] = {}
+        for h in holdings:
+            held[h.symbol] = h
+            base = h.symbol.split("-")[0].upper()
+            if h.asset_class == "crypto":
+                held.setdefault(base, h)
+                held.setdefault(f"{base}-USD", h)
 
         # 6. Build + screen + deliberate + execute.
         deliberated = 0
@@ -690,9 +701,10 @@ class FundLoop:
         the price has moved, and these positions have been open all weekend.
         """
         closed: list[str] = []
-        for holding in holdings:
-            if holding.asset_class != "crypto" or holding.quantity <= 0:
-                continue
+        crypto = [h for h in holdings
+                  if h.asset_class == "crypto" and h.quantity > 0]
+        marks = await self._quote_map([h.symbol for h in crypto])
+        for holding in crypto:
             try:
                 ack = await self.router.place(
                     OrderRequest(
@@ -704,10 +716,24 @@ class FundLoop:
                 if ack.is_filled:
                     # Was a pure venue sale: the book kept the position and went
                     # on checking a stop against inventory that was gone.
+                    # The MARK, not the fill. Passing the fill made
+                    # `planned_exit == exit_price` on a venue-priced row, so it
+                    # passed `_bridge`'s filter and contributed a perfectly
+                    # plausible $0.00 of trading cost — the exact fiction that
+                    # bridge exists to expose. And `or 0.0` booked a close at
+                    # zero, i.e. a -100% realised return, on any filled ack the
+                    # venue did not price.
+                    mark = marks.get(holding.symbol)
+                    if mark is None:
+                        report.errors.append(
+                            f"FLATTEN UNPRICED {holding.symbol}: sold at the "
+                            "venue but no mark was available to price the "
+                            "close against; the book still holds it"
+                        )
+                        continue
+                    self._start_cooldown(holding.symbol, moment)
                     self._book_close(
-                        holding.symbol, ack,
-                        planned_price=self._fill_price(ack) or 0.0,
-                        reason="flatten",
+                        holding.symbol, ack, planned_price=mark, reason="flatten",
                     )
                     closed.append(holding.symbol)
                 else:
