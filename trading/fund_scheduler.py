@@ -64,6 +64,10 @@ class FundScheduler:
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc).astimezone(EASTERN)
     on_cycle: Optional[Callable[[CycleReport], None]] = None
     on_status: Optional[Callable[[dict], None]] = None
+    # Persists the fund blob at the end of each cycle. This is what captures
+    # the kill-switch baseline and the PDT ledger, neither of which goes
+    # through the position book's own save points.
+    save_state: Optional[Callable[[], None]] = None
 
     state: SchedulerState = "stopped"
     metrics: SchedulerMetrics = field(default_factory=SchedulerMetrics)
@@ -145,6 +149,12 @@ class FundScheduler:
             self.metrics.errors += len(report.errors)
             self.metrics.last_error = report.errors[-1]
         self.metrics.last_cycle_at = time.time()
+
+        if self.save_state is not None:
+            try:
+                self.save_state()
+            except Exception:
+                logger.exception("could not persist fund state after the cycle")
 
         if self.on_cycle is not None:
             try:

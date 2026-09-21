@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: 20 items FIXED** — B0–B4, B6, B7, B11, B14–B20, B24, B26, B27, B30, B31. The fund books and closes
+**Status: 21 items FIXED** — B0–B7, B11, B14–B20, B24, B26, B27, B30, B31. The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Five blockers remain, plus five filed. B28 is **decided: keep the limit** (§17).
+record instead of leaving a phantom. Four blockers remain, plus seven filed. B28 is **decided: keep the limit** (§17).
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -393,7 +393,77 @@ These do not stop a trade being booked; they make the resulting record a lie.
       → `cannot sell 0.0298 of AAPL: holding 0` → `EXIT FAILED` forever, with no
       closed trade and a phantom position in the unrealised total.
 
-- [ ] **B5 · Five pieces of load-bearing state die on restart**
+- [x] **B5 · Five pieces of load-bearing state die on restart** — **DONE**,
+      designed by the Architect and the Statistical Analyst jointly. Three
+      distinct failures, each quiet and each in a different wrong direction:
+
+      **The record.** A position open across a restart was orphaned and could
+      never close by any path, so only trades that opened AND closed inside one
+      process lifetime reached `closed_trades`. Restart is a hazard in
+      wall-clock time, and under the 2×ATR/3×ATR geometry **winners take ~31%
+      longer than losers** (E[T|target] 7.0 vs E[T|stop] 5.33), so it censored
+      winners. The Analyst quantified it exactly — a daemon restarted once per
+      mean trade life records **34% win rate and −0.14R on a strategy with no
+      edge at all**.
+
+      **The kill switch** re-based the day's opening equity to the lower
+      figure, so a −$50 day became a $100 budget and a tripped day resumed
+      trading. **The PDT ledger** reset from 3 used to 0 — the 4th day trade in
+      5 business days is a 90-day restriction on a real account.
+
+      ```
+      before restart: book=['AAPL'] venue=1 entry=100.05 stop=96.0
+      after restart : book=['AAPL'] venue=1 entry=100.05 stop=96.0
+                      opened_at preserved: True
+      closed after restart: 1 row, mode=paper
+      graded_paper_trades: 1
+      ```
+
+      The design decision that makes it safe: **the book and the venue are two
+      projections of ONE set of position numbers.** `PaperVenue` does not store
+      its own positions. If it did, a restore could bring back a book holding
+      what the venue does not — every exit rejected forever, the B4 phantom
+      mirrored. They cannot disagree because there is nothing to disagree with.
+      I hit that exact bug while building it: `venue.snapshot()` carried a
+      `positions` key that clobbered the book's rows, stripping the plan and
+      `opened_at`. Now filtered at the join.
+
+      Decisions worth recording:
+
+      - **Saved on OPEN as well as close.** Saving only on close would leave
+        every position lost from its entry to its exit — the whole of the bug.
+      - **`opened_at` round-trips exactly.** The dataclass default would
+        re-stamp it, yielding time-since-restart: a plausible small number
+        where a plausible large one belongs, biasing holding periods in the
+        *same direction* as the bug being fixed.
+      - **The kill switch persists `latest_equity`.** The first design dropped
+        it on the reasoning that "the latch does not depend on P&L" — true for
+        a *tripped* day, but a day merely DOWN has no latch, and I reproduced
+        the hole in my own first implementation: `remaining $20 → $50` on
+        restart, turning a daily loss limit into a **per-restart** loss limit.
+        The Analyst caught it.
+      - **The equity series is never pruned** (the latch lists are, to 10 days).
+        It is the only durable mark-to-market history the fund has, at two
+        floats per trading day.
+      - **`account_equity_usd` is never restored** — a stale $26k would
+        disengage the PDT gate entirely.
+      - **Unknown `mode` resolves to "live"**, and absent `entry_fill_source`
+        to `"mid"` — defaulting the other way would inject a $0-cost row into
+        `_bridge`, the exact fiction it exists to expose.
+      - **An implausible `opened_at` is quarantined, not booked.** A NULL or 0
+        yields ~55 years of `held_seconds`.
+      - **A failed cash identity is reported and never repaired** — adjusting
+        cash to satisfy it converts a detectable inconsistency into an
+        undetectable fabrication. Compared with a tolerance, not `==`: the
+        identity is exact in algebra and drifts ~8e-12 in binary.
+      - **`router.opened_at` is derived from the book**, not stored twice. Two
+        copies can disagree about where a position lives, and that routes an
+        exit to the wrong broker.
+      - **The blob is versioned.** Absent means "flat book, trade freely";
+        unreadable must mean "do not open new risk", and those must be
+        distinguishable.
+
+- [ ] ~~**B5 (original text)**~~
       Paper cash/positions/realised (`paper.py:49`), `PositionBook.positions`,
       the PDT ledger, the kill-switch day, and `router.opened_at`. Only
       `closed_trades` reaches SQLite. A restart after a −$50 day re-baselines
@@ -1079,3 +1149,46 @@ as long as the crypto spread stays where it is. Rule #23 requires that be
 reported as one of two strategies rather than as the fund's record, which the
 Overview split already does. B30 means a weekend candidate now costs zero LLM
 calls rather than seven, so the rotation is cheap to leave running.
+
+
+---
+
+## 18. B32 — the calibration loop cannot see a profitable strategy
+
+**Found by the Statistical Analyst during the B5 review, and it corrects
+something I claimed when shipping B31.**
+
+`fit_confidence_shrink` solves `realized = 0.5 + (mean_conf/100 − 0.5) × s`,
+i.e. it measures the committee's hit rate against a **50%** reference. But the
+fund's break-even hit rate is not 50%. At the fixed 2×ATR/3×ATR geometry the
+payoff ratio is 1.5, so break-even is `1/(1+1.5)` = **40%**:
+
+| hit rate | expectancy/trade | profitable? | fitted shrink |
+|---|---|---|---|
+| 40% | +0.000R | breakeven | **0.1** (floor) |
+| 45% | +0.125R | **YES** | **0.1** (floor) |
+| 48% | +0.200R | **YES** | **0.1** (floor) |
+| 52% | +0.300R | **YES** | **0.1** (floor) |
+| 70% | +0.750R | YES | 0.67 |
+
+The fit is pinned at `MIN_SHRINK` across the **entire realistic profitable
+range**, so it carries no information there — whether the committee wins 40% or
+52%, sizing is identical. And the floor is not conservative: at a true
+calibrated probability of 0.45 the clamp forces `p = 0.53`, which sizes **2.6×
+larger** than the truth.
+
+**Correction to what I said when shipping B31.** I demonstrated the loop with a
+78% hit rate and reported that it "resizes itself from its own record, in both
+directions". That demonstration was flattering — 78% is far above the 40–52%
+band this strategy actually lives in. The loop is genuinely wired and will move
+on extreme inputs; it is uninformative on realistic ones.
+
+The shrink is a *hit-rate* fit, while `require_stop_loss` and
+`min_reward_risk_ratio = 1.5` deliberately trade hit rate for payoff. The
+target should be expectancy in R, or the payoff-adjusted break-even rate
+`1/(1+b)`, not "fraction correct". That is a change to the sizing objective on
+a money path, so it is filed for decision rather than made — same treatment as
+B19.
+
+Nothing has closed a trade yet, so this is predicted from the arithmetic, not
+observed. It becomes real the moment the record starts accumulating.

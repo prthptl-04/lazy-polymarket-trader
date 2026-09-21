@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from finance.exits import ExitPlan, is_stop_breached, is_target_reached, trail_stop
 
@@ -109,11 +109,120 @@ class PositionBook:
     """Tracks open positions and fires exits when their plan says so."""
 
     memory: Any = None
+    # Set by `build_fund`. Returns the whole fund blob — the book itself never
+    # learns what a venue or a kill switch is.
+    state_provider: Optional[Callable[[], dict]] = None
     trailing: bool = False
     positions: dict[str, ManagedPosition] = field(default_factory=dict)
     closed: list[dict] = field(default_factory=list)
 
     # ---------- lifecycle ----------
+
+    # ---------- persistence ----------
+
+    # A restored position must have opened in the past and within living
+    # memory. There is no guard today, and a NULL or 0 `opened_at` yields a
+    # `held_seconds` of ~55 years, which poisons every duration statistic
+    # silently — a plausible-looking number in a column nobody re-reads.
+    MAX_PLAUSIBLE_AGE_SECONDS = 365 * 24 * 3600.0
+
+    def snapshot(self) -> list[dict]:
+        """Every open position, flat.
+
+        `opened_at` is stored EXACTLY. It is not a detail: `held_seconds` is
+        `time.time() - opened_at`, so letting the dataclass default re-stamp it
+        on restore yields time-since-restart — a plausible small number where a
+        plausible large one belongs, biasing holding periods in the *same*
+        direction as the bug this persistence exists to fix.
+
+        The plan is stored at its CURRENT values, after any trailing ratchet.
+        `r_multiples` divides by the planned risk, and restoring the original
+        stop would widen a stop that had already tightened.
+
+        Derived close-time fields (`exit_price`, `realized_*`, `held_seconds`)
+        are deliberately absent — they are computed in `close()` and a second
+        copy would drift.
+        """
+        return [
+            {"symbol": p.symbol, "asset_class": p.asset_class,
+             "quantity": p.quantity, "entry_price": p.entry_price,
+             "stop": p.plan.stop, "target": p.plan.target, "atr": p.plan.atr,
+             "plan_entry": p.plan.entry, "direction": p.plan.direction,
+             "thesis_id": p.thesis_id, "signal": p.signal,
+             "confidence": p.confidence, "venue": p.venue, "mode": p.mode,
+             "planned_entry": p.planned_entry,
+             "entry_fill_source": p.entry_fill_source,
+             "spread_bps_at_entry": p.spread_bps_at_entry,
+             "opened_at": p.opened_at}
+            for p in self.positions.values()
+        ]
+
+    def restore(self, rows: Optional[list]) -> list[str]:
+        """Rebuild the open book. Returns warnings; never raises.
+
+        A row that cannot be trusted is QUARANTINED — left out of the book and
+        named — rather than booked with a guess. A fabricated stop is worse
+        than an unmanaged position, because the sizing arithmetic and the
+        R-multiple both assume the stop is the one that was sized against.
+        """
+        warnings: list[str] = []
+        now = time.time()
+        for row in rows or []:
+            try:
+                symbol = str(row["symbol"])
+                opened_at = float(row["opened_at"])
+                if not (0 < opened_at <= now + 60):
+                    warnings.append(
+                        f"{symbol}: opened_at {opened_at!r} is not a time in the "
+                        "recent past; quarantined rather than booked")
+                    continue
+                if now - opened_at > self.MAX_PLAUSIBLE_AGE_SECONDS:
+                    warnings.append(
+                        f"{symbol}: opened_at is over a year old; quarantined")
+                    continue
+                self.positions[symbol] = ManagedPosition(
+                    symbol=symbol,
+                    asset_class=str(row.get("asset_class") or "equity"),
+                    quantity=float(row["quantity"]),
+                    entry_price=float(row["entry_price"]),
+                    plan=ExitPlan(
+                        entry=float(row.get("plan_entry") or row["entry_price"]),
+                        stop=float(row["stop"]), target=float(row["target"]),
+                        direction=str(row.get("direction") or "long"),
+                        atr=float(row.get("atr") or 0.0)),
+                    thesis_id=row.get("thesis_id"),
+                    signal=row.get("signal"),
+                    confidence=row.get("confidence"),
+                    venue=row.get("venue"),
+                    # Unknown resolves to LIVE, matching live_gate and
+                    # `_venue_mode`: a round trip nobody can attribute must not
+                    # pad the bar that gates real money.
+                    mode=row.get("mode") or "live",
+                    planned_entry=row.get("planned_entry"),
+                    # Absent resolves to "mid", never "venue": defaulting the
+                    # other way injects a row into `_bridge` claiming $0.00 of
+                    # trading cost, the exact fiction that bridge exposes.
+                    entry_fill_source=row.get("entry_fill_source") or "mid",
+                    spread_bps_at_entry=row.get("spread_bps_at_entry"),
+                    opened_at=opened_at,
+                )
+            except (KeyError, TypeError, ValueError) as e:
+                warnings.append(f"unreadable position row ({type(e).__name__}); skipped")
+        return warnings
+
+    def _save_state(self) -> None:
+        """Persist after any change to the position SET.
+
+        Called on open as well as close. Saving only on close would leave every
+        position lost from its entry until its exit — which is the whole of the
+        bug this exists to fix.
+        """
+        if self.state_provider is None or self.memory is None:
+            return
+        try:
+            self.memory.put("fund", "runtime_state", self.state_provider())
+        except Exception:
+            logger.exception("could not persist fund state")
 
     def open(
         self,
@@ -153,6 +262,7 @@ class PositionBook:
             spread_bps_at_entry=spread_bps_at_entry,
         )
         self.positions[symbol] = position
+        self._save_state()
         return position
 
     def close(
@@ -199,6 +309,7 @@ class PositionBook:
         }
         self.closed.append(record)
         self._persist_closed(record)
+        self._save_state()
         self._record_outcome(position, realized, reason)
         return record
 

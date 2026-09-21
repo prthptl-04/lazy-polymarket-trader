@@ -43,6 +43,7 @@ from trading.pipeline import CONFIDENCE_SHRINK, ThesisPipeline
 from trading.mcp_client import McpSession
 from trading.venues.paper import PaperVenue
 from trading.venues.robinhood import MCP_URL, RobinhoodVenue
+from trading import fund_state
 from trading.venues.router import VenueRouter
 from verification.criteria import DEFAULT_CRITERIA, VerifiedOutcomeCriteria
 from verification.outcome_grader import OutcomeGrader
@@ -194,6 +195,40 @@ def build_fund(
     # checked. FundLoop only enforces exits when a position_book is attached.
     position_book = PositionBook(memory=memory)
 
+    # Persistence. Five pieces of state used to die on every restart, each
+    # failing quietly in a different wrong direction: positions orphaned (so
+    # only trades that opened AND closed inside one process lifetime reached
+    # the record), the kill-switch day re-based to the lower equity, and the
+    # PDT ledger reset to zero used.
+    #
+    # The book and the venue are restored from ONE set of position rows, so
+    # they cannot come back disagreeing — a book holding what the venue does
+    # not would reject every exit forever.
+    def _snapshot() -> dict:
+        return fund_state.snapshot(book=position_book, venue=trading_venue,
+                                   kill_switch=kill_switch, pdt=pdt)
+
+    position_book.state_provider = _snapshot
+    for warning in fund_state.restore(memory, book=position_book,
+                                      venue=trading_venue, router=router,
+                                      kill_switch=kill_switch, pdt=pdt):
+        logger.warning("fund state: %s", warning)
+    if position_book.positions:
+        logger.info("restored %d open position(s): %s",
+                    len(position_book.positions),
+                    ", ".join(sorted(position_book.positions)))
+        if memory is not None:
+            try:
+                # The restart timeline, so "did restarts correlate with losing
+                # positions" is a question the record can answer rather than
+                # one we assume the answer to.
+                memory.record_audit_event(
+                    "fund", "state_restored", None,
+                    {"symbols": sorted(position_book.positions),
+                     "open_positions": len(position_book.positions)})
+            except Exception:
+                logger.exception("could not audit the state restore")
+
     # The second fact set. Robinhood's quote source is genuinely independent of
     # the Massive-backed data provider, which is what makes the comparison worth
     # anything — corroborating a provider against itself would agree every time.
@@ -231,6 +266,7 @@ def build_fund(
     )
     # Exposed so the dashboard can show open positions and their live stops.
     scheduler.position_book = position_book
+    scheduler.save_state = lambda: fund_state.save(memory, _snapshot())
     scheduler.llm_router = llm_router
     scheduler.robinhood = robinhood
     return scheduler

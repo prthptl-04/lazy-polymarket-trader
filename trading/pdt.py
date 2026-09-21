@@ -66,6 +66,48 @@ class DayTradeTracker:
     # symbol -> set of trading days on which we opened a position
     _opens: dict[str, set[date]] = field(default_factory=dict)
 
+    # ---------- persistence ----------
+
+    def snapshot(self, *, today: date) -> dict:
+        """The ledger, pruned to the rolling window.
+
+        `account_equity_usd` is deliberately absent. It is refreshed from the
+        broker every boot, and a stale $26,000 would disengage the gate
+        entirely — the one field here where persisting is actively dangerous.
+
+        `asset_class` is dropped because the only `trades.append` site
+        hardcodes "equity" and `record_close` returns early for crypto, so
+        there is nothing else it could be.
+        """
+        floor = window_start(today)
+        return {
+            "trades": [[t.symbol, t.trading_day.isoformat()]
+                       for t in self.trades if t.trading_day >= floor],
+            "opens": {sym: sorted(d.isoformat() for d in days if d >= floor)
+                      for sym, days in self._opens.items()
+                      if any(d >= floor for d in days)},
+        }
+
+    def restore(self, data: Optional[dict]) -> None:
+        """Rebuild the ledger. Losing it costs a 90-day PDT restriction."""
+        if not data:
+            return
+        for row in data.get("trades") or []:
+            try:
+                symbol, iso = row[0], row[1]
+                day = date.fromisoformat(str(iso))
+            except (TypeError, ValueError, IndexError):
+                continue
+            self.trades.append(DayTrade(symbol=str(symbol), trading_day=day,
+                                        asset_class="equity"))
+        for symbol, days in (data.get("opens") or {}).items():
+            for iso in days:
+                try:
+                    self._opens.setdefault(str(symbol), set()).add(
+                        date.fromisoformat(str(iso)))
+                except (TypeError, ValueError):
+                    continue
+
     # ---------- recording ----------
 
     def record_open(self, symbol: str, moment: datetime) -> None:

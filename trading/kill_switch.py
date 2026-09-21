@@ -63,6 +63,71 @@ class DailyLossKillSwitch:
     overridden_days: set[date] = field(default_factory=set)
     trip_log: list[dict] = field(default_factory=list)
 
+    # ---------- persistence ----------
+
+    # Latch days kept in the snapshot. Enough that a restart at 23:55 ET still
+    # finds the current trading day's latch. The equity SERIES is not pruned —
+    # see snapshot().
+    RETAINED_DAYS = 10
+
+    def snapshot(self) -> dict:
+        """What must survive a restart.
+
+        `latest_equity` IS stored, and dropping it was a real hole. The
+        argument for dropping it — "the latch does not depend on P&L" — holds
+        only for a day that has already tripped. For a day that is merely DOWN
+        there is no latch, and restoring the baseline without the latest mark
+        produces an armed switch reporting a flat day:
+
+            pre-restart : armed=True daily_pnl=-30.0 remaining=20.0
+            post-restore: armed=True daily_pnl=  0.0 remaining=50.0
+
+        That turns a daily loss limit into a per-restart loss limit, in the
+        fail-open direction, and it is worst in exactly the case that matters —
+        a crash loop during a drawdown.
+
+        Nor is the baseline series pruned. `opening_equity` + `latest_equity`
+        is two floats per trading day and it is the only durable
+        mark-to-market equity history the fund has; `max_drawdown` on the
+        dashboard is otherwise fed a realized-only curve, which understates
+        every drawdown for the reason this module's own docstring gives — a
+        position sitting $500 underwater has lost $500.
+        """
+        return {
+            "opening_equity": {d.isoformat(): v for d, v in self.opening_equity.items()},
+            "latest_equity": {d.isoformat(): v for d, v in self.latest_equity.items()},
+            # The LATCH only ever needs the current trading day; bounded so a
+            # long-lived fund cannot accumulate one entry per trading day for
+            # ever. Ten days so a 23:55 ET restart still finds today's latch.
+            "tripped": sorted(d.isoformat() for d in self.tripped_days)[-self.RETAINED_DAYS:],
+            # An audited human override must not be silently revoked by a
+            # restart; re-blocking would err safe but contradict a decision
+            # already made on the record.
+            "overridden": sorted(d.isoformat() for d in self.overridden_days)[-self.RETAINED_DAYS:],
+        }
+
+    def restore(self, data: Optional[dict]) -> None:
+        """Rebuild the day's baseline and latch.
+
+        Restoring `opening_equity` is the whole fix for re-baselining:
+        `observe_equity` only sets a baseline when the day is absent, so a
+        mid-day restart becomes a no-op by construction. Without it a restart
+        after a full-limit day measured the next loss from the LOWER equity and
+        handed the fund its budget a second time.
+        """
+        if not data:
+            return
+        for iso, equity in (data.get("opening_equity") or {}).items():
+            day = _parse_day(iso)
+            if day is not None:
+                self.opening_equity[day] = float(equity)
+        for iso, equity in (data.get("latest_equity") or {}).items():
+            day = _parse_day(iso)
+            if day is not None:
+                self.latest_equity[day] = float(equity)
+        self.tripped_days |= {d for d in map(_parse_day, data.get("tripped") or []) if d}
+        self.overridden_days |= {d for d in map(_parse_day, data.get("overridden") or []) if d}
+
     # ---------- observation ----------
 
     def observe_equity(self, moment: datetime, equity_usd: float) -> None:
@@ -211,3 +276,11 @@ def _day(moment: datetime) -> date:
     if moment.tzinfo is None:
         raise ValueError("naive datetime rejected — the trading day is Eastern-time based")
     return moment.astimezone(EASTERN).date()
+
+
+def _parse_day(value: object) -> Optional[date]:
+    """An unreadable date is dropped rather than crashing the restore."""
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None

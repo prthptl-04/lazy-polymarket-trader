@@ -56,6 +56,55 @@ class PaperVenue:
     def __post_init__(self) -> None:
         self.cash_usd = self.starting_cash_usd
 
+    # ---------- persistence ----------
+
+    def snapshot(self) -> dict:
+        """Cash, realised P&L and open positions.
+
+        Cash is STORED rather than derived. `starting - sum(qty x entry)` loses
+        realised P&L, and reconstructing that from `closed_trades` would bake in
+        the known quantity seam `FundLoop` warns about (`realized_usd` is
+        computed on the BOOK's quantity, which can differ from the venue's).
+        Cash is money; store the primitive and cross-check it.
+
+        The identity `starting - sum(qty x entry) + realized == cash` holds
+        exactly — verified numerically on a live object — and is what proves a
+        restored account is internally consistent.
+
+        `_orders`, `fills` and `_quotes` are not stored: nothing outside this
+        module consumes them, quotes are refetched, and a paper resting limit
+        can never fill because no book is simulated.
+        """
+        return {
+            "starting_cash_usd": self.starting_cash_usd,
+            "cash_usd": self.cash_usd,
+            "realized_pnl_usd": self.realized_pnl_usd,
+            "positions": [
+                {"symbol": p.symbol, "asset_class": p.asset_class,
+                 "quantity": p.quantity, "avg_price": p.avg_price}
+                for p in self._positions.values()
+            ],
+        }
+
+    def restore(self, state: Optional[dict]) -> None:
+        """Rebuild the account. A malformed row is dropped, never guessed."""
+        if not state:
+            return
+        self.starting_cash_usd = float(
+            state.get("starting_cash_usd", self.starting_cash_usd))
+        self.cash_usd = float(state.get("cash_usd", self.cash_usd))
+        self.realized_pnl_usd = float(state.get("realized_pnl_usd", 0.0))
+        for row in state.get("positions") or []:
+            try:
+                symbol = str(row["symbol"])
+                self._positions[symbol] = VenuePosition(
+                    symbol=symbol, asset_class=row.get("asset_class", "equity"),
+                    quantity=float(row["quantity"]),
+                    avg_price=float(row["avg_price"]), venue=self.name,
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+
     # ---------- test/eval hooks ----------
 
     def set_quote(self, symbol: str, bid: float, ask: float, last: float | None = None) -> None:
