@@ -99,12 +99,36 @@ class Candidate:
             if value is not None:
                 lines.append(f"{label}: {value}{suffix}")
 
-        add("Spread", self.spread_bps, " bps")
+        if self.spread_bps is not None:
+            lines.append(
+                f"Spread: {self.spread_bps} bps — what this broker charges for "
+                "immediacy right now, i.e. the cost of DEMANDING liquidity by "
+                "crossing. It is not a measure of how deep the market is."
+            )
         if self.execution_note:
             lines.append(f"Execution: {self.execution_note}")
         add("ATR", self.atr)
         add("CVaR (95%)", self.cvar_pct)
-        add("Amihud illiquidity", self.amihud_illiquidity)
+        if self.amihud_illiquidity is not None:
+            lines.append(
+                f"Amihud illiquidity: {self.amihud_illiquidity} — price impact "
+                "per dollar traded in the UNDERLYING market, computed from bar "
+                "returns and volumes. It measures DEPTH: how far our own order "
+                "would move the price."
+            )
+        if self.spread_bps is not None and self.amihud_illiquidity is not None:
+            # These two were read as contradictory in four live deliberations,
+            # and the committee stood aside over it. They are not comparable:
+            # a deep underlying market carrying a wide retail quote is exactly
+            # what a market-maker-routed crypto venue is.
+            lines.append(
+                "  NOTE: the spread and the Amihud figure measure different "
+                "things on different venues and DO NOT contradict each other. A "
+                "deep market can carry a wide quoted spread — that is a broker "
+                "markup, not evidence that the book is thin. Neither figure "
+                "refutes the other; read the execution note for which of the "
+                "two this order actually pays."
+            )
         add("Altman Z", self.altman_z)
         add("Altman zone", self.altman_zone)
         add("Piotroski F", self.piotroski_f)
