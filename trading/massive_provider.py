@@ -160,11 +160,22 @@ class MassiveProvider:
             return json.load(r)
 
 
+_CRYPTO_BASES = ("BTC", "ETH", "SOL", "DOGE", "XRP", "LTC", "ADA", "AVAX", "LINK", "DOT")
+
+
 def _ticker(symbol: str) -> str:
-    """Crypto needs the X: prefix and a USD quote; equities pass through."""
+    """Crypto needs the X: prefix and a USD quote; equities pass through.
+
+    Accepts the hyphenated pair too. `BTC-USD` used to fall through to the
+    final `return s` and be sent as an equity ticker, so `get_history` came
+    back None and every crypto candidate was pre-screened out with "no price
+    data available" — while the venue, which requires exactly that spelling,
+    was the only one getting it right.
+    """
     s = symbol.upper()
     if s.startswith("X:"):
         return s
-    if s in ("BTC", "ETH", "SOL", "DOGE", "XRP", "LTC", "ADA", "AVAX", "LINK", "DOT"):
-        return f"X:{s}USD"
+    base = s.split("-")[0]
+    if base in _CRYPTO_BASES:
+        return f"X:{base}USD"
     return s

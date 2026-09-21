@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0, B18, B2, B3, B6, B11, B1, B4, B14, B15, B16, B17, B19, B20, B26 and B27 are FIXED.** The fund books and closes
+**Status: B0–B4, B6, B7, B11, B14–B20, B26, B27 and B30 are FIXED (17 items).** The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Six blockers remain, plus six filed.
+record instead of leaving a phantom. Five blockers remain, plus six filed. **B28 needs your decision — see §17.**
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -372,7 +372,41 @@ These do not stop a trade being booked; they make the resulting record a lie.
 Today is a Sunday. `session_at(now) = CRYPTO_ONLY`. The fund would trade crypto
 and nothing else until Monday 04:00 ET. It cannot.
 
-- [ ] **B7 · Crypto symbols are irreconcilable between the two data sources**
+- [x] **B7 · Crypto symbols are irreconcilable between the two data sources** —
+      **DONE.** Normalised at each vendor boundary rather than in the config,
+      because each vendor owns its own convention and a watchlist that has to
+      know them will get it wrong again when a provider is added.
+      `RobinhoodVenue.get_quote` sends the hyphenated pair; `massive._ticker`
+      maps either spelling onto `X:<BASE>USD`. Verified live — both spellings
+      now resolve bars **and** quotes:
+
+      ```
+      BTC       bars=60   quote=80863.52/82385.67 (186bps)
+      BTC-USD   bars=60   quote=80863.52/82386.91 (187bps)
+      AAPL      bars=60   quote=334.89/335.00      (3bps)
+      ```
+
+- [x] **B30 · A spread the grader will refuse bought seven LLM calls first** —
+      **DONE.** Found while testing B7. The pre-screen's own docstring says
+      "anything disqualifying on arithmetic alone should never reach [a
+      deliberation]", and it checked the exit plan and Altman distress but not
+      the spread. So a weekend BTC candidate at the live 187bps quote passed
+      the pre-screen, convened six seats and a chair, and was **then** refused:
+
+      ```
+      prescreen worth_debating=True
+      grader: passed=False rule=max_spread_bps
+              spread 187bps exceeds 50bps limit for the crypto_only session
+      ```
+
+      Seven LLM calls per candidate, per cycle, for an outcome that was
+      arithmetic from the start. Now vetoed at zero cost. The limit comes from
+      `outcome_grader.spread_limit_bps`, shared with the grader through the
+      same session rule, so a pre-screen that admits what the grader refuses
+      cannot come back. An **absent** spread is not a wide one and does not
+      veto — a feed that goes quiet must not silence the whole universe.
+
+- [ ] ~~**B7 (original text)**~~
 
       Verified live, both directions:
 
@@ -942,3 +976,50 @@ the 8-dp rejection in B14.
 
 No orders have ever been placed by this code, and none were placed to produce
 this document.
+
+
+---
+
+## 17. B28 — crypto cannot clear its own cost. Your decision.
+
+B7 is fixed, so the weekend path now resolves bars and quotes correctly. It
+still produces **zero trades**, and the reason is economic rather than a bug.
+
+Robinhood's retail crypto quote, measured repeatedly today:
+
+| | spread | half-spread (slippage estimate) |
+|---|---|---|
+| BTC-USD | **186–187 bps** | 93 bps |
+| ETH-USD | **189 bps** | 94 bps |
+| AAPL | 3–5 bps | 2 bps |
+
+`verification/criteria.py` sets `max_spread_bps = 50` and
+`max_slippage_bps = 50`. Crypto fails **both**, by roughly 4×. And
+`CRYPTO_ONLY` is not in `ExtendedSession`, so it gets the *regular-session*
+limit rather than the wider extended one — arguably wrong on its own terms,
+though 100 bps would not help either.
+
+**What this means in trading terms.** A crypto round trip costs ~1.9% before
+the position does anything. On the fund's 2×ATR/3×ATR geometry with BTC ATR
+around 2%, the target is ~6% — so the spread eats roughly a third of the gross
+win, and a stop-out costs its planned risk plus another 1.9%.
+
+Three ways forward, and this is a judgement about cost, not a bug to fix:
+
+1. **Leave it.** Weekends contribute nothing; the 50-trade record becomes
+   equities-only. Per rule #23 it should then be *reported* as one of two
+   strategies rather than as the fund's record — which the Overview split
+   already does.
+2. **Raise the crypto limit** to admit ~200 bps. Honest only if the strategy
+   is expected to clear ~4% round trip, which nothing has yet demonstrated.
+3. **Trade crypto only when the spread tightens.** Keep the limit; the fund
+   simply trades when the book is good. Requires no change — it is option 1
+   with a different expectation — but the measured spread has been 186–189 bps
+   every time it has been sampled, so this may be indistinguishable from 1.
+
+My read: option **1**, and revisit if the spread is ever observed materially
+tighter. Raising a cost limit to make trades happen is how a strategy gets
+talked into paying for its own activity. But this is your call, and the
+"maximum profit" instruction could reasonably point at 2 — in which case the
+honest framing is that the fund would be taking a ~4% round-trip hurdle in
+exchange for trading two extra days a week.

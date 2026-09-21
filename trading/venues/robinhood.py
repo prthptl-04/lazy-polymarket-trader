@@ -181,10 +181,12 @@ class RobinhoodVenue:
         return out
 
     async def get_quote(self, symbol: str) -> Quote:
-        crypto = "-" in symbol or symbol.upper() in _CRYPTO_SYMBOLS
+        crypto = _is_crypto(symbol)
         tool = TOOL_NAMES["crypto_quotes" if crypto else "equity_quotes"]
+        # Crypto tools take the hyphenated pair; a bare "BTC" returns no rows.
+        wire_symbol = _crypto_pair(symbol) if crypto else symbol
         try:
-            data = await self.session.call(tool, {"symbols": [symbol]})
+            data = await self.session.call(tool, {"symbols": [wire_symbol]})
         except Exception as e:
             raise VenueError(f"quote failed for {symbol!r}: {redact(e)}") from None
         rows = _rows(data, "results", "quotes")
@@ -368,6 +370,31 @@ class RobinhoodVenue:
 
 
 _CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "XRP", "LTC", "ADA", "AVAX", "LINK", "DOT"}
+
+
+def _is_crypto(symbol: str) -> bool:
+    """True for either spelling — `BTC` or `BTC-USD`."""
+    s = (symbol or "").upper()
+    return "-" in s or s in _CRYPTO_SYMBOLS
+
+
+def _crypto_pair(symbol: str) -> str:
+    """The hyphenated pair Robinhood's crypto tools actually accept.
+
+    Verified live: `get_crypto_quotes(["BTC"])` returns **zero rows** and
+    `get_crypto_quotes(["BTC-USD"])` returns one. Meanwhile Massive wants
+    `X:BTCUSD` and passes `BTC-USD` through as a bogus equity ticker, so
+    whichever spelling the watchlist used, one of the two providers silently
+    returned nothing — under `BTC` every fill was rejected "no quote
+    available", and under `BTC-USD` every candidate was pre-screened out as
+    "no price data available".
+
+    Normalising at each vendor boundary means the watchlist can use either and
+    neither vendor's convention leaks into the fund's config.
+    """
+    s = (symbol or "").upper()
+    base = s.split("-")[0]
+    return f"{base}-USD"
 
 
 # Venue precision. Equities trade in fractional shares to 6dp; crypto carries

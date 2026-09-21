@@ -119,6 +119,21 @@ GradableTrade = Union[ProposedTrade, DirectionalTrade]
 ExtendedSession = ("premarket", "after_hours")
 
 
+def spread_limit_bps(session: str, criteria: VerifiedOutcomeCriteria = DEFAULT_CRITERIA) -> int:
+    """The spread ceiling for a session.
+
+    Exported so the pre-screen can apply the SAME rule. It used to check only
+    the exit plan and Altman distress, so a candidate whose spread the grader
+    was certain to refuse still bought six seat calls and a chair call first —
+    seven LLM calls per candidate, per cycle, for an arithmetic outcome.
+
+    Two copies of this rule would drift into a pre-screen that admits what the
+    grader rejects, which is the bug being fixed.
+    """
+    return (criteria.max_spread_bps_extended if session in ExtendedSession
+            else criteria.max_spread_bps)
+
+
 @dataclass(frozen=True)
 class GradeResult:
     passed: bool
@@ -180,7 +195,7 @@ class OutcomeGrader:
 
         # Liquidity. No orderbook depth on these venues, so spread stands in.
         if trade.spread_bps is not None:
-            limit = c.max_spread_bps_extended if extended else c.max_spread_bps
+            limit = spread_limit_bps(trade.session, c)
             if trade.spread_bps > limit:
                 return GradeResult(
                     False,

@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+from verification.outcome_grader import spread_limit_bps
 from finance.exits import Bar, ExitPlan, build_exit_plan
 from finance.quality import Financials, altman_z_score, piotroski_f_score
 from finance.risk_metrics import amihud_illiquidity, conditional_value_at_risk
@@ -137,6 +138,25 @@ def _prescreen(
             "— an entry without a stop is unbounded downside",
             "exit_plan",
         )
+
+    # The cheapest veto of all: the spread is known before the table convenes
+    # and the limit is a constant, so a candidate the grader is certain to
+    # refuse should never cost seven LLM calls. Measured on Robinhood's live
+    # weekend BTC quote: 187bps against a 50bps limit, passed the pre-screen,
+    # deliberated in full, then refused.
+    #
+    # An ABSENT spread is not a wide one — a feed that goes quiet must not veto
+    # every candidate — so this only fires on a number we actually have.
+    if candidate.spread_bps is not None:
+        limit = spread_limit_bps(candidate.session)
+        if candidate.spread_bps > limit:
+            return PreScreen(
+                False,
+                f"spread {candidate.spread_bps}bps exceeds the {limit}bps limit "
+                f"for the {candidate.session} session — the grader would refuse "
+                "this, so it is not worth a deliberation",
+                "max_spread_bps",
+            )
 
     if candidate.altman_zone == "distress":
         return PreScreen(
