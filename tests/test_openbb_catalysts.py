@@ -212,3 +212,50 @@ def test_an_unavailable_feed_still_answers_the_route(tmp_path):
                           catalyst_feed=_Broken())
     out = _run(rt.catalysts("AAPL"))
     assert out["available"] is False and out["reason"]
+
+
+# ---------------------------------------------------------------- earnings
+
+def test_an_earnings_date_inside_the_window_is_a_dated_warning():
+    """The single most decision-relevant catalyst a swing fund has. A
+    technically perfect setup entered before a print is a coin flip, and this
+    is the only line on the page that says so."""
+    from trading.openbb_provider import summarise_earnings
+    rows = [{"symbol": "COST", "report": {"date": "2026-09-24", "timing": "pm",
+                                          "verified": True},
+             "eps": {"estimate": "6.52", "actual": None}}]
+    note = summarise_earnings(rows, "COST", today="2026-09-21")
+    assert "3 days" in note and "2026-09-24" in note and "after the close" in note
+
+
+def test_an_unverified_date_is_called_tentative():
+    """Robinhood flags unverified dates. Presenting a guess as a fact is how a
+    seat vetoes a good trade for nothing."""
+    from trading.openbb_provider import summarise_earnings
+    rows = [{"symbol": "X", "report": {"date": "2026-09-24", "timing": "am",
+                                       "verified": False}, "eps": {}}]
+    assert "tentative" in summarise_earnings(rows, "X", today="2026-09-21").lower()
+
+
+def test_already_reported_is_not_an_upcoming_event():
+    """`eps.actual` populated means it has happened. Reading a past print as
+    an upcoming one inverts the advice."""
+    from trading.openbb_provider import summarise_earnings
+    rows = [{"symbol": "X", "report": {"date": "2026-09-19", "timing": "am",
+                                       "verified": True},
+             "eps": {"estimate": "1.0", "actual": "1.2"}}]
+    note = summarise_earnings(rows, "X", today="2026-09-21")
+    assert "reported" in note.lower() and "beat" in note.lower()
+
+
+def test_a_quiet_window_says_so_explicitly():
+    """Silence and 'we did not look' must not render identically."""
+    from trading.openbb_provider import summarise_earnings
+    assert "no earnings" in summarise_earnings([], "AAPL", today="2026-09-21").lower()
+
+
+def test_another_companys_earnings_are_not_this_symbols():
+    from trading.openbb_provider import summarise_earnings
+    rows = [{"symbol": "COST", "report": {"date": "2026-09-24", "verified": True},
+             "eps": {}}]
+    assert "no earnings" in summarise_earnings(rows, "AAPL", today="2026-09-21").lower()

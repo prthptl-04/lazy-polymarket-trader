@@ -244,6 +244,14 @@ def test_tool_names_match_the_verified_surface():
         # "next_cursor": ""}}, and answers a bad span with a plain STRING
         # rather than an error status.
         "get_pnl_trade_history",
+        # Verified 2026-09-21 against the live server: returns
+        # {"data": {"results": [{"symbol", "year", "quarter",
+        #   "eps": {"estimate", "actual"},
+        #   "report": {"date", "timing", "verified"}}, ...]}}.
+        # `eps.actual` is null until the company has reported, and
+        # `report.verified` false means the DATE is tentative — both are
+        # distinctions `summarise_earnings` depends on.
+        "get_earnings_calendar",
     }
     assert set(TOOL_NAMES.values()) == verified
 

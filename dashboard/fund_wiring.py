@@ -276,7 +276,11 @@ def build_fund(
         # OpenBB is absent or a provider is gated, which is evidence the
         # Catalyst seat is required to act on — a seat that silently sees
         # nothing is indistinguishable from one seeing good news.
-        catalysts=CatalystFeed(),
+        # The earnings calendar comes off the fund's OWN broker session — it
+        # needs no third-party data key, and one market-wide call per cycle
+        # serves every candidate.
+        catalysts=CatalystFeed(
+            earnings_source=getattr(trading_venue, "earnings_calendar", None)),
         lookback_bars=cfg.lookback_bars,
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,
         resume_max_age_seconds=cfg.resume_max_age_seconds,

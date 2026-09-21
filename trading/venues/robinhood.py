@@ -65,6 +65,7 @@ TOOL_NAMES = {
     "cancel_equity": "cancel_equity_order",
     "cancel_crypto": "cancel_crypto_order",
     "pnl_history": "get_pnl_trade_history",
+    "earnings_calendar": "get_earnings_calendar",
 }
 
 # Our vocabulary -> Robinhood's.
@@ -186,6 +187,27 @@ class RobinhoodVenue:
                 "treating this as a flat account would be wrong"
             )
         return out
+
+    async def earnings_calendar(self, days: int = 14) -> list[dict]:
+        """Scheduled earnings across the market, for the Catalyst seat.
+
+        Market-wide rather than per-symbol deliberately: one call serves every
+        candidate in a cycle, where `get_earnings_results` would cost one per
+        name. The read is free on an authenticated session and needs no
+        third-party data key.
+
+        Returns [] on any failure — a missing calendar must degrade the
+        catalyst block, never end a cycle.
+        """
+        try:
+            data = await self.session.call(
+                TOOL_NAMES["earnings_calendar"], {"days": days})
+        except Exception as e:
+            logger.warning("earnings calendar unavailable: %s", redact(e))
+            return []
+        payload = data.get("data") if isinstance(data, dict) else None
+        rows = (payload or {}).get("results") if isinstance(payload, dict) else None
+        return list(rows or [])
 
     async def get_quote(self, symbol: str) -> Quote:
         crypto = _is_crypto(symbol)

@@ -68,6 +68,10 @@ class CatalystFeed:
     """Fetches catalyst evidence for one symbol."""
 
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    # Async callable -> market-wide earnings rows. Supplied by the Robinhood
+    # adapter, whose MCP surface carries the calendar for free; one call per
+    # cycle serves every candidate, so it is fetched outside this class.
+    earnings_source: Optional[Callable[[], Any]] = None
     # Injected so tests never touch the network and never import OpenBB.
     _import: Optional[Callable[[], Any]] = None
 
@@ -107,6 +111,14 @@ class CatalystFeed:
                                             symbol=symbol, limit=60, provider="sec"))
             if insiders is not None:
                 notes.append(summarise_insiders(insiders))
+
+        if self.earnings_source is not None and asset_class == "equity":
+            try:
+                rows = await asyncio.wait_for(self.earnings_source(),
+                                              timeout=self.timeout_seconds)
+                notes.append(summarise_earnings(list(rows or []), symbol))
+            except Exception as e:
+                degraded.append(f"earnings calendar ({type(e).__name__})")
 
         if not notes:
             return CatalystEvidence(
@@ -158,6 +170,57 @@ def summarise_news(rows: list[dict]) -> tuple[str, ...]:
         source = str(row.get("source") or "unknown source").strip()
         out.append(f"[{date}] {title} ({source})")
     return tuple(out)
+
+
+def summarise_earnings(rows: list[dict], symbol: str,
+                       today: Optional[str] = None) -> str:
+    """When does THIS name report, and has it already?
+
+    The single most decision-relevant catalyst a swing fund has: a technically
+    perfect setup entered thirty-six hours before a print is a coin flip, and
+    this is the only line on the page that says so.
+
+    Three distinctions the raw feed makes and a naive reading loses:
+      - `eps.actual` populated means it has ALREADY reported. Reading a past
+        print as an upcoming one inverts the advice entirely.
+      - `verified: false` is Robinhood's own flag for an unconfirmed date.
+        Presenting a guess as a fact is how a seat vetoes a good trade for
+        nothing.
+      - `timing` am/pm decides whether the risk is tonight or tomorrow morning.
+    """
+    ref = _date(today) or datetime.now(timezone.utc).date()
+    mine = [r for r in rows if str(r.get("symbol", "")).upper() == symbol.upper()]
+    if not mine:
+        return (f"Earnings: no earnings scheduled for {symbol} in the window checked. "
+                "This is a positive absence of a known event, not an unchecked one.")
+
+    out = []
+    for row in mine:
+        report = row.get("report") or {}
+        when = _date(report.get("date"))
+        if when is None:
+            continue
+        eps = row.get("eps") or {}
+        actual, estimate = _num(eps.get("actual")), _num(eps.get("estimate"))
+        if actual is not None:
+            verdict = ("in line with" if estimate is None or abs(actual - estimate) < 1e-9
+                       else "a beat against" if actual > estimate
+                       else "a miss against")
+            out.append(f"Earnings: {symbol} already REPORTED on {when} — "
+                       f"{actual:.2f} vs {estimate if estimate is None else f'{estimate:.2f}'} "
+                       f"estimate, {verdict} expectations. The event risk is behind it.")
+            continue
+        days = (when - ref).days
+        timing = {"am": "before the open", "pm": "after the close"}.get(
+            str(report.get("timing") or "").lower(), "time of day unconfirmed")
+        tentative = "" if report.get("verified") else " (date TENTATIVE, not confirmed)"
+        est = f" Consensus EPS {estimate:.2f}." if estimate is not None else ""
+        horizon = ("TODAY" if days == 0 else
+                   f"in {days} days" if days > 0 else f"{abs(days)} days ago")
+        out.append(f"Earnings: {symbol} reports {horizon} on {when}, {timing}{tentative}."
+                   f"{est} A position opened now carries that event.")
+    return " ".join(out) or (
+        f"Earnings: a row exists for {symbol} but carries no usable date.")
 
 
 def summarise_insiders(rows: list[dict]) -> str:
