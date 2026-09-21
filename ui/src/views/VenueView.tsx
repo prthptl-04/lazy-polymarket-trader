@@ -4,6 +4,7 @@ import { Preflight, type Step } from "../components/Preflight";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { LiveFeed } from "../components/LiveFeed";
 import { MarketStance } from "../components/MarketStance";
+import { LivePrices } from "../components/LivePrices";
 import { RoundTableFeed } from "../components/RoundTableFeed";
 import { RoundTableThread } from "../components/RoundTableThread";
 import { TradeHistory } from "../components/TradeHistory";
@@ -195,11 +196,19 @@ export function VenueView({ venue }: { venue: Venue }) {
 
           <LiveFeed venue={venue} title={`${title} live data feed`} />
 
+          {/* The instruments actually under debate, priced and charted. The
+              equity curve is a single point until something closes, so this is
+              the only chart on the page with anything to draw for now. */}
+          <LivePrices venue={venue} />
+
           {poly && <MarketStance />}
 
           <RoundTableThread title={`${title} live round table · discussion`} />
 
-          <RoundTableFeed title="Live agent round table" max={300} />
+          {/* LIVE side: live reasoning only. The divider on this page is
+              load-bearing, and it has to reach the argument as well as the
+              number. */}
+          <RoundTableFeed title="Live agent round table" max={300} mode="live" />
 
           <GlassCard className="p-5" inert>
             <PanelTitle right={<Pill>{mine.length} open</Pill>}>Positions &amp; exit plan</PanelTitle>

@@ -105,8 +105,8 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
         return ROUNDTABLE_HTML
 
     @app.get("/api/deliberations")
-    def api_deliberations(limit: int = 25) -> list[dict]:
-        return runtime.deliberations(limit=max(1, min(200, limit)))
+    def api_deliberations(limit: int = 25, mode: str | None = None) -> list[dict]:
+        return runtime.deliberations(limit=limit, mode=mode)
 
     @app.get("/api/deliberations/{thesis_id}")
     def api_deliberation(thesis_id: str) -> Any:

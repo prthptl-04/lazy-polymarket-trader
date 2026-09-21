@@ -210,22 +210,51 @@ class DashboardRuntime:
 
     # ---------- round table ----------
 
-    def deliberations(self, limit: int = 25) -> list[dict]:
+    def deliberations(self, limit: int = 25, *,
+                      mode: Optional[str] = None) -> list[dict]:
+        """Recent committee work, optionally narrowed to one side of the house.
+
+        A deliberation carries no mode of its own — it happens before execution
+        decides anything — so its mode is the mode of the trade it produced.
+
+        `mode="live"` is strict: an UNDECIDED deliberation is not live, because
+        putting a paper argument under a live heading is exactly the confusion
+        the page's divider exists to prevent. `mode="paper"` includes undecided
+        work, because that is where the fund is actually running and hiding it
+        would make the page look idle while the committee is mid-debate.
+        """
         try:
-            rows = self.memory.recent_deliberations(limit=limit)
+            rows = self.memory.recent_deliberations(limit=limit * 3 if mode else limit)
         except Exception:
             return []
-        return [
-            {
+        modes = self._modes_by_thesis()
+        out = []
+        for r in rows:
+            row_mode = modes.get(r["thesis_id"])
+            if mode == "live" and row_mode != "live":
+                continue
+            if mode == "paper" and row_mode == "live":
+                continue
+            out.append({
                 "thesis_id": r["thesis_id"], "symbol": r["symbol"],
                 "asset_class": r["asset_class"], "status": r["status"],
                 "signal": r["signal"], "confidence": r["confidence"],
-                "created": r["created"],
+                "created": r["created"], "mode": row_mode,
                 "tally": (r.get("payload") or {}).get("tally", {}),
                 "seats": len((r.get("payload") or {}).get("opinions", [])),
-            }
-            for r in rows
-        ]
+            })
+            if len(out) >= limit:
+                break
+        return out
+
+    def _modes_by_thesis(self) -> dict[str, str]:
+        """thesis_id -> the mode the trade it produced executed in."""
+        try:
+            return {t["thesis_id"]: t["mode"]
+                    for t in self.memory.closed_trades(limit=100_000)
+                    if t.get("thesis_id") and t.get("mode")}
+        except Exception:
+            return {}
 
     def deliberation(self, thesis_id: str) -> Optional[dict]:
         try:

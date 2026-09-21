@@ -4,6 +4,7 @@ import { CostMatrix } from "../components/CostMatrix";
 import { AgentScorecard } from "../components/AgentScorecard";
 import { EngineButton } from "../components/EngineButton";
 import { GlassCard, PanelTitle } from "../components/GlassCard";
+import { LivePrices } from "../components/LivePrices";
 import { EquityArea, Sparkline } from "../components/charts";
 import { DrawnCheck, Empty, Pill, Stat, money, signed, toneOf } from "../components/primitives";
 import {
@@ -82,6 +83,10 @@ export function Overview() {
             stats={cryptoStats} cycles={fund?.metrics?.cycles ?? 0} />
         </div>
       </GlassCard>
+
+      <div className="col-span-full">
+        <LivePrices venue="robinhood" />
+      </div>
 
       {/* ---------------- wallets ---------------- */}
       <GlassCard className="col-span-full p-6">

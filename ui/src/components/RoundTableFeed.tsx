@@ -17,13 +17,25 @@ function critical(d: Deliberation, dissent: boolean):
 /** Live committee feed. Each row is a real deliberation from the memory store;
  *  critical decisions carry a marker on the rail so you can scroll the history
  *  and find the moments that mattered without reading every row. */
-export function RoundTableFeed({ title = "Live agent round table", max = 330 }: {
+export function RoundTableFeed({ title = "Live agent round table", max = 330, mode }: {
   title?: string; max?: number;
+  /** Narrow to one side of the house. A live panel showing paper reasoning
+   *  breaks the page's divider at exactly the point it matters most — the
+   *  argument behind a trade, not just its number. */
+  mode?: "live" | "paper";
 }) {
-  const { data } = usePoll<Deliberation[]>("/api/deliberations?limit=25", NEAR);
+  const { data } = usePoll<Deliberation[]>(
+    `/api/deliberations?limit=25${mode ? `&mode=${mode}` : ""}`, NEAR);
   return (
     <GlassCard className="p-4 flex flex-col" inert>
       <PanelTitle right={<Pill>{data?.length ?? 0}</Pill>}>{title}</PanelTitle>
+      {mode === "live" && !data?.length && (
+        <div className="text-[11px] text-white/40 leading-relaxed px-1 py-3">
+          No live deliberations. Every thesis so far has routed to paper — the
+          rule-#13 checklist has not opened live trading, so the committee's
+          reasoning appears on the paper side rather than here.
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto space-y-2 pr-1" style={{ maxHeight: max }}>
         {data?.length ? data.map((d) => {
           const dissent = Object.values(d.tally ?? {}).filter((n) => n > 0).length > 1;
