@@ -23,7 +23,7 @@ repository keeps its original directory name — that is history, not scope.
 1. [The one-paragraph version](#1-the-one-paragraph-version)
 2. [Architecture at a glance](#2-architecture-at-a-glance)
 3. [Walkthrough: one trade, start to end](#3-walkthrough-one-trade-start-to-end)
-4. [The round table — six seats and a chair](#4-the-round-table--six-seats-and-a-chair)
+4. [The round table — seven seats and a chair](#4-the-round-table--seven-seats-and-a-chair)
 5. [Agent evaluation: the performance matrix](#5-agent-evaluation-the-performance-matrix)
 6. [Self-evolution: what changes, and what measures it](#6-self-evolution-what-changes-and-what-measures-it)
 7. [Component reference](#7-component-reference)
@@ -149,8 +149,8 @@ everything a seat will see, **before any seat is consulted**:
 |---|---|---|
 | bars, quote | [`massive_provider.py`](trading/massive_provider.py) | ATR, CVaR, Amihud illiquidity |
 | derived technicals | computed locally | trend, momentum, position-in-range, vol regime |
-| news | Massive `/v2/reference/news` | narrative only — never becomes a number |
-| fundamentals | [`sec_edgar.py`](trading/sec_edgar.py) | Massive's plan returns NOT_ENTITLED |
+| news | Massive `/v2/reference/news` | narrative only — never becomes a number. **Empty for crypto**; see catalysts |
+| fundamentals | [`sec_edgar.py`](trading/sec_edgar.py) | Massive returns NOT_ENTITLED. **Needs `SEC_USER_AGENT`** or silently returns nothing |
 | quality screens | [`finance/quality.py`](finance/quality.py) | Altman Z, Piotroski F |
 | corroboration | [`roundtable/corroboration.py`](roundtable/corroboration.py) | a second source checks the first |
 | execution note | computed | **rests at mark** vs **crosses the spread** |
@@ -162,17 +162,32 @@ everything a seat will see, **before any seat is consulted**:
 Then `_prescreen` applies cheap vetoes. **No exit plan → no debate**: without a
 stop there is no R-multiple, no Kelly, and no defensible size.
 
+The catalyst block is six independent sources, each degrading to a stated
+reason rather than to silence — a gated provider costs one evidence line, never
+a cycle. The line that most often changes a decision is the last one:
+
+> Earnings: COST reports in 3 days on 2026-09-24, after the close. Consensus
+> EPS 6.52. A position opened now carries that event.
+> Implied move: the 2026-09-25 options price a ±6.8% move. The proposed stop is
+> 4.1% away — the implied move is 1.7× wider than the stop, so an ordinary
+> reaction takes the position out. Size down, or wait for the print.
+
+The implied move is gated on an unreported earnings date within 10 days,
+because it costs three round trips and a ~100-row strike list. The stop
+distance is read from `finance.exits`, not restated, so it follows the geometry
+rather than drifting from it.
+
 > The execution note is why weekend crypto trades at all. Crossing a 187 bps
 > BTC spread was refused on cost every time. Resting a limit at the mark pays
 > roughly zero — so the fix was execution style, not a looser cost limit.
 
 ### Step 4 — the round table convenes
 
-[`roundtable/engine.py`](roundtable/engine.py) runs three stages. Seven LLM
+[`roundtable/engine.py`](roundtable/engine.py) runs three stages. Eight LLM
 calls, and the only ones in the cycle.
 
 1. **Round one** — Analyst, Sentiment, Quant, Risk, Corroborator, Catalyst answer
-   **independently**. None sees another's answer. Anchoring five seats on
+   **independently**. None sees another's answer. Anchoring six seats on
    whoever replies first destroys the only thing a committee is for.
 2. **Round two** — the Devil's Advocate reads round one and is *mandated* to
    attack the emerging consensus.
@@ -299,7 +314,7 @@ On close, the realised return flows four ways:
 
 ---
 
-## 4. The round table — six seats and a chair
+## 4. The round table — seven seats and a chair
 
 Seats are **functional, not famous investors**. Each is defined by the job it
 does, and each is answerable for it.
@@ -449,6 +464,7 @@ nothing stored to replay. That needs real calls and real spend.
 | [`catalysts.py`](trading/catalysts.py) | Dated events from OpenBB + the Robinhood MCP research surface; each source degrades to a stated reason |
 | [`mcp_client.py`](trading/mcp_client.py) | The daemon's own MCP session |
 | [`venues/`](trading/venues/) | `base` · `paper` · `robinhood` · `router` · `retired` |
+| [`venues/robinhood.py`](trading/venues/robinhood.py) | Execution **and research** — quotes, positions, orders, earnings calendar, 8-K index, L2 book, option chains |
 
 ### `roundtable/` — the committee
 
@@ -572,7 +588,7 @@ python -m dashboard                        # http://127.0.0.1:8765
 
 ```bash
 ./scripts/verify.sh                        # tests, self-checks, ui build, vuln scan
-pytest -q                                  # 1512 tests
+pytest -q                                  # 1515 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"
@@ -581,6 +597,26 @@ python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; 
 Configure in [`config/fund.toml`](config/fund.toml); every value takes an env
 override. Bankroll $500, cycle 300s, daily loss limit $50, max 5 deliberations
 per cycle.
+
+**Environment variables that fail silently if unset.** Each of these degrades to
+a stated reason in the evidence block rather than an error, which is correct
+behaviour and also means nothing will page you:
+
+| Variable | Unset behaviour |
+|---|---|
+| `ANTHROPIC_API_KEY` | no deliberations at all |
+| `MASSIVE_API_KEY` | no bars, so every candidate pre-screens out for having no exit plan |
+| **`SEC_USER_AGENT`** | **SEC refuses every request; Altman Z and Piotroski F are NOT AVAILABLE on every equity, forever** |
+| `TELEGRAM_BOT_TOKEN` / `_CHAT_ID` | fills are not notified |
+
+The SEC one is the trap: a `None` return is indistinguishable from "this
+instrument has no financials", which is correct for crypto and wrong for Apple.
+It was unset for the life of this repo until the 2026-09-21 integration audit.
+
+**Optional.** `openbb` supplies headlines and Form 4 flow; without it the
+catalyst block says so and the fund trades unchanged. The earnings calendar,
+filing index, order book and option chains come off the authenticated Robinhood
+session and need no third-party data key.
 
 ---
 
