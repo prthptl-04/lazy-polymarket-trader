@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: every blocker is closed.** All 32 items are fixed, filed as measured
-limitations, or decided. The fund books and closes positions, survives a
-restart, grades its own committee and acts on the grade, and refuses to trade
-what it cannot price.
+**Status: every blocker is closed, and the weekend now trades.** The fund
+books and closes positions, survives a restart, grades its own committee and
+acts on the grade, refuses to trade what it cannot price — and no longer pays
+187 bps to demand liquidity it never needed.
 
-**1,357 tests passing. Vulnerability scan clean. UI builds; all three UI
+**1,396 tests passing. Vulnerability scan clean. UI builds; all three UI
 checks pass.**
 
 | | |
@@ -1232,3 +1232,63 @@ B19.
 
 Nothing has closed a trade yet, so this is predicted from the arithmetic, not
 observed. It becomes real the moment the record starts accumulating.
+
+
+---
+
+## 19. B28 reopened and solved: the weekend trades
+
+B28 was decided as "keep the 50 bps limit, accept that weekends contribute
+nothing". That was the right call on the question as posed — raising a cost
+limit to make trades happen is how a strategy gets talked into paying for its
+own activity. It was the wrong question.
+
+**The spread is the price of DEMANDING liquidity.** A swing fund on a
+five-minute cycle holding for hours has no need to demand it:
+
+```
+BUY, by style, at the live book:
+  market (cross the ask)   pay 81,903.00   cost vs mark  93.4 bps
+  limit at the mark        pay 81,144.87   cost vs mark   0.0 bps
+
+round trip crossing both touches : 187 bps
+round trip resting at the mark   :   0 bps   (if it fills)
+```
+
+Verified live on a Sunday:
+
+```
+now: 2026-09-20 21:52 Sunday   session: crypto_only
+  BTC   spread=187bps  prescreen=True  rests=True  slippage=0bps
+        order: limit @ 81004.82   (bid 80,245.65 / ask 81,763.98)
+  ETH   spread=190bps  prescreen=True  rests=True  slippage=0bps
+        order: limit @ 2658.98    (bid 2,633.76 / ask 2,684.21)
+```
+
+Four changes, and any one alone would have been wrong:
+
+1. **Crypto rests at the mark** above `RESTING_SPREAD_BPS = 40`. Equities still
+   cross — their books are 3–5 bps and waiting to save two of them is not worth
+   a missed entry.
+2. **A resting order is charged no crossing cost.** Charging one to a limit
+   sitting at the mark is what made every crypto candidate uneconomic.
+3. **The grader AND the pre-screen** apply `MAX_RESTING_SPREAD_BPS = 500` to a
+   resting order, via an explicit `rests` flag. Fixing only the pre-screen
+   would have moved the rejection later and re-created B30 — seven LLM calls
+   for a doomed candidate. An existing invariant test caught exactly that.
+4. **`PaperVenue` now models a resting order.** It previously accepted a
+   non-marketable limit, returned `status="open"`, and never filled it. That is
+   not conservative, it is broken — a real resting limit fills when the market
+   comes to it, and a model where it never does makes the whole non-crossing
+   style untestable.
+
+`FundLoop._reconcile_resting` runs at the top of each cycle: a fill that
+happened between cycles is inventory the fund already holds, and acting on
+stale inventory is the divergence class B4 and B5 were about.
+
+**What is still not modelled, deliberately:** queue position and partial fills.
+The real cost of resting is adverse selection — filling exactly when the market
+is about to move through you — which is an execution risk, not a price, and
+belongs in the fill record rather than in a slippage number the sizer would
+treat as a certainty. `graduation()`'s fill-rate item is where that will show
+up, and it is the number to watch first.
