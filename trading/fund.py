@@ -114,6 +114,10 @@ class FundLoop:
     max_candidates_per_cycle: int = 5
     # symbol -> the trading day it was last closed on. See `_not_cooling_off`.
     _cooling_off: dict = field(default_factory=dict)
+    # Optional. `monitoring.telegram.TelegramNotifier`, or anything with
+    # `.notify(str)`. Never on the hot path and never load-bearing: a dead
+    # notifier loses a message, not a trade.
+    notifier: Any = None
     resume_max_age_seconds: float = 3600.0
     on_cycle: Any = None
 
@@ -341,6 +345,13 @@ class FundLoop:
                 confidence=thesis.consensus.confidence if thesis.consensus else None,
                 venue=result.ack.venue if result.ack else None,
             )
+            self._announce({
+                "symbol": symbol, "side": "buy",
+                "quantity": filled_qty if filled_qty is not None else result.size.quantity,
+                "price": entry_fill if entry_fill is not None else built.exit_plan.entry,
+                "mode": self._venue_mode(result.ack),
+                "venue": result.ack.venue if result.ack else None,
+            })
         elif booked and not result.trade.is_entry:
             # A close that sold at the venue and never reached the book left a
             # phantom: it fired an exit every cycle against inventory the fund
@@ -414,6 +425,20 @@ class FundLoop:
         today = _trading_day(moment)
         self._cooling_off = {s: d for s, d in self._cooling_off.items() if d >= today}
         return [n for n in names if self._cooling_off.get(n) != today]
+
+    def _announce(self, fill: dict) -> None:
+        """Tell the operator what the venue did. Never raises.
+
+        Called only on a FILL. An accepted resting order has not traded, and
+        announcing one would report a position that does not exist.
+        """
+        if self.notifier is None:
+            return
+        try:
+            from monitoring.telegram import format_fill
+            self.notifier.notify(format_fill(fill))
+        except Exception:
+            logger.warning("could not send a fill notification")
 
     def _start_cooldown(self, symbol: str, moment: datetime) -> None:
         self._cooling_off[symbol] = _trading_day(moment)
@@ -701,11 +726,21 @@ class FundLoop:
         if self.position_book is None:
             return None
         fill = self._fill_price(ack)
-        return self.position_book.close(
+        record = self.position_book.close(
             symbol, fill if fill is not None else planned_price, reason=reason,
             planned_exit=planned_price,
             exit_fill_source="venue" if fill is not None else "mid",
         )
+        if record:
+            self._announce({
+                "symbol": symbol, "side": "sell",
+                "quantity": record.get("quantity"),
+                "price": record.get("exit_price"),
+                "mode": record.get("mode"), "venue": record.get("venue"),
+                "reason": record.get("reason"),
+                "realized_usd": record.get("realized_usd"),
+            })
+        return record
 
     def _postmortem(self, record: Optional[dict], signal: Any) -> list[str]:
         """Turn a losing exit into lessons the seats read next time."""

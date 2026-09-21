@@ -191,6 +191,14 @@ def build_fund(
     )
     logger.info("confidence shrink: %s", shrink.reason)
 
+    # Fill notifications, if configured. Absent TELEGRAM_BOT_TOKEN /
+    # TELEGRAM_CHAT_ID this is simply off — most runs will not have it, and an
+    # unconfigured notifier is not an error.
+    from monitoring.telegram import TelegramNotifier
+    notifier = TelegramNotifier.from_env(background=True)
+    if notifier.enabled:
+        logger.info("Telegram fill notifications enabled")
+
     # Blocker #2: without this the fund opens positions whose stops are never
     # checked. FundLoop only enforces exits when a position_book is attached.
     position_book = PositionBook(memory=memory)
@@ -243,6 +251,7 @@ def build_fund(
     fund = FundLoop(
         router=router,
         position_book=position_book,
+        notifier=notifier,
         cost_ledger=cost_ledger,
         pipeline=pipeline,
         round_table=RoundTable(client=client, router=llm_router, memory=memory),
