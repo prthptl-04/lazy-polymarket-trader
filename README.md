@@ -507,7 +507,9 @@ nothing stored to replay. That needs real calls and real spend.
 [`backtest/engine.py`](backtest/engine.py) replays history through the *real*
 path, not a simulation of it · [`code_graph/`](code_graph/) AST graph ·
 [`tool_evaluation/`](tool_evaluation/) regression harness ·
-[`monitoring/telegram.py`](monitoring/telegram.py).
+[`monitoring/telegram.py`](monitoring/telegram.py) ·
+[`monitoring/paper_report.py`](monitoring/paper_report.py) — pre-registered triggers
+for what to change next.
 
 ---
 
@@ -588,7 +590,8 @@ python -m dashboard                        # http://127.0.0.1:8765
 
 ```bash
 ./scripts/verify.sh                        # tests, self-checks, ui build, vuln scan
-pytest -q                                  # 1515 tests
+python -m monitoring.paper_report          # what to change next, with pre-registered triggers
+pytest -q                                  # 1525 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"
