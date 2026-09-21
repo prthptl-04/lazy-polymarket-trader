@@ -50,6 +50,11 @@ class Candidate:
     # Context the seats need but must not confuse with evidence.
     sentiment_notes: tuple[str, ...] = ()
     technical_notes: tuple[str, ...] = ()
+    # Dated events and insider flow (trading/openbb_provider.py). Separate from
+    # sentiment because these are FACTS WITH DATES — a filing, a scheduled
+    # print — while sentiment is what people are saying about them. Conflating
+    # the two lets a loud opinion inherit a filing's credibility.
+    catalyst_notes: tuple[str, ...] = ()
     # How this order will reach the market, and what that costs. Without it the
     # committee priced a round trip across a 189bps crypto book that we never
     # make — six seats reasoning correctly from a premise the block got wrong.
@@ -95,6 +100,7 @@ class Candidate:
 
         for header, notes in (
             ("SENTIMENT", self.sentiment_notes),
+            ("CATALYSTS (dated events, filings, insider flow)", self.catalyst_notes),
             ("TECHNICALS", self.technical_notes),
             ("PORTFOLIO", self.portfolio_notes),
             ("CORROBORATION", self.corroboration_notes),

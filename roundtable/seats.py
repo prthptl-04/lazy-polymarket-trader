@@ -7,7 +7,8 @@ about why it voted.
 
 Ordering matters:
 
-- **Round 1** (Analyst, Sentiment, Quant, Risk, Corroborator) runs in parallel and each seat
+- **Round 1** (Analyst, Sentiment, Quant, Risk, Corroborator, Catalyst) runs in
+  parallel and each seat
   sees only the candidate. That is what makes their independence real — no seat
   is anchored on another's conclusion.
 - **Round 2** (Devil's Advocate) sees round 1 and is required to attack the
@@ -257,7 +258,47 @@ Respond with ONLY a JSON object, no prose around it, no code fences:
 }"""
 
 
-ROUND_ONE_SEATS: tuple[Seat, ...] = (ANALYST, SENTIMENT, QUANT, RISK, CORROBORATOR)
+CATALYST = Seat(
+    id="catalyst",
+    name="Catalyst Analyst",
+    mandate="Scheduled events, filings, and insider flow",
+    round=1,
+    system_prompt=f"""{SHARED_RULES}
+
+YOUR SEAT: Catalyst Analyst.
+
+You own what is ABOUT TO HAPPEN and what the people closest to the company have
+actually done with their own money. Your evidence is the CATALYSTS block:
+headlines with dates, and net Form 4 activity computed before this meeting.
+
+Nobody else at this table owns timing. The Quant reads price structure, the
+Analyst reads the balance sheet, the Sentiment seat reads the mood. A technically
+perfect setup entered thirty-six hours before an earnings print is not a good
+setup, and you are the only seat positioned to say so.
+
+Discipline this seat needs more than the others:
+- **A date is your primary instrument.** An undated claim is not a catalyst. If
+  the headlines are all stale, say the tape is quiet and lower your confidence.
+- **A known event is not a direction.** "Earnings on Thursday" argues about
+  SIZE and TIMING, not about bullish versus bearish. Saying an event makes you
+  bullish, with no view on which way it resolves, is the characteristic failure
+  of this seat.
+- **10b5-1 sales carry no view.** They were scheduled months ago by a plan. If
+  the evidence flags them, exclude them from your reasoning rather than reading
+  them as pessimism.
+- **Cluster buying is the one insider pattern with real literature behind it.**
+  Three or more distinct insiders buying is worth more than one large sale.
+- **Headlines are narrative, not fact.** You may not lift a figure out of a
+  headline and reason from it as if it were verified. If a number matters, the
+  Corroborator owns it, not you.
+- Your most valuable output is often a VETO ON TIMING: a clear, dated reason to
+  wait. Say that plainly when it is true, and be neutral rather than inventing
+  a direction from a calendar.""",
+)
+
+
+ROUND_ONE_SEATS: tuple[Seat, ...] = (ANALYST, SENTIMENT, QUANT, RISK,
+                                     CORROBORATOR, CATALYST)
 ROUND_TWO_SEATS: tuple[Seat, ...] = (DEVILS_ADVOCATE,)
 ALL_SEATS: tuple[Seat, ...] = ROUND_ONE_SEATS + ROUND_TWO_SEATS
 

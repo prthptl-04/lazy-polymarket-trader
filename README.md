@@ -1,6 +1,6 @@
 # Project धन (Dhan)
 
-An autonomous trading fund. A committee of six LLM analysts argues about one
+An autonomous trading fund. A committee of seven LLM analysts argues about one
 instrument at a time; a deterministic Python core decides whether that argument
 is allowed to cost money.
 
@@ -39,7 +39,7 @@ repository keeps its original directory name — that is history, not scope.
 
 Every five minutes the fund observes its own equity, asks the calendar what is
 tradable, finds candidates, and puts each through a set of deterministic screens
-that cost microseconds. Whatever survives reaches a round table of six LLM
+that cost microseconds. Whatever survives reaches a round table of seven LLM
 seats, who answer independently and then face a mandated dissenter. A chair
 synthesises. That synthesis is an *opinion* — it is then shrunk toward 50/50,
 sized by Kelly against an ATR stop, capped three ways, graded by an
@@ -69,7 +69,7 @@ split is the whole design.
                                         │ survivors only
    ┌────────────────────────────────────▼────────────────────┐
    │ ROUND TABLE (roundtable/engine.py)                      │   ← the only
-   │  R1  Analyst · Sentiment · Quant · Risk · Corroborator  │     LLM calls
+   │  R1  Analyst·Sentiment·Quant·Risk·Corroborator·Catalyst │     LLM calls
    │  R2  Devil's Advocate  (sees R1, mandated to dissent)   │     in the
    │  R3  Chair  → signal + confidence + surviving objection │     hot path
    └────────────────────────────────────┬────────────────────┘
@@ -154,6 +154,7 @@ everything a seat will see, **before any seat is consulted**:
 | quality screens | [`finance/quality.py`](finance/quality.py) | Altman Z, Piotroski F |
 | corroboration | [`roundtable/corroboration.py`](roundtable/corroboration.py) | a second source checks the first |
 | execution note | computed | **rests at mark** vs **crosses the spread** |
+| catalysts | [`openbb_provider.py`](trading/openbb_provider.py) | dated headlines + net Form 4 flow, via OpenBB |
 | lessons | [`postmortem.relevant_lesson_lines`](roundtable/postmortem.py) | scoped to crypto — see §6 |
 | exit plan | [`finance/exits.py`](finance/exits.py) | 2×ATR stop, 3×ATR target |
 
@@ -169,7 +170,7 @@ stop there is no R-multiple, no Kelly, and no defensible size.
 [`roundtable/engine.py`](roundtable/engine.py) runs three stages. Seven LLM
 calls, and the only ones in the cycle.
 
-1. **Round one** — Analyst, Sentiment, Quant, Risk, Corroborator answer
+1. **Round one** — Analyst, Sentiment, Quant, Risk, Corroborator, Catalyst answer
    **independently**. None sees another's answer. Anchoring five seats on
    whoever replies first destroys the only thing a committee is for.
 2. **Round two** — the Devil's Advocate reads round one and is *mandated* to
@@ -302,6 +303,7 @@ does, and each is answerable for it.
 | **Quantitative Analyst** | 1 | Price structure, volatility, liquidity | Offers equity framing to a crypto instrument |
 | **Risk Manager** | 1 | Exposure, sizing, the exit plan | States a spread without an execution style |
 | **Corroborator** | 1 | Independent verification of *facts*, not reasoning | Waves through a single-sourced number |
+| **Catalyst Analyst** | 1 | Scheduled events, filings, insider flow | Invents a direction from a calendar |
 | **Devil's Advocate** | 2 | Mandated dissent — break the emerging consensus | Agrees, which makes the seat decorative |
 | **Chair** | 3 | Synthesis, and carrying the surviving objection | Buries the dissent it was required to surface |
 
@@ -436,6 +438,7 @@ nothing stored to replay. That needs real calls and real spend.
 | [`live_gate.py`](trading/live_gate.py) | Rule #13, refuses by default |
 | [`market_data.py`](trading/market_data.py) · [`massive_provider.py`](trading/massive_provider.py) | Provider interface and the live implementation |
 | [`sec_edgar.py`](trading/sec_edgar.py) | Free XBRL fundamentals |
+| [`openbb_provider.py`](trading/openbb_provider.py) | Catalysts via OpenBB — optional, degrades to a stated reason |
 | [`mcp_client.py`](trading/mcp_client.py) | The daemon's own MCP session |
 | [`venues/`](trading/venues/) | `base` · `paper` · `robinhood` · `router` · `retired` |
 
@@ -443,7 +446,7 @@ nothing stored to replay. That needs real calls and real spend.
 
 | Module | Responsibility |
 |---|---|
-| [`seats.py`](roundtable/seats.py) | Six mandates |
+| [`seats.py`](roundtable/seats.py) | Seven mandates |
 | [`engine.py`](roundtable/engine.py) | Three stages, abstention handling, fallback tally |
 | [`types.py`](roundtable/types.py) | `Thesis`, `SeatOpinion`, `Consensus`, `weighted_tally` |
 | [`corroborator.py`](roundtable/corroborator.py) · [`corroboration.py`](roundtable/corroboration.py) | Second source; disagreement reported, never averaged |
@@ -550,7 +553,7 @@ GO button bypasses no gate.
 ## 11. Running it
 
 ```bash
-pip install -r requirements.txt
+uv pip install --python .venv/bin/python3 openbb   # optional: catalyst evidence
 cp .env.example .env          # add ANTHROPIC_API_KEY, MASSIVE_API_KEY
 python scripts_mcp_auth.py robinhood      # one-time OAuth
 
@@ -559,7 +562,7 @@ python -m dashboard                        # http://127.0.0.1:8765
 ```
 
 ```bash
-pytest -q                                  # 1473 tests
+pytest -q                                  # 1484 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"

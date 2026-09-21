@@ -165,7 +165,7 @@ def test_overconfidence_is_flagged_not_reported_as_enforced(tmp_path):
 def test_every_seat_appears_even_unscored(tmp_path):
     """A seat missing from the panel reads as a seat that does not exist."""
     rows = _seeded(tmp_path).agent_matrix()
-    assert len(rows) == 7
+    assert len(rows) == 8
     unscored = [r for r in rows if r["samples"] == 0]
     assert unscored and all(r["hit_rate"] is None for r in unscored)
     assert all("unscored" in r["target"]["note"] for r in unscored)

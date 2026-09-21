@@ -53,6 +53,7 @@ def build_candidate(
     financials: Optional[Financials] = None,
     prior_financials: Optional[Financials] = None,
     sentiment_notes: Sequence[str] = (),
+    catalyst_notes: Sequence[str] = (),
     technical_notes: Sequence[str] = (),
     portfolio_notes: Sequence[str] = (),
     corroboration_notes: Sequence[str] = (),
@@ -107,6 +108,7 @@ def build_candidate(
         stop=exit_plan.stop if exit_plan else None,
         target=exit_plan.target if exit_plan else None,
         sentiment_notes=tuple(sentiment_notes),
+        catalyst_notes=tuple(catalyst_notes),
         # Derived technicals APPEND to whatever the caller supplied — a
         # caller's own reading must never be silently replaced. Every seat on a
         # live ETH deliberation reported "no directional evidence in the

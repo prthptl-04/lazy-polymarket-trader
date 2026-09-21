@@ -30,6 +30,9 @@ class DashboardRuntime:
     # name -> VenueAdapter, for the header balance strip.
     venues: dict[str, Any] = field(default_factory=dict)
     data_provider: Optional[Any] = None
+    # trading.openbb_provider.CatalystFeed, for the news + insider panels.
+    catalyst_feed: Optional[Any] = None
+    _catalysts: dict = field(default_factory=dict)
 
     # ---------- status ----------
 
@@ -1284,6 +1287,42 @@ class DashboardRuntime:
             note = "clearing the bar — hold it over more samples"
         return {"required_hit_rate": required, "gap": gap, "note": note}
 
+    # News and Form 4s move on the scale of hours, the UI polls on the scale of
+    # seconds, and the upstreams (yfinance, SEC EDGAR) are rate-limited. Five
+    # minutes is long enough that a panel open all day costs a few hundred
+    # calls instead of tens of thousands.
+    CATALYST_TTL_SECONDS = 300.0
+
+    async def catalysts(self, symbol: str, asset_class: str = "equity") -> dict:
+        """Catalyst evidence for one symbol, cached.
+
+        Serves the last good answer while a refresh is pending rather than a
+        spinner: a stale headline is worth more than an empty panel, and the
+        alternative is a 1Hz poll doing a multi-second network call.
+        """
+        key = (symbol, asset_class)
+        now = time.time()
+        cached = self._catalysts.get(key)
+        if cached and now - cached["fetched"] < self.CATALYST_TTL_SECONDS:
+            return cached["value"]
+        if self.catalyst_feed is None:
+            return {"symbol": symbol, "notes": [], "available": False,
+                    "degraded": [], "reason": "no catalyst feed attached"}
+        try:
+            evidence = await self.catalyst_feed.catalysts(symbol, asset_class)
+            value = {"symbol": symbol, "notes": list(evidence.notes),
+                     "available": evidence.available, "reason": evidence.reason,
+                     "degraded": list(evidence.degraded)}
+        except Exception as e:
+            # Keep serving the last good answer. A provider blip must not blank
+            # a panel that was correct sixty seconds ago.
+            if cached:
+                return cached["value"]
+            value = {"symbol": symbol, "notes": [], "available": False,
+                     "degraded": [], "reason": f"catalyst feed failed: {type(e).__name__}"}
+        self._catalysts[key] = {"fetched": now, "value": value}
+        return value
+
     def evolution(self) -> dict:
         """The self-evolution loop as one object: forward, weights, loss, backward.
 
@@ -1455,6 +1494,9 @@ class DashboardRuntime:
             {"id": "corroboration", "label": "Corroboration",
              "attached": True,
              "detail": "A second provider checks the first. Disagreement is reported, not averaged."},
+            {"id": "catalysts", "label": "Catalysts",
+             "attached": self.catalyst_feed is not None,
+             "detail": "Dated events, filings and insider flow, via OpenBB. Narrative — never a size."},
             {"id": "lessons", "label": "Post-mortem lessons",
              "attached": bool(lesson_lines),
              "detail": "The backward pass, arriving as evidence rather than as a prompt edit."},

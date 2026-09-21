@@ -96,6 +96,9 @@ def main() -> None:
     if runtime.fund_scheduler is not None:
         runtime.position_book = runtime.fund_scheduler.position_book
         runtime.data_provider = runtime.fund_scheduler.fund.data
+        # Same feed the Catalyst seat reads, so the panel and the committee can
+        # never be looking at different news.
+        runtime.catalyst_feed = runtime.fund_scheduler.fund.catalysts
 
     # An operator who switched a venue off must not find it back on.
     runtime.restore_venue_sessions()

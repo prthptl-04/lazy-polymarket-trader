@@ -199,7 +199,7 @@ def test_new_routes_shape(client, path, kind):
 def test_agent_roster_has_mandates_for_hover(client):
     c, _ = client
     roster = c.get("/api/agents").json()
-    assert len(roster) == 7          # 6 seats + chair
+    assert len(roster) == 8          # 7 seats + chair
     assert all(a["mandate"] and a["icon"] for a in roster)
 
 

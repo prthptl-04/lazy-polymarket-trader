@@ -34,6 +34,7 @@ from trading.fund_scheduler import FundScheduler
 from trading.kill_switch import DailyLossKillSwitch
 from trading.live_gate import LiveTradingGate
 from trading.market_data import StaticProvider, VenueQuoteProvider
+from trading.openbb_provider import CatalystFeed
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
 from trading.discovery import MarketScout
@@ -271,6 +272,11 @@ def build_fund(
         scout=scout,
         memory=memory,
         postmortem=Postmortem(memory=memory),
+        # Always attached. The feed itself reports NOT AVAILABLE when
+        # OpenBB is absent or a provider is gated, which is evidence the
+        # Catalyst seat is required to act on — a seat that silently sees
+        # nothing is indistinguishable from one seeing good news.
+        catalysts=CatalystFeed(),
         lookback_bars=cfg.lookback_bars,
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,
         resume_max_age_seconds=cfg.resume_max_age_seconds,

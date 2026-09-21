@@ -299,3 +299,14 @@ export interface Evolution {
     scope: { symbol: string; asset_class: string | null } | null;
   };
 }
+
+// ---- catalysts (/api/catalysts) ----------------------------------------
+// Dated events, filings and insider flow, via OpenBB. `available: false`
+// carries a REASON — an empty list and a gated provider mean opposite things.
+export interface Catalysts {
+  symbol: string;
+  notes: string[];
+  available: boolean;
+  reason: string;
+  degraded: string[];
+}

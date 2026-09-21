@@ -5,6 +5,7 @@ import { GlassCard, PanelTitle } from "../components/GlassCard";
 import { LiveFeed } from "../components/LiveFeed";
 import { MarketStance } from "../components/MarketStance";
 import { LiveDebate } from "../components/LiveDebate";
+import { CatalystsInFocus } from "../components/Catalysts";
 import { LivePrices } from "../components/LivePrices";
 import { RoundTableFeed } from "../components/RoundTableFeed";
 import { RoundTableThread } from "../components/RoundTableThread";
@@ -201,6 +202,10 @@ export function VenueView({ venue }: { venue: Venue }) {
               equity curve is a single point until something closes, so this is
               the only chart on the page with anything to draw for now. */}
           <LivePrices venue={venue} />
+
+          {/* Why the price is where it is. Sits directly above the debate
+              because it is the evidence the Catalyst seat is reading. */}
+          <CatalystsInFocus venue={venue} />
 
           <LiveDebate />
 

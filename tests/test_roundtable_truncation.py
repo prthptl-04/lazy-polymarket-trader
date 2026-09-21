@@ -47,7 +47,7 @@ def test_seat_budget_has_headroom_over_measured_usage():
 
 
 def test_the_chair_gets_more_room_than_a_seat():
-    """It restates six positions plus a transcript; it is the longest call."""
+    """It restates every seat's position plus a transcript; it is the longest call."""
     assert CHAIR_MAX_TOKENS > DEFAULT_MAX_TOKENS
 
 
@@ -188,4 +188,4 @@ def test_every_seat_shares_the_one_budget():
     seat, not the average one. This is why 1024 failed on two of six."""
     table = RoundTable(client=object())
     assert table.max_tokens == DEFAULT_MAX_TOKENS
-    assert len(ALL_SEATS) == 6
+    assert len(ALL_SEATS) == 7

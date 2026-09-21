@@ -110,6 +110,10 @@ class FundLoop:
     scout: Any = None
     memory: Any = None
     postmortem: Any = None
+    # trading.openbb_provider.CatalystFeed. Optional: None disables the
+    # Catalyst seat's evidence without disabling the seat, which then
+    # correctly reports that it has nothing to reason from.
+    catalysts: Any = None
     lookback_bars: int = 60
     max_candidates_per_cycle: int = 5
     # symbol -> the trading day it was last closed on. See `_not_cooling_off`.
@@ -270,6 +274,7 @@ class FundLoop:
             return False
 
         sentiment_notes = await self._news_notes(symbol)
+        catalyst_notes = await self._catalyst_notes(symbol, asset_class)
         corroboration_notes = await self._corroboration_notes(symbol)
         financials = await self.data.get_financials(symbol)
         current_fin, prior_fin = financials if financials else (None, None)
@@ -286,6 +291,7 @@ class FundLoop:
             financials=current_fin,
             prior_financials=prior_fin,
             sentiment_notes=sentiment_notes,
+            catalyst_notes=catalyst_notes,
             corroboration_notes=corroboration_notes,
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
             lessons=relevant_lesson_lines(
@@ -504,6 +510,24 @@ class FundLoop:
             return ("Corroboration unavailable — this cycle could not build a "
                     "second fact set. Treat every figure as single-sourced.",)
         return tuple(report.evidence_lines())
+
+    async def _catalyst_notes(self, symbol: str, asset_class: str) -> tuple[str, ...]:
+        """Dated events and insider flow, for the Catalyst seat.
+
+        Optional by construction. `catalysts` never raises — it returns an
+        explicit NOT AVAILABLE line — so an absent OpenBB install, a gated
+        provider or a slow endpoint costs this cycle nothing but one evidence
+        line saying so. A missing catalyst block must never be the reason a
+        candidate is not debated.
+        """
+        if self.catalysts is None:
+            return ()
+        try:
+            evidence = await self.catalysts.catalysts(symbol, asset_class)
+        except Exception:
+            logger.exception("catalyst feed failed for %s", symbol)
+            return ()
+        return evidence.as_notes()
 
     async def _news_notes(self, symbol: str) -> tuple[str, ...]:
         """Headlines for the Sentiment seat.

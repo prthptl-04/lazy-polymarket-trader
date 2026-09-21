@@ -97,7 +97,7 @@ async def test_full_deliberation_produces_a_consensus():
 
     thesis = await rt.deliberate(_candidate())
 
-    assert len(thesis.opinions) == 6          # 5 round-one + devil's advocate
+    assert len(thesis.opinions) == 7          # 6 round-one + devil's advocate
     assert thesis.consensus is not None
     assert thesis.consensus.signal == "bullish"
     assert thesis.status == "complete"
@@ -105,10 +105,10 @@ async def test_full_deliberation_produces_a_consensus():
 
 
 @pytest.mark.asyncio
-async def test_seven_llm_calls_per_candidate():
+async def test_eight_llm_calls_per_candidate():
     client = _FakeClient(reply_for={"Chair of an investment committee": _chair_json()})
     await RoundTable(client=client).deliberate(_candidate())
-    assert len(client.calls) == 7             # 6 seats + 1 chair
+    assert len(client.calls) == 8             # 7 seats + 1 chair
 
 
 @pytest.mark.asyncio
@@ -172,7 +172,7 @@ async def test_failed_seat_abstains_rather_than_voting():
     assert quant.confidence == 0.0
     assert "api down" in quant.error
     # The abstention is excluded from the tally entirely.
-    assert sum(thesis.tally().values()) == 5
+    assert sum(thesis.tally().values()) == 6      # 7 seats, one abstained
 
 
 @pytest.mark.asyncio
@@ -245,7 +245,7 @@ async def test_thesis_persists_and_completes(tmp_path):
     saved = store.get_deliberation(thesis.thesis_id)
     assert saved["status"] == "complete"
     assert saved["signal"] == "bullish"
-    assert len(saved["payload"]["opinions"]) == 6
+    assert len(saved["payload"]["opinions"]) == 7
     assert store.unfinished_deliberations() == []
 
 
@@ -290,7 +290,7 @@ async def test_opinion_callback_fires_per_seat():
     client = _FakeClient(reply_for={"Chair of an investment committee": _chair_json()})
     rt = RoundTable(client=client, on_opinion=seen.append)
     await rt.deliberate(_candidate())
-    assert len(seen) == 6
+    assert len(seen) == 7
 
 
 @pytest.mark.asyncio

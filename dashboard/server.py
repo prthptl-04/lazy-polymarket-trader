@@ -234,6 +234,10 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     def api_scorecard() -> dict:
         return runtime.scorecard()
 
+    @app.get("/api/catalysts")
+    async def api_catalysts(symbol: str, asset_class: str = "equity") -> dict:
+        return await runtime.catalysts(symbol, asset_class)
+
     @app.get("/api/evolution")
     def api_evolution() -> dict:
         return runtime.evolution()
