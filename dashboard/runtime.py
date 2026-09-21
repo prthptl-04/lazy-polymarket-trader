@@ -1286,6 +1286,184 @@ class DashboardRuntime:
             note = "clearing the bar — hold it over more samples"
         return {"required_hit_rate": required, "gap": gap, "note": note}
 
+    def evolution(self) -> dict:
+        """The self-evolution loop as one object: forward, weights, loss, backward.
+
+        The framing is borrowed from aiwaves-cn/agents (Agents 2.0, Apache-2.0),
+        which argues that an agent pipeline IS a computational graph — a node is
+        a layer, its prompts and tools are that layer's weights, and textual
+        reflections back-propagate as "language gradients". No upstream code is
+        used; the analogy is the useful part, and it happens to describe what
+        this fund already does:
+
+            forward   evidence -> six seats -> chair -> grader -> router -> outcome
+            weights   per-seat `vote_weight`, and the `confidence_shrink` that sizes
+            loss      realised return, per-seat Brier, overconfidence
+            backward  post-mortem lessons, injected into the NEXT deliberation
+
+        The last one is not a figure of speech. `recent_lesson_lines` puts a
+        textual reflection derived from a loss into the evidence block of every
+        later debate. That is a gradient reaching a prompt.
+
+        Assembled here rather than in the browser for two reasons: the page
+        makes one request instead of six, and the loop gets described in exactly
+        one place, so the picture cannot drift from the behaviour. Every field
+        is read from the component that acts on it — `vote_weight` is the number
+        `weighted_tally` multiplies by, and the backward lessons are the literal
+        return of the function the deliberation calls. A decorative animation
+        here would be worse than none, because it would imply learning that is
+        not happening.
+        """
+        from roundtable.calibration import (
+            MIN_SAMPLES_FOR_FIT, MIN_SAMPLES_FOR_SEAT_SCORE,
+            fit_confidence_shrink, score_seats, seat_weights,
+        )
+        from roundtable.postmortem import recent_lesson_lines
+        from roundtable.seats import ALL_SEATS
+
+        try:
+            delibs = self.memory.recent_deliberations(limit=500)
+            outcomes = self.memory.resolved_outcomes(limit=500)
+        except Exception:
+            delibs, outcomes = [], []
+
+        card = score_seats(delibs, {o["thesis_id"]: o for o in outcomes})
+        by_id = {s.seat_id: s for s in card.seats}
+        weights = seat_weights(card.seats)
+        fit = fit_confidence_shrink(outcomes)
+        live = self.live_debate()
+        answered = {o.get("seat_id"): o for o in live.get("opinions", [])}
+
+        # ---- weights: one row per seat that can actually vote ----
+        # Built over ALL_SEATS rather than over the scorecard, because a seat
+        # with no record still votes — at full weight — and omitting it would
+        # draw a six-seat committee as however many happen to be scored.
+        seat_rows = []
+        for seat in ALL_SEATS:
+            score = by_id.get(seat.id)
+            seat_rows.append({
+                "seat_id": seat.id,
+                "seat_name": seat.name,
+                "vote_weight": weights.get(seat.id, 1.0),
+                "samples": score.samples if score else 0,
+                "brier": round(score.brier, 4) if score and score.is_scored else None,
+                "overconfidence": (round(score.overconfidence, 2)
+                                   if score and score.is_scored else None),
+                "scored": bool(score and score.is_scored),
+                "min_samples": MIN_SAMPLES_FOR_SEAT_SCORE,
+                # What this seat is doing right now, so the layer can light up.
+                "state": ("answered" if seat.id in answered
+                          else "thinking" if live.get("in_progress") else "idle"),
+                "signal": (answered.get(seat.id) or {}).get("signal"),
+                "confidence": (answered.get(seat.id) or {}).get("confidence"),
+            })
+
+        # ---- backward: the gradient that actually reaches a prompt ----
+        lesson_lines = list(recent_lesson_lines(self.memory))
+        try:
+            recorded = len(self.memory.recent_lessons("*", limit=100))
+        except Exception:
+            recorded = 0
+        injecting = len(outcomes) >= MIN_SAMPLES_FOR_FIT
+
+        return {
+            "forward": [
+                {
+                    "id": "evidence", "label": "Evidence",
+                    "detail": "Priced, corroborated and dated before a token is spent.",
+                    "inputs": self._evidence_inputs(lesson_lines),
+                },
+                {
+                    "id": "seats", "label": "Six seats",
+                    "detail": "Independent calls. A dissenter is never folded into the consensus.",
+                    "active": bool(live.get("in_progress")),
+                    "symbol": live.get("symbol"),
+                    "answered": live.get("answered", 0),
+                    "expected": live.get("expected_seats", len(ALL_SEATS)),
+                },
+                {
+                    "id": "chair", "label": "Chair",
+                    "detail": "Weighted tally, then a synthesis that must carry the surviving objection.",
+                },
+                {
+                    "id": "grader", "label": "Outcome grader",
+                    "detail": "Refuses on arithmetic the committee does not get to argue with.",
+                },
+                {
+                    "id": "router", "label": "Router",
+                    "detail": "Retired venue, live gate, kill switch, PDT — in that order.",
+                },
+                {
+                    "id": "outcome", "label": "Outcome",
+                    "detail": "Realised R against the plan. This is the only teacher.",
+                    "closed": len(self._closed_trades()),
+                },
+            ],
+            "weights": {
+                "seats": seat_rows,
+                "confidence_shrink": {
+                    "shrink": fit.shrink,
+                    "samples": fit.samples,
+                    "realized_hit_rate": fit.realized_hit_rate,
+                    "usable": fit.usable,
+                    "reason": fit.reason,
+                },
+            },
+            "loss": self._language_loss(card, outcomes),
+            "backward": {
+                "lessons": [{"text": line} for line in lesson_lines],
+                "injecting": injecting,
+                "recorded": recorded,
+                "min_samples": MIN_SAMPLES_FOR_FIT,
+                "reason": (
+                    "Lessons are reaching every deliberation's evidence block."
+                    if injecting else
+                    f"Withheld below {MIN_SAMPLES_FOR_FIT} resolved trades — a lesson "
+                    f"that is noise compounds across every later debate, while one "
+                    f"withheld costs a single cycle."
+                ),
+            },
+        }
+
+    def _evidence_inputs(self, lesson_lines: list) -> list[dict]:
+        """What the committee is actually fed. Named providers, not "the internet"."""
+        provider = self.data_provider
+        return [
+            {"id": "market", "label": "Market data",
+             "source": type(provider).__name__ if provider else None,
+             "attached": provider is not None,
+             "detail": "Bars and quotes. The only numbers allowed to become a size."},
+            {"id": "news", "label": "News",
+             "attached": hasattr(provider, "get_news"),
+             "detail": "Narrative context. Never a figure — a number off a page is a rumour with a citation."},
+            {"id": "corroboration", "label": "Corroboration",
+             "attached": True,
+             "detail": "A second provider checks the first. Disagreement is reported, not averaged."},
+            {"id": "lessons", "label": "Post-mortem lessons",
+             "attached": bool(lesson_lines),
+             "detail": "The backward pass, arriving as evidence rather than as a prompt edit."},
+        ]
+
+    @staticmethod
+    def _language_loss(card, outcomes: list) -> dict:
+        """What the fund got wrong, scored. Empty is reported as empty.
+
+        Refusing to publish a hit rate on a handful of trades is the same stance
+        the sample gates take everywhere else — this panel is about earning the
+        right to trade real money, and it is the last place to flatter."""
+        closed = len(outcomes)
+        if not closed:
+            return {"closed_trades": 0, "committee": None, "worst_seat": None,
+                    "reason": "Nothing has resolved yet. There is no loss to back-propagate."}
+        worst = card.worst_calibrated()
+        return {
+            "closed_trades": closed,
+            "committee": card.committee.as_dict() if card.committee else None,
+            "worst_seat": worst.as_dict() if worst else None,
+            "reason": ("Scored." if card.committee and card.committee.is_scored
+                       else f"{closed} resolved — below the bar for a per-seat verdict."),
+        }
+
     def scorecard(self) -> dict:
         from roundtable.calibration import fit_confidence_shrink, score_seats
         try:

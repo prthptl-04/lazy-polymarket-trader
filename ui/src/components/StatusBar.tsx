@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Confirm } from "./Confirm";
 import { useDocumentSurface } from "../lib/useDynamicBackground";
 
-export type ViewKey = "overview" | "paper" | "polymarket" | "robinhood";
+export type ViewKey = "overview" | "paper" | "polymarket" | "robinhood" | "evolution";
 
 const VIEWS: { key: ViewKey; label: string; retired?: boolean }[] = [
   { key: "overview", label: "Overview" },
@@ -15,6 +15,7 @@ const VIEWS: { key: ViewKey; label: string; retired?: boolean }[] = [
   // decision; greying it states it.
   { key: "polymarket", label: "Polymarket", retired: true },
   { key: "robinhood", label: "Robinhood" },
+  { key: "evolution", label: "Self-Evolution" },
 ];
 
 // ---------------------------------------------------------------- toggle

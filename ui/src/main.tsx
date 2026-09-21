@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { motion } from "framer-motion";
 import { LiquidGlassProvider } from "./components/LiquidGlassProvider";
 import { StatusBar, type ViewKey } from "./components/StatusBar";
+import { Evolution } from "./views/Evolution";
 import { Overview } from "./views/Overview";
 import { PaperTrading } from "./views/PaperTrading";
 import { RetiredVenue } from "./views/RetiredVenue";
@@ -37,6 +38,7 @@ function App() {
           {/* Retired, not deleted — the tab stays so the decision is visible. */}
           {view === "polymarket" && <RetiredVenue venue="polymarket_us" title="Polymarket" />}
           {view === "robinhood" && <VenueView venue="robinhood" />}
+          {view === "evolution" && <Evolution />}
         </motion.div>
       </main>
     </div>

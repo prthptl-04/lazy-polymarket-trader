@@ -259,3 +259,42 @@ export interface Concentration {
   max_concurrent: number; reason: string | null;
 }
 export interface GraduationItem { id: string; label: string; ok: boolean; detail: string }
+
+// ---- self-evolution loop (/api/evolution) -------------------------------
+// The shape mirrors `DashboardRuntime.evolution`: a forward pass, the weights
+// it applies, the loss it scores, and the gradient that goes back.
+export interface EvoInput {
+  id: string; label: string; source?: string | null;
+  attached: boolean; detail: string;
+}
+export interface EvoStage {
+  id: string; label: string; detail: string;
+  inputs?: EvoInput[];
+  active?: boolean; symbol?: string | null;
+  answered?: number; expected?: number; closed?: number;
+}
+export interface EvoSeat {
+  seat_id: string; seat_name: string; vote_weight: number;
+  samples: number; brier: number | null; overconfidence: number | null;
+  scored: boolean; min_samples: number;
+  state: "answered" | "thinking" | "idle";
+  signal: string | null; confidence: number | null;
+}
+export interface Evolution {
+  forward: EvoStage[];
+  weights: {
+    seats: EvoSeat[];
+    confidence_shrink: {
+      shrink: number | null; samples: number;
+      realized_hit_rate: number | null; usable: boolean; reason: string;
+    };
+  };
+  loss: {
+    closed_trades: number; reason: string;
+    committee: SeatScore | null; worst_seat: SeatScore | null;
+  };
+  backward: {
+    lessons: { text: string }[]; injecting: boolean;
+    recorded: number; min_samples: number; reason: string;
+  };
+}
