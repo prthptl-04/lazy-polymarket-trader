@@ -316,6 +316,15 @@ function BackwardPanel({ back }: { back: Evo["backward"] }) {
           {back.injecting ? "flowing" : "held"}
         </Pill>
       }>The gradient going back</PanelTitle>
+      {/* Retrieval is by relevance, so the set below is filtered. Saying which
+          filter stops it reading as "everything the fund has learned". */}
+      <div className="text-[10px] text-white/35 mb-2">
+        {back.scope
+          ? <>Retrieved for <span className="text-white/60">{back.scope.symbol}</span>
+              {back.scope.asset_class && <> · {back.scope.asset_class}</>} — lessons from
+              another market are not evidence here.</>
+          : <>No debate in progress — showing the whole corpus, unscoped.</>}
+      </div>
       <div className="space-y-2">
         {back.lessons.map((l, i) => (
           <motion.div key={i}

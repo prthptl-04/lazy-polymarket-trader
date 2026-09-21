@@ -77,13 +77,13 @@ def test_the_backward_pass_shows_exactly_what_reaches_a_prompt(tmp_path):
     lesson compounds across every later debate. A panel that drew from the
     lessons table instead would show a gradient flowing that is not flowing.
     """
-    from roundtable.postmortem import recent_lesson_lines
+    from roundtable.postmortem import relevant_lesson_lines
     store = MemoryStore(db_path=str(tmp_path / "e.db"))
     store.record_lesson("*", "stops were too tight on gap-prone names")
     rt = DashboardRuntime(memory=store)
 
     back = rt.evolution()["backward"]
-    assert [l["text"] for l in back["lessons"]] == list(recent_lesson_lines(store))
+    assert [l["text"] for l in back["lessons"]] == list(relevant_lesson_lines(store))
     assert back["injecting"] is False, "no resolved trades yet — the gate holds"
     assert back["recorded"] == 1, "the lesson is on file even while withheld"
 
@@ -104,3 +104,26 @@ def test_a_broken_store_degrades_rather_than_five_hundreds(tmp_path):
     e = DashboardRuntime(memory=_Broken()).evolution()
     assert e["loss"]["closed_trades"] == 0
     assert e["backward"]["lessons"] == []
+
+
+def test_the_panel_shows_the_scope_the_committee_is_actually_reading(tmp_path):
+    """Retrieval is by relevance, so an unscoped render here would show a
+    different set of lessons from the ones reaching a prompt — the same drift
+    the lessons-table version of this panel would have had."""
+    from roundtable.postmortem import relevant_lesson_lines
+    store = MemoryStore(db_path=str(tmp_path / "e.db"))
+    for i in range(30):                    # clear the injection gate
+        store.record_thesis_outcome(f"t{i}", "AAPL", 0.01, signal="bullish",
+                                    confidence=60.0, correct=True)
+    store.record_lesson("*", "an equity lesson",
+                        context={"code": "x", "symbol": "AAPL", "asset_class": "equity"})
+    store.save_deliberation("live-1", "BTC-USD", "crypto", "in_progress", {})
+
+    rt = DashboardRuntime(memory=store)
+    rt.begin_debate("BTC-USD")
+    back = rt.evolution()["backward"]
+
+    assert back["scope"] == {"symbol": "BTC-USD", "asset_class": "crypto"}
+    assert not any("equity lesson" in l["text"] for l in back["lessons"])
+    assert [l["text"] for l in back["lessons"]] == list(
+        relevant_lesson_lines(store, asset_class="crypto", symbol="BTC-USD"))

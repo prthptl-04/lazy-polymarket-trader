@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 # Stated confidence above this on a loss is a calibration fault worth recording.
 OVERCONFIDENCE_THRESHOLD = 75.0
+# ...and below this on a material WIN. Confidence drives size, so a 2R win taken
+# at 52% conviction was under-sized by the very mechanism that over-sizes a
+# confident loss. One fault, two signs — recording only the loss side is what
+# gives a post-mortem corpus its pessimistic tilt.
+UNDERCONFIDENCE_THRESHOLD = 60.0
 # Lessons older than this stop being shown; markets change and a stale rule is
 # worse than none.
 MAX_LESSONS_SHOWN = 6
@@ -79,8 +84,17 @@ class Postmortem:
         """Findings for one closed position. Empty when nothing is learnable."""
         findings: list[Finding] = []
         if realized_return >= 0:
-            # Wins are not automatically right, but there is nothing here we can
-            # establish from a win alone. Claiming otherwise teaches superstition.
+            # A win is still not automatically right, and the bar does not move:
+            # a finding is recorded only where arithmetic establishes one. What
+            # a win CAN establish is a calibration fault, which is the same
+            # thing the loss path already records at the other sign — see
+            # `_underconfidence`. Everything else a win might "teach" is
+            # survivorship, and claiming it teaches superstition.
+            if _is_material(realized_return, plan):
+                finding = self._underconfidence(symbol, realized_return,
+                                                (thesis or {}).get("payload") or thesis or {})
+                if finding is not None:
+                    findings.append(finding)
             return findings
 
         # And nothing establishable from a loss too small to be a signal.
@@ -176,6 +190,31 @@ class Postmortem:
         return findings
 
     @staticmethod
+    def _underconfidence(symbol: str, realized_return: float,
+                         payload: dict) -> Optional[Finding]:
+        """A call that worked and was barely backed.
+
+        Deliberately narrow. It fires on the CONSENSUS confidence, not on any
+        one seat, and only on a directional call — a neutral committee that
+        happened to be carried into a winner has no conviction to have
+        understated.
+        """
+        consensus = payload.get("consensus") or {}
+        confidence = consensus.get("confidence")
+        signal = consensus.get("signal")
+        if signal in (None, "neutral") or not confidence:
+            return None
+        if confidence > UNDERCONFIDENCE_THRESHOLD:
+            return None
+        return Finding(
+            "underconfident_win",
+            f"{symbol}: the committee was only {confidence:.0f}% confident on a "
+            f"{signal} call that returned {realized_return * 100:+.1f}%. Confidence "
+            "sets the size, so conviction stated below what the evidence "
+            "supported was paid for in a position smaller than the call deserved.",
+        )
+
+    @staticmethod
     def _stop_quality(symbol: str, loss_pct: float, plan: Optional[dict]) -> Optional[Finding]:
         """A finding only where the numbers support one. Silence otherwise —
         this module's own contract is that arithmetic produces a finding only
@@ -208,7 +247,8 @@ class Postmortem:
             )
         return None
 
-    def record(self, findings: list[Finding], *, symbol: str) -> int:
+    def record(self, findings: list[Finding], *, symbol: str,
+               asset_class: Optional[str] = None) -> int:
         """Persist findings as lessons every seat will read. Returns the count."""
         if not findings or self.memory is None:
             return 0
@@ -217,6 +257,7 @@ class Postmortem:
             try:
                 self.memory.record_lesson(
                     "*", f.detail, context={"code": f.code, "symbol": symbol,
+                                            "asset_class": asset_class,
                                             "severity": f.severity},
                 )
                 written += 1
@@ -226,10 +267,11 @@ class Postmortem:
 
     def run(self, *, symbol: str, realized_return: float,
             thesis: Optional[dict], exit_reason: str = "stop",
-            plan: Optional[dict] = None) -> list[Finding]:
+            plan: Optional[dict] = None,
+            asset_class: Optional[str] = None) -> list[Finding]:
         findings = self.analyse(symbol=symbol, realized_return=realized_return,
                                 thesis=thesis, exit_reason=exit_reason, plan=plan)
-        self.record(findings, symbol=symbol)
+        self.record(findings, symbol=symbol, asset_class=asset_class)
         return findings
 
 
@@ -250,17 +292,49 @@ def _is_material(realized_return: float, plan: Optional[dict]) -> bool:
 
 
 def recent_lesson_lines(memory: Any, limit: int = MAX_LESSONS_SHOWN) -> tuple[str, ...]:
-    """Lessons rendered for the evidence block.
+    """Every post-mortem lesson, newest first. Unscoped — prefer
+    `relevant_lesson_lines`, which is this with a scope applied."""
+    return relevant_lesson_lines(memory, limit=limit)
+
+
+def relevant_lesson_lines(
+    memory: Any,
+    *,
+    asset_class: Optional[str] = None,
+    symbol: Optional[str] = None,
+    limit: int = MAX_LESSONS_SHOWN,
+) -> tuple[str, ...]:
+    """Lessons rendered for the evidence block of ONE deliberation.
 
     Goes to the seats as *evidence*, not as a system-prompt edit — the system
     blocks are cache-tagged, so mutating them would discard the prompt cache
     every time the fund learns something.
 
-    GATED ON EVIDENCE. Recording is unchanged — findings are still written,
-    audited and shown to a human on the lessons panel. What is gated is the
-    INJECTION into future deliberations, because the asymmetry is brutal: a
-    lesson that is noise persists and compounds across every subsequent debate,
-    while a lesson withheld costs one cycle of un-learned insight.
+    RETRIEVED BY RELEVANCE, not by recency. This used to hand every debate the
+    newest six lessons whatever they were about, so a finding about an equity
+    gapping through its stop overnight was being read as evidence by a weekend
+    BTC deliberation. Crypto does not gap overnight; it has no overnight. No
+    hit-rate study is needed to call that a defect, which is why it is fixed
+    ahead of any measurement of whether the lessons help at all.
+
+    Ranking, highest first:
+      3  this instrument, in this asset class
+      2  this instrument (recorded before scoping existed)
+      1  this asset class
+      0  unscoped legacy
+      -  a DIFFERENT asset class is dropped, not down-ranked
+
+    Recency breaks ties, so within one relevance band the ordering is what it
+    always was. Unscoped history is kept rather than deleted: it is what the
+    fund has learned, and ranking it last fixes the leak without discarding it.
+
+    STILL GATED ON EVIDENCE, ahead of relevance. Recording is unchanged —
+    findings are written, audited and shown to a human on the lessons panel.
+    What is gated is the INJECTION into future deliberations, because the
+    asymmetry is brutal: a lesson that is noise persists and compounds across
+    every subsequent debate, while a lesson withheld costs one cycle of
+    un-learned insight. A well-targeted lesson drawn from four trades is still
+    drawn from four trades.
 
     This is not hypothetical. An earlier version of this loop fired "the stop
     may have been sized to noise" on every stopped-out long, those lines were
@@ -284,13 +358,30 @@ def recent_lesson_lines(memory: Any, limit: int = MAX_LESSONS_SHOWN) -> tuple[st
             f"evidence in front of you.",
         )
     try:
-        rows = memory.recent_lessons("*", limit=limit)
+        # Over-fetch: the scope filter runs after the query, so asking for
+        # `limit` rows would return fewer than `limit` relevant ones.
+        rows = memory.recent_lessons("*", limit=limit * 8)
     except Exception:
         return ()
-    out = []
+
+    scored: list[tuple[int, str]] = []
     for r in rows:
         ctx = r.get("context") or {}
         if not isinstance(ctx, dict) or not ctx.get("code"):
             continue        # only post-mortem lessons; skip operational notes
-        out.append(str(r.get("lesson", "")).strip())
-    return tuple(out)
+        text = str(r.get("lesson", "")).strip()
+        if not text:
+            continue
+        lesson_class = ctx.get("asset_class")
+        if asset_class and lesson_class and lesson_class != asset_class:
+            continue        # a different market; not evidence here
+        score = 0
+        if symbol and ctx.get("symbol") == symbol:
+            score += 2
+        if asset_class and lesson_class == asset_class:
+            score += 1
+        scored.append((score, text))
+
+    # `sorted` is stable, so recency (the query order) survives within a band.
+    return tuple(text for _, text in
+                 sorted(scored, key=lambda pair: -pair[0])[:limit])

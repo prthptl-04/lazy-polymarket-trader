@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
-from roundtable.postmortem import Postmortem, recent_lesson_lines
+from roundtable.postmortem import Postmortem, relevant_lesson_lines
 from trading.candidate_builder import build_candidate
 from trading.fund_config import is_thesis_stale
 from trading.pipeline import EXTENDED_HOURS_CUSHION_BPS
@@ -288,7 +288,8 @@ class FundLoop:
             sentiment_notes=sentiment_notes,
             corroboration_notes=corroboration_notes,
             portfolio_notes=self._portfolio_notes(symbol, held, moment),
-            lessons=recent_lesson_lines(self.memory),
+            lessons=relevant_lesson_lines(
+                self.memory, asset_class=asset_class, symbol=symbol),
             budget_notes=self._budget_notes(),
         )
 
@@ -743,10 +744,14 @@ class FundLoop:
         return record
 
     def _postmortem(self, record: Optional[dict], signal: Any) -> list[str]:
-        """Turn a losing exit into lessons the seats read next time."""
+        """Turn a closed exit into lessons the seats read next time.
+
+        Wins reach `Postmortem.analyse` too. It still records a finding only
+        where arithmetic establishes one — on a win that is underconfidence,
+        the mirror of the overconfidence fault already recorded on losses.
+        Filtering wins out HERE meant that half of the calibration evidence
+        never reached the analyser that knows what to do with it."""
         if self.postmortem is None or not record:
-            return []
-        if record.get("realized_return", 0) >= 0:
             return []
         thesis = None
         thesis_id = record.get("thesis_id")
@@ -766,6 +771,9 @@ class FundLoop:
                 plan={"entry": record.get("entry_price"),
                       "stop": record.get("stop"),
                       "atr": record.get("atr")},
+                # Scopes the lesson to the market it was learned in, so a
+                # weekend crypto finding is never read as equity evidence.
+                asset_class=record.get("asset_class"),
             )
         except Exception:
             logger.exception("post-mortem failed for %s", record.get("symbol"))

@@ -1318,7 +1318,7 @@ class DashboardRuntime:
             MIN_SAMPLES_FOR_FIT, MIN_SAMPLES_FOR_SEAT_SCORE,
             fit_confidence_shrink, score_seats, seat_weights,
         )
-        from roundtable.postmortem import recent_lesson_lines
+        from roundtable.postmortem import relevant_lesson_lines
         from roundtable.seats import ALL_SEATS
 
         try:
@@ -1359,7 +1359,18 @@ class DashboardRuntime:
             })
 
         # ---- backward: the gradient that actually reaches a prompt ----
-        lesson_lines = list(recent_lesson_lines(self.memory))
+        #
+        # Scoped to the debate in front of the committee, because that is what
+        # the fund injects. Retrieval is by relevance now, so an unscoped call
+        # here would show a different set of lessons from the ones actually
+        # reaching a prompt — the precise drift this panel exists to rule out.
+        # The live symbol's asset class comes off its own in-progress
+        # deliberation row rather than a second callback argument.
+        live_symbol = live.get("symbol")
+        live_class = next((d.get("asset_class") for d in delibs
+                           if d.get("symbol") == live_symbol), None) if live_symbol else None
+        lesson_lines = list(relevant_lesson_lines(
+            self.memory, asset_class=live_class, symbol=live_symbol))
         try:
             recorded = len(self.memory.recent_lessons("*", limit=100))
         except Exception:
@@ -1413,6 +1424,10 @@ class DashboardRuntime:
             "backward": {
                 "lessons": [{"text": line} for line in lesson_lines],
                 "injecting": injecting,
+                # Names the retrieval scope, so the panel cannot read as "these
+                # are all the lessons" when it is showing a filtered set.
+                "scope": ({"symbol": live_symbol, "asset_class": live_class}
+                          if live_symbol else None),
                 "recorded": recorded,
                 "min_samples": MIN_SAMPLES_FOR_FIT,
                 "reason": (

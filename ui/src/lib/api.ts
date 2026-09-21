@@ -296,5 +296,6 @@ export interface Evolution {
   backward: {
     lessons: { text: string }[]; injecting: boolean;
     recorded: number; min_samples: number; reason: string;
+    scope: { symbol: string; asset_class: string | null } | null;
   };
 }
