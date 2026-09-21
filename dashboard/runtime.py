@@ -1137,8 +1137,6 @@ class DashboardRuntime:
 
         from roundtable.calibration import seat_weights as _seat_weights
         weights = _seat_weights(list(overall.values()))
-        from roundtable.calibration import seat_weights as _seat_weights
-        weights = _seat_weights(list(overall.values()))
         blame = self._blame_by_seat()
         fit = (self.scorecard().get("fit") or {})
         shrink = fit.get("shrink")
@@ -1394,7 +1392,10 @@ class DashboardRuntime:
                 },
                 {
                     "id": "chair", "label": "Chair",
-                    "detail": "Weighted tally, then a synthesis that must carry the surviving objection.",
+                    # Says what actually happens. The weights are argued to the
+                    # chair, not applied to its output.
+                    "detail": "Reads every seat's call and its track record, then synthesises. "
+                              "Weights persuade the chair; they multiply only if it fails.",
                 },
                 {
                     "id": "grader", "label": "Outcome grader",

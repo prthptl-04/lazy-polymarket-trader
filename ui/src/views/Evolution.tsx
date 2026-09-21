@@ -93,7 +93,10 @@ export function Evolution() {
         <p className="text-[11.5px] text-white/45 leading-relaxed mb-1 max-w-3xl">
           A node is a layer, its prompts are that layer's weights, and a post-mortem
           is a gradient. Solid wires carry a decision forward; dashed ones carry what
-          the outcome taught back into the seats that will vote next.
+          the outcome taught back into the seats that will vote next. Edge thickness is
+          each seat's vote weight — which <span className="text-white/65">argues</span> to
+          the chair rather than multiplying its output, except when the chair fails.
+          Whether that decides better is what <span className="font-mono">roundtable.replay</span> measures.
         </p>
 
         <div className="overflow-x-auto">
