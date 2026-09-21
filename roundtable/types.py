@@ -50,6 +50,10 @@ class Candidate:
     # Context the seats need but must not confuse with evidence.
     sentiment_notes: tuple[str, ...] = ()
     technical_notes: tuple[str, ...] = ()
+    # How this order will reach the market, and what that costs. Without it the
+    # committee priced a round trip across a 189bps crypto book that we never
+    # make — six seats reasoning correctly from a premise the block got wrong.
+    execution_note: Optional[str] = None
     portfolio_notes: tuple[str, ...] = ()
     corroboration_notes: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
@@ -76,6 +80,8 @@ class Candidate:
                 lines.append(f"{label}: {value}{suffix}")
 
         add("Spread", self.spread_bps, " bps")
+        if self.execution_note:
+            lines.append(f"Execution: {self.execution_note}")
         add("ATR", self.atr)
         add("CVaR (95%)", self.cvar_pct)
         add("Amihud illiquidity", self.amihud_illiquidity)
@@ -99,6 +105,15 @@ class Candidate:
                 lines.append(f"\n{header}:")
                 lines.extend(f"  - {n}" for n in notes)
 
+        if self.asset_class == "crypto":
+            lines.append(
+                "\nNOT APPLICABLE: Altman Z and Piotroski F are undefined for an "
+                "asset with no issuer, no financial statements and no accruals. "
+                "This is a category difference, not missing data — the "
+                "balance-sheet seat should reason from liquidity, volatility "
+                "regime and the technicals below, or say it has no mandate here."
+            )
+
         missing = self._missing_fields()
         if missing:
             lines.append(
@@ -110,9 +125,13 @@ class Candidate:
     def _missing_fields(self) -> list[str]:
         checks = {
             "spread": self.spread_bps, "ATR": self.atr, "CVaR": self.cvar_pct,
-            "Altman Z": self.altman_z, "Piotroski F": self.piotroski_f,
             "exit plan": self.stop,
         }
+        if self.asset_class != "crypto":
+            # For an equity these ARE defined, so absent is a real gap. For
+            # crypto they are a category error and are reported as such above.
+            checks["Altman Z"] = self.altman_z
+            checks["Piotroski F"] = self.piotroski_f
         return [name for name, value in checks.items() if value is None]
 
 

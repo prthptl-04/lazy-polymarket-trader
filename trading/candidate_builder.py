@@ -107,7 +107,12 @@ def build_candidate(
         stop=exit_plan.stop if exit_plan else None,
         target=exit_plan.target if exit_plan else None,
         sentiment_notes=tuple(sentiment_notes),
-        technical_notes=tuple(technical_notes),
+        # Derived technicals APPEND to whatever the caller supplied — a
+        # caller's own reading must never be silently replaced. Every seat on a
+        # live ETH deliberation reported "no directional evidence in the
+        # block", and all of this is computable from the bars already in hand.
+        technical_notes=tuple(technical_notes) + _derived_technicals(bars, price),
+        execution_note=_execution_note(asset_class, spread_bps),
         portfolio_notes=tuple(portfolio_notes),
         corroboration_notes=tuple(corroboration_notes),
         lessons=tuple(lessons),
@@ -176,3 +181,83 @@ def _prescreen(
         )
 
     return PreScreen(True, "passed deterministic pre-screen")
+
+
+def _derived_technicals(bars: Sequence[Bar], price: float) -> tuple[str, ...]:
+    """Trend, momentum, position in range and volatility regime, from the bars.
+
+    The committee cannot form a directional view without directional evidence,
+    and on a live deliberation every seat said so — "even at zero friction a
+    1.5 R:R with an unknown hit rate is a coin flip, not an edge". None of this
+    needs a new data source; it was already in the bars being used for ATR.
+
+    Deliberately descriptive rather than prescriptive. A note says where price
+    sits, never what to do about it: the seats are paid to disagree about the
+    second part, and handing them a conclusion would collapse six views into
+    one borrowed from a moving average.
+    """
+    closes = [b.close for b in bars if b.close]
+    if len(closes) < 10 or not price:
+        return ()
+
+    notes: list[str] = []
+    window = closes[-20:]
+    sma = sum(window) / len(window)
+    drift = (price - sma) / sma * 100 if sma else 0.0
+    if abs(drift) < 0.5:
+        notes.append(f"Trend: flat — price is within 0.5% of its {len(window)}-bar "
+                     f"average ({sma:,.2f}); no clear direction from the mean")
+    else:
+        notes.append(f"Trend: price is {abs(drift):.1f}% "
+                     f"{'above' if drift > 0 else 'below'} its {len(window)}-bar "
+                     f"average ({sma:,.2f})")
+
+    for span in (5, 20):
+        if len(closes) > span and closes[-span - 1]:
+            change = (price - closes[-span - 1]) / closes[-span - 1] * 100
+            notes.append(f"Momentum: {change:+.1f}% over the last {span} bars")
+
+    highs = [b.high for b in bars[-20:] if b.high]
+    lows = [b.low for b in bars[-20:] if b.low]
+    if highs and lows and max(highs) > min(lows):
+        pos = (price - min(lows)) / (max(highs) - min(lows)) * 100
+        notes.append(f"Range: price sits at {pos:.0f}% of the 20-bar range "
+                     f"({min(lows):,.2f} low to {max(highs):,.2f} high)")
+
+    # Is this bar's volatility normal for this instrument, or unusual?
+    spans = [b.high - b.low for b in bars[-20:] if b.high and b.low]
+    if len(spans) >= 10:
+        recent = sum(spans[-5:]) / 5
+        typical = sorted(spans)[len(spans) // 2]
+        if typical:
+            ratio = recent / typical
+            label = ("expanding" if ratio > 1.3 else
+                     "contracting" if ratio < 0.7 else "normal")
+            notes.append(f"Volatility regime: {label} — the last 5 bars average "
+                         f"{ratio:.1f}x the median bar range")
+    return tuple(notes)
+
+
+def _execution_note(asset_class: str, spread_bps: Optional[int]) -> Optional[str]:
+    """How the order reaches the market, and therefore what the spread costs us.
+
+    Without this the block said "Spread: 189 bps" and six seats priced a ~378
+    bps round trip, collapsing a 1.5 R:R to 0.7 and correctly refusing the
+    trade. The premise was wrong, not the reasoning: a wide crypto book is
+    quoted, not paid, because the order rests at the mark rather than crossing.
+    """
+    from trading.pipeline import RESTING_SPREAD_BPS
+
+    if spread_bps is None:
+        return None
+    if asset_class == "crypto" and spread_bps > RESTING_SPREAD_BPS:
+        return (f"this order RESTS as a limit at the MARK — the midpoint, not the "
+                f"bid — so it improves on the best bid and fills on ordinary "
+                f"two-way flow rather than only on a reversal. It does NOT cross "
+                f"the spread, so the {spread_bps} bps quoted above is NOT a cost "
+                f"we pay: expect ~0 bps of crossing cost. What resting DOES cost "
+                f"is real and unmodelled — the order may not fill, and it is more "
+                f"likely to fill when the market is about to move through it. "
+                f"Weigh that, but do not price a round trip across this spread.")
+    return (f"this order CROSSES the spread, so expect to pay about "
+            f"{spread_bps // 2} bps per side, {spread_bps} bps round trip.")
