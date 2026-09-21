@@ -147,6 +147,15 @@ if __name__ == "__main__":  # pragma: no cover
     # first), so the check reports which half is absent.
     import sys
 
+    # Load .env explicitly. `from_env` reads os.getenv, and a value that lives
+    # only in .env is not in the environment until something loads it — so the
+    # check would have reported "not set" for a token that was set.
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(".env")
+    except Exception:
+        pass
+
     notifier = TelegramNotifier.from_env()
     if not notifier.token:
         print("TELEGRAM_BOT_TOKEN is not set.\n"
