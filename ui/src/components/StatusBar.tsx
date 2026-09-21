@@ -205,11 +205,14 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
               <motion.span
                 key={fund?.state ?? "none"}
                 initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
+                title={fund?.failed_reason ?? undefined}
                 className={`text-[11px] px-2.5 py-1 rounded-full border ${
-                  running ? "text-hood-green border-hood-green/40 bg-hood-green/10"
-                          : "text-white/40 border-white/15"}`}
+                  fund?.failed_reason
+                    ? "text-red-400 border-red-400/40 bg-red-400/10"
+                    : running ? "text-hood-green border-hood-green/40 bg-hood-green/10"
+                              : "text-white/40 border-white/15"}`}
               >
-                {fund?.state ?? "—"}
+                {fund?.failed_reason ? "engine died" : (fund?.state ?? "—")}
               </motion.span>
             </AnimatePresence>
             <ExecButton kind="go" disabled={running || !fund?.attached}

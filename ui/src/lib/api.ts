@@ -90,6 +90,10 @@ export interface LlmStatus {
 }
 export interface FundStatus {
   attached: boolean; state?: string; session?: string; equities_open?: boolean;
+  // Set only when the cycle loop stopped WITHOUT being asked to. A dashboard
+  // that cannot tell "stopped" from "died" shows a healthy fund with a dead
+  // engine — which it did, for eleven hours.
+  failed_reason?: string | null;
   // Seconds until the next cycle. null when stopped.
   next_cycle_in_seconds?: number | null;
   metrics?: { cycles: number; submitted: number; halted: number; errors: number };

@@ -40,6 +40,20 @@ logger = logging.getLogger(__name__)
 
 SchedulerState = Literal["stopped", "starting", "running", "stopping"]
 
+# Raised at the loop rather than handled by it. `CancelledError` is how STOP
+# stops; `KeyboardInterrupt` and `SystemExit` are operator intent, and a loop
+# that absorbs Ctrl-C cannot be killed. Everything else — including
+# `BaseExceptionGroup`, which is NOT an `Exception` and which killed this loop
+# silently for eleven hours — is caught, counted, and survived.
+NEVER_SWALLOW: tuple[type[BaseException], ...] = (
+    asyncio.CancelledError, KeyboardInterrupt, SystemExit,
+)
+
+
+def is_operator_intent(exc: BaseException) -> bool:
+    """True for the failures the cycle loop must NOT absorb."""
+    return isinstance(exc, NEVER_SWALLOW)
+
 DEFAULT_CYCLE_SECONDS = 300.0       # 5 minutes — swing horizon, not HFT
 
 
@@ -74,6 +88,10 @@ class FundScheduler:
     last_report: Optional[CycleReport] = None
     resumable: list[str] = field(default_factory=list)
 
+    # Set when the cycle loop exits without being asked to. `status()` reads it
+    # so a dead scheduler can never report itself as running.
+    failed_reason: Optional[str] = None
+
     _task: Optional[asyncio.Task] = None
     _stop_event: Optional[asyncio.Event] = None
 
@@ -84,6 +102,7 @@ class FundScheduler:
             return
         self.state = "starting"
         self._stop_event = asyncio.Event()
+        self.failed_reason = None
         self.metrics = SchedulerMetrics(started_at=time.time())
 
         # Surface work interrupted by the last STOP. Deliberately reported, not
@@ -117,16 +136,38 @@ class FundScheduler:
     # ---------- the loop ----------
 
     async def _run(self) -> None:
-        while not self._should_stop():
-            try:
-                await self.run_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                self.metrics.errors += 1
-                self.metrics.last_error = f"{type(e).__name__}: {e}"
-                logger.exception("fund cycle failed")
-            await self._sleep(self.cycle_interval_seconds)
+        """The cycle loop. Survives anything a cycle can throw at it.
+
+        Catches BaseException, not Exception. That is deliberate and was learned
+        the expensive way: the Robinhood MCP client raises `BaseExceptionGroup`
+        when its stream dies, which does NOT derive from `Exception`. It escaped
+        this handler, killed the task, and left `state` reading "running" for
+        eleven hours while nothing cycled and no stop was enforced.
+
+        Three still propagate, because absorbing them is worse than dying:
+        `CancelledError` is how STOP stops, and `KeyboardInterrupt` /
+        `SystemExit` are operator intent — a loop that swallows Ctrl-C cannot
+        be killed.
+        """
+        try:
+            while not self._should_stop():
+                try:
+                    await self.run_once()
+                except NEVER_SWALLOW:
+                    raise
+                except BaseException as e:
+                    self.metrics.errors += 1
+                    self.metrics.last_error = f"{type(e).__name__}: {e}"
+                    logger.exception("fund cycle failed")
+                await self._sleep(self.cycle_interval_seconds)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
+            # The loop is over and nobody asked. Record it so `status()` can
+            # say so rather than reporting the state it was left in.
+            self.failed_reason = f"cycle loop died: {type(e).__name__}: {e}"
+            logger.exception("fund cycle loop exited unexpectedly")
+            raise
 
     async def run_once(self) -> CycleReport:
         """One cycle against live account state. Public so it can be triggered."""
@@ -191,6 +232,30 @@ class FundScheduler:
 
     # ---------- status ----------
 
+    def _liveness(self) -> tuple[str, Optional[str]]:
+        """The real state, read from the TASK rather than from a stored string.
+
+        `self.state` is set at start and stop. If the loop dies in between,
+        nothing updates it — which is exactly how a dead scheduler reported
+        itself healthy for an entire trading session. This checks the object
+        that actually does the work.
+        """
+        if self.state != "running" or self._task is None:
+            return self.state, self.failed_reason
+        if not self._task.done():
+            return "running", None
+        reason = self.failed_reason
+        if reason is None:
+            exc = None
+            try:
+                exc = self._task.exception()
+            except (asyncio.CancelledError, asyncio.InvalidStateError):
+                reason = "cycle loop was cancelled"
+            if reason is None:
+                reason = (f"cycle loop died: {type(exc).__name__}: {exc}"
+                          if exc else "cycle loop exited without an error")
+        return "stopped", reason
+
     def status(self) -> dict:
         moment = self.clock()
         session = session_at(moment)
@@ -199,8 +264,13 @@ class FundScheduler:
         )
         kill_switch = getattr(self.fund, "kill_switch", None)
         pdt = getattr(getattr(self.fund, "router", None), "pdt", None)
+        state, failed_reason = self._liveness()
         return {
-            "state": self.state,
+            "state": state,
+            # Present only when the loop stopped without being asked to. A
+            # dashboard that cannot distinguish "stopped" from "died" will
+            # show a healthy fund with a dead engine.
+            "failed_reason": failed_reason,
             "session": session.value,
             "equities_open": session.equities_open,
             "uptime_seconds": round(uptime, 1),
@@ -231,7 +301,7 @@ class FundScheduler:
 
     def _next_cycle_in(self) -> Optional[float]:
         """Seconds until the next cycle, or None when nothing is scheduled."""
-        if self.state != "running":
+        if self._liveness()[0] != "running":
             return None
         if self.metrics.last_cycle_at is None:
             return 0.0
