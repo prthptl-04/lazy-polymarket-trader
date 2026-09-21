@@ -44,7 +44,7 @@ from roundtable.postmortem import Postmortem, recent_lesson_lines
 from trading.candidate_builder import build_candidate
 from trading.fund_config import is_thesis_stale
 from trading.pipeline import EXTENDED_HOURS_CUSHION_BPS
-from trading.sessions import Session, session_at, should_flatten_crypto
+from trading.sessions import EASTERN, Session, session_at, should_flatten_crypto
 from trading.venues.base import OrderRequest
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,8 @@ class FundLoop:
     postmortem: Any = None
     lookback_bars: int = 60
     max_candidates_per_cycle: int = 5
+    # symbol -> the trading day it was last closed on. See `_not_cooling_off`.
+    _cooling_off: dict = field(default_factory=dict)
     resume_max_age_seconds: float = 3600.0
     on_cycle: Any = None
 
@@ -167,9 +169,25 @@ class FundLoop:
                 return report
 
         # 5. Universe follows the session.
-        universe = self._universe_for(session)
+        universe = self._universe_for(session, moment)
         report.universe = list(universe)
         if not universe:
+            # A cycle that reports nothing at all is indistinguishable from a
+            # quiet market. Say which it is — an unconfigured weekend is most
+            # of the week under rule #23, and it used to be silent.
+            if not session.equities_open and not self.crypto_watchlist:
+                report.errors.append(
+                    "no crypto watchlist configured, so there is nothing to "
+                    "trade while equities are shut. Set FUND_CRYPTO_WATCHLIST "
+                    "(e.g. BTC,ETH) — the scout screens the US equity tape and "
+                    "has no crypto equivalent."
+                )
+            elif should_flatten_crypto(moment):
+                report.errors.append(
+                    "inside the weekend handoff window: the crypto book is "
+                    "being flattened for the equity open, so no new positions "
+                    "are opened this cycle"
+                )
             self._emit(report)
             return report
 
@@ -314,6 +332,7 @@ class FundLoop:
             # unrealized_usd for ever. `_book_close`'s docstring already called
             # itself the single funnel for all three close types; this is the
             # caller that made that true.
+            self._start_cooldown(symbol, moment)
             record = self._book_close(
                 symbol, result.ack,
                 # The mid the close was GRADED on — the same number written to
@@ -339,6 +358,25 @@ class FundLoop:
                         "figure is computed on the book's quantity"
                     )
         return True
+
+    def _not_cooling_off(self, names: list[str], moment: datetime) -> list[str]:
+        """Drop names this session already closed.
+
+        A stop fires for a reason. Re-entering the symbol in the same session —
+        at the stop price, seconds later — overrides a risk decision the fund
+        made itself, and in paper it manufactures round trips that count toward
+        the fifty rule #13 requires. Crypto needs this most: it is PDT-exempt,
+        so the weekend book has no other brake at all.
+
+        A cooldown, not a ban: the entry is keyed on the trading day and the
+        name is tradable again next session.
+        """
+        today = _trading_day(moment)
+        self._cooling_off = {s: d for s, d in self._cooling_off.items() if d >= today}
+        return [n for n in names if self._cooling_off.get(n) != today]
+
+    def _start_cooldown(self, symbol: str, moment: datetime) -> None:
+        self._cooling_off[symbol] = _trading_day(moment)
 
     def _recalibrate(self) -> None:
         """Refit the confidence shrink from resolved outcomes.
@@ -463,6 +501,7 @@ class FundLoop:
                     moment,
                 )
                 if ack.is_filled:
+                    self._start_cooldown(signal.symbol, moment)
                     record = self._book_close(
                         signal.symbol, ack,
                         planned_price=signal.price, reason=signal.reason,
@@ -682,17 +721,33 @@ class FundLoop:
 
     # ---------- helpers ----------
 
-    def _universe_for(self, session: Session) -> list[str]:
+    def _universe_for(self, session: Session, moment: datetime) -> list[str]:
         """Configured watchlist if one exists, otherwise the scout screens the
         whole tape. A configured list is an override, not the normal path."""
+        # Nothing is bought during the weekend handoff. `should_flatten_crypto`
+        # is selling the crypto book to free capital for the open, and the
+        # session is still CRYPTO_ONLY until 04:00 — so without this the same
+        # cycle sold BTC, deliberated BTC and bought it back, paying the spread
+        # twice (187bps, measured) and manufacturing a round trip out of an
+        # accounting event.
+        if should_flatten_crypto(moment):
+            return []
+
         if not session.equities_open:
-            return list(self.crypto_watchlist)
-        if self.equity_watchlist:
-            return list(self.equity_watchlist)
+            names = list(self.crypto_watchlist)
+        elif self.equity_watchlist:
+            names = list(self.equity_watchlist)
+        else:
+            names = None
+
+        if names is not None:
+            return self._not_cooling_off(names, moment)
         if self.scout is None:
             return []
         try:
-            return [c.symbol for c in self.scout.scan(limit=self.max_candidates_per_cycle * 2)]
+            return self._not_cooling_off(
+                [c.symbol for c in self.scout.scan(
+                    limit=self.max_candidates_per_cycle * 2)], moment)
         except Exception as e:
             logger.exception("scout scan failed")
             return []
@@ -810,3 +865,8 @@ class FundLoop:
             )
         except Exception:
             logger.exception("failed to abandon stale thesis %s", row.get("thesis_id"))
+
+
+def _trading_day(moment: datetime):
+    """The session a moment belongs to, for the cooldown ledger."""
+    return moment.astimezone(EASTERN).date()
