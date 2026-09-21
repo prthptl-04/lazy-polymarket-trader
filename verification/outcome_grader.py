@@ -63,6 +63,11 @@ class DirectionalTrade:
     estimated_slippage_bps: int = 0
     session: str = "regular"
     is_entry: bool = True
+    # True when the order will REST inside the spread rather than cross it.
+    # The spread gate is a crossing-cost gate, and charging a crossing cost to
+    # an order that does not cross is what made every wide-book candidate
+    # uneconomic. A far wider ceiling still applies — see MAX_RESTING_SPREAD_BPS.
+    rests: bool = False
 
     @property
     def is_long(self) -> bool:
@@ -117,6 +122,13 @@ class DirectionalTrade:
 GradableTrade = Union[ProposedTrade, DirectionalTrade]
 
 ExtendedSession = ("premarket", "after_hours")
+
+
+# A resting order does not pay the spread, but a book this wide says something
+# is broken, and a resting order in a broken book is an option written for
+# nothing. Kept deliberately far from the crossing limit so the two are not
+# confused for one another.
+MAX_RESTING_SPREAD_BPS = 500
 
 
 def spread_limit_bps(session: str, criteria: VerifiedOutcomeCriteria = DEFAULT_CRITERIA) -> int:
@@ -195,7 +207,8 @@ class OutcomeGrader:
 
         # Liquidity. No orderbook depth on these venues, so spread stands in.
         if trade.spread_bps is not None:
-            limit = spread_limit_bps(trade.session, c)
+            limit = (MAX_RESTING_SPREAD_BPS if trade.rests
+                     else spread_limit_bps(trade.session, c))
             if trade.spread_bps > limit:
                 return GradeResult(
                     False,

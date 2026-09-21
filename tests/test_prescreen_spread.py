@@ -25,7 +25,7 @@ from trading.candidate_builder import build_candidate
 from finance.exits import Bar
 from verification.criteria import DEFAULT_CRITERIA
 from verification.outcome_grader import OutcomeGrader, DirectionalTrade
-from trading.pipeline import _slippage_estimate
+from trading.pipeline import _rests, _slippage_estimate
 
 BARS = [Bar(high=81500, low=80500, close=81000) for _ in range(30)]
 
@@ -38,11 +38,16 @@ def _built(spread_bps, session="crypto_only", **kw):
 
 
 def test_a_spread_the_grader_will_refuse_is_vetoed_before_the_table():
-    """The regression: Robinhood's live weekend BTC spread."""
-    built = _built(187)
+    """A book so wide that even a resting order is writing a free option.
+
+    187bps no longer qualifies — crypto rests at the mark rather than crossing,
+    so the crossing limit is not its bar. The veto still exists for a book that
+    is genuinely broken.
+    """
+    built = _built(900)
     assert not built.prescreen.worth_debating
     assert built.prescreen.rejected_by == "max_spread_bps"
-    assert "187" in built.prescreen.reason
+    assert "900" in built.prescreen.reason
 
 
 def test_a_tradable_spread_still_reaches_the_table():
@@ -58,7 +63,7 @@ def test_the_veto_uses_the_same_limit_the_grader_does():
     """A pre-screen that passes what the grader refuses is the bug itself.
     Anything the pre-screen admits must survive the grader's spread check."""
     grader = OutcomeGrader(DEFAULT_CRITERIA)
-    for spread in (1, 25, 49, 50, 51, 100, 187, 400):
+    for spread in (1, 25, 49, 50, 51, 100, 187, 400, 600, 900):
         built = _built(spread)
         if not built.prescreen.worth_debating:
             continue
@@ -68,6 +73,9 @@ def test_the_veto_uses_the_same_limit_the_grader_does():
             stop=plan.stop, target=plan.target, win_probability=0.65,
             asset_class="crypto", spread_bps=spread,
             estimated_slippage_bps=_slippage_estimate(built.candidate),
+            # Built exactly as `ThesisPipeline` builds it. A test that omits
+            # this is not testing the invariant it claims to.
+            rests=_rests(built.candidate),
             session="crypto_only", is_entry=True)
         result = grader.evaluate(trade)
         assert result.rejected_rule != "max_spread_bps", (
@@ -75,9 +83,19 @@ def test_the_veto_uses_the_same_limit_the_grader_does():
 
 
 def test_extended_hours_gets_the_wider_limit():
-    """Premarket books are thin; the grader allows more there and so must this."""
-    assert _built(75, session="premarket").prescreen.worth_debating
-    assert not _built(75, session="regular").prescreen.worth_debating
+    """Premarket books are thin; the grader allows more there and so must this.
+
+    Uses an EQUITY, because crypto rests and is therefore not governed by the
+    crossing limit at all.
+    """
+    from finance.exits import Bar
+    def equity(spread, session):
+        return build_candidate(
+            symbol="AAPL", bars=[Bar(high=101, low=99, close=100)] * 30,
+            price=100.0, asset_class="equity", session=session,
+            spread_bps=spread, returns=[0.004] * 30, dollar_volumes=[5e8] * 30)
+    assert equity(75, "premarket").prescreen.worth_debating
+    assert not equity(75, "regular").prescreen.worth_debating
 
 
 def test_an_unknown_spread_is_not_vetoed():

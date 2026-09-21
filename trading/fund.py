@@ -141,6 +141,12 @@ class FundLoop:
         #    must not size differently for reasons unrelated to either thesis.
         #    That was the reason the original was pinned at build, and it is
         #    preserved — the value is fixed for the whole cycle below.
+        # 0a. Reconcile anything that filled while we were not looking. A
+        #     resting limit fills when the market comes to it, which is between
+        #     cycles by definition — and a fill the book does not know about is
+        #     inventory the fund will act as though it does not hold.
+        self._reconcile_resting(report)
+
         self._recalibrate()
         report.confidence_shrink = getattr(self.pipeline, "confidence_shrink", None)
 
@@ -369,6 +375,29 @@ class FundLoop:
                         "figure is computed on the book's quantity"
                     )
         return True
+
+    def _reconcile_resting(self, report: CycleReport) -> None:
+        """Book any resting order the market reached since the last cycle.
+
+        Reported rather than silent: these are positions nobody decided on THIS
+        cycle, and a fill that appears in the book with no deliberation behind
+        it should be visible. The venue owns the matching; the fund only
+        records what came back.
+        """
+        matcher = getattr(self.router, "adapters", None)
+        for adapter in matcher or []:
+            match = getattr(adapter, "match_resting", None)
+            if match is None:
+                continue
+            try:
+                for ack in match():
+                    report.errors.append(
+                        f"RESTING FILL {ack.raw.get('symbol', '?')}: an order "
+                        f"placed on an earlier cycle filled at "
+                        f"{ack.raw.get('fill_price')}. It is held at the venue."
+                    )
+            except Exception:
+                logger.exception("could not reconcile resting orders")
 
     def _not_cooling_off(self, names: list[str], moment: datetime) -> list[str]:
         """Drop names this session already closed.

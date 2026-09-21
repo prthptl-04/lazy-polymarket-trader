@@ -121,6 +121,9 @@ def build_candidate(
     )
 
 
+from verification.outcome_grader import MAX_RESTING_SPREAD_BPS
+
+
 def _prescreen(
     candidate: Candidate,
     exit_plan: Optional[ExitPlan],
@@ -148,7 +151,13 @@ def _prescreen(
     # An ABSENT spread is not a wide one — a feed that goes quiet must not veto
     # every candidate — so this only fires on a number we actually have.
     if candidate.spread_bps is not None:
-        limit = spread_limit_bps(candidate.session)
+        from trading.pipeline import _rests
+        # An order that RESTS does not pay the spread, so the crossing limit is
+        # not the right bar for it. A far wider ceiling still applies: a book
+        # this wide says something is broken, and a resting order in a broken
+        # book is an option we wrote for nothing.
+        limit = (MAX_RESTING_SPREAD_BPS if _rests(candidate)
+                 else spread_limit_bps(candidate.session))
         if candidate.spread_bps > limit:
             return PreScreen(
                 False,

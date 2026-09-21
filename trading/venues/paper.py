@@ -49,6 +49,8 @@ class PaperVenue:
     cash_usd: float = field(init=False)
     _positions: dict[str, VenuePosition] = field(default_factory=dict)
     _orders: dict[str, OrderAck] = field(default_factory=dict)
+    # venue_order_id -> the request still waiting for the market to reach it.
+    _resting: dict[str, OrderRequest] = field(default_factory=dict)
     _quotes: dict[str, Quote] = field(default_factory=dict)
     realized_pnl_usd: float = 0.0
     fills: list[dict] = field(default_factory=list)
@@ -133,15 +135,31 @@ class PaperVenue:
 
         price = self._fill_price(request, quote)
         if price is None:
-            # Resting limit order. We don't simulate a book, so it never fills.
+            # A limit inside the spread. It RESTS, and `match_resting` fills it
+            # when a later quote reaches its price.
+            #
+            # This used to accept the order and never fill it, on the grounds
+            # that no book is simulated. That is not conservative, it is wrong:
+            # a real resting limit fills when the market comes to it, and a
+            # model where it never does makes the entire non-crossing execution
+            # style untestable — which is why every crypto candidate had to
+            # cross a 187bps spread and was then refused on cost.
             ack = OrderAck(
                 accepted=True, client_order_id=request.client_order_id,
                 venue_order_id=f"paper-{request.client_order_id}",
                 status="open", venue=self.name,
             )
             self._orders[ack.venue_order_id] = ack
+            self._resting[ack.venue_order_id] = request
             return ack
 
+        return self._settle(request, price)
+
+    def _settle(self, request: OrderRequest, price: float) -> OrderAck:
+        """Move cash and inventory at `price`. Shared by immediate and resting
+        fills, so a resting order cannot drift from the rules an immediate one
+        obeys — cash is checked HERE, at fill time, because the balance may
+        have moved while the order sat there."""
         qty = self._resolve_quantity(request, price)
         if qty <= 0:
             return self._reject(request, "resolved quantity was zero")
@@ -167,7 +185,8 @@ class PaperVenue:
             accepted=True, client_order_id=request.client_order_id,
             venue_order_id=f"paper-{request.client_order_id}",
             status="filled", venue=self.name,
-            raw={"fill_price": price, "quantity": qty},
+            raw={"fill_price": price, "quantity": qty,
+                 "symbol": request.symbol},
         )
         self._orders[ack.venue_order_id] = ack
         self.fills.append({
@@ -176,10 +195,46 @@ class PaperVenue:
         })
         return ack
 
+    def match_resting(self) -> list[OrderAck]:
+        """Fill any resting order the market has reached. Returns what filled.
+
+        Called at the top of a cycle, before anything is decided, because a
+        fill that happened while we were not looking is a position we already
+        hold — acting on stale inventory is how a book and a broker diverge.
+
+        Filled at OUR limit, never better. A model that improved on the limit
+        would be inventing price improvement nobody promised, and every
+        optimism in a paper record eventually gets read as an edge.
+
+        Still no queue position and no partial fills: a real resting order can
+        be behind others at the same price and may fill in pieces. We are ahead
+        of reality on timing and behind it on nothing that flatters us.
+        """
+        filled: list[OrderAck] = []
+        for venue_order_id, request in list(self._resting.items()):
+            quote = self._quotes.get(request.symbol)
+            if quote is None:
+                continue
+            limit = request.limit_price
+            if request.side == "buy":
+                reached = quote.ask is not None and quote.ask <= limit
+            else:
+                reached = quote.bid is not None and quote.bid >= limit
+            if not reached:
+                continue
+
+            del self._resting[venue_order_id]
+            ack = self._settle(request, limit)
+            self._orders[venue_order_id] = ack
+            if ack.is_filled:
+                filled.append(ack)
+        return filled
+
     async def cancel_order(self, venue_order_id: str) -> bool:
         ack = self._orders.get(venue_order_id)
         if ack is None or ack.status in ("filled", "cancelled", "rejected"):
             return False
+        self._resting.pop(venue_order_id, None)
         self._orders[venue_order_id] = OrderAck(
             accepted=True, client_order_id=ack.client_order_id,
             venue_order_id=venue_order_id, status="cancelled", venue=self.name,

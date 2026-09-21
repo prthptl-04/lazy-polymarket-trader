@@ -58,6 +58,11 @@ CONFIDENCE_SHRINK = 0.5
 # A thesis carried by one surviving seat is not a committee decision.
 MIN_RESPONDING_SEATS = 3
 
+# Above this quoted spread an order rests at the mark instead of crossing.
+# Below it, crossing is cheaper than the risk of not filling: an equity book is
+# 3-5 bps wide and waiting to save two of them is not worth a missed entry.
+RESTING_SPREAD_BPS = 40
+
 Outcome = str  # "submitted" | "skipped" | "rejected"
 
 
@@ -201,6 +206,7 @@ class ThesisPipeline:
             spread_bps=candidate.spread_bps,
             estimated_slippage_bps=_slippage_estimate(candidate),
             session=candidate.session,
+            rests=_rests(candidate),
             is_entry=True,
         )
         grade = self.grader.evaluate(trade)
@@ -257,6 +263,7 @@ class ThesisPipeline:
             spread_bps=candidate.spread_bps,
             estimated_slippage_bps=_slippage_estimate(candidate),
             session=candidate.session,
+            rests=_rests(candidate),
             is_entry=False,
         )
         grade = self.grader.evaluate(trade)
@@ -435,6 +442,23 @@ def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None
     sell gives it up. Without a two-sided quote there is no touch to price
     through, and the caller must refuse rather than send a resting order.
     """
+    # Crypto RESTS. Robinhood's retail crypto book is ~187bps wide (measured:
+    # BTC-USD 80386.75 / 81903.00, mark 81144.87), so crossing it costs ~93bps
+    # a side — roughly a third of the gross target on this fund's 2xATR/3xATR
+    # geometry, which is why every weekend candidate was correctly refused on
+    # cost and the weekend half of the rotation contributed nothing.
+    #
+    # But the spread is the price of DEMANDING liquidity, and a swing fund on a
+    # five-minute cycle holding for hours has no need to demand it. Resting at
+    # the mark costs nothing if it fills; the price is that it may not. That is
+    # the right trade here and the wrong one for equities, whose books are 3-5
+    # bps wide — waiting to save two basis points is not worth a missed entry.
+    if candidate.asset_class == "crypto" and candidate.spread_bps \
+            and candidate.spread_bps > RESTING_SPREAD_BPS:
+        return {"order_type": "limit",
+                "limit_price": round(candidate.price, 2),
+                "time_in_force": "gtc"}
+
     if candidate.session not in ("premarket", "after_hours"):
         return {"order_type": "market"}
 
@@ -456,8 +480,28 @@ def needs_two_sided_quote(candidate: Candidate) -> bool:
 
 
 def _slippage_estimate(candidate: Candidate) -> int:
-    """Assume we pay half the spread. Crude, but it is an estimate the grader
-    can act on rather than a zero that pretends trading is free."""
+    """What crossing costs us, in bps. Zero when we do not cross.
+
+    Half the spread is crude but it is an estimate the grader can act on rather
+    than a zero that pretends trading is free. It is also WRONG for an order
+    that rests: charging a crossing cost to a limit sitting at the mark is what
+    made every crypto candidate uneconomic and left the weekend contributing
+    nothing.
+
+    The cost of resting is not zero in reality — it is the risk of not filling,
+    and of filling exactly when the market is about to move through you. That
+    is an execution risk, not a price, and it belongs in the fill record rather
+    than in a slippage figure the sizer would treat as a certainty.
+    """
     if candidate.spread_bps is None:
         return 0
+    if _rests(candidate):
+        return 0
     return int(round(candidate.spread_bps / 2))
+
+
+def _rests(candidate: Candidate) -> bool:
+    """Would this order sit inside the spread rather than cross it?"""
+    return bool(candidate.asset_class == "crypto"
+                and candidate.spread_bps
+                and candidate.spread_bps > RESTING_SPREAD_BPS)
