@@ -55,6 +55,8 @@ export interface LlmStatus {
 }
 export interface FundStatus {
   attached: boolean; state?: string; session?: string; equities_open?: boolean;
+  // Seconds until the next cycle. null when stopped.
+  next_cycle_in_seconds?: number | null;
   metrics?: { cycles: number; submitted: number; halted: number; errors: number };
   kill_switch?: { armed: boolean; tripped: boolean; remaining_usd: number; limit_usd: number } | null;
   pdt?: { pdt_applies: boolean; day_trades_remaining: number } | null;
@@ -91,7 +93,9 @@ export interface PaperProgress {
   win_rate: number | null; closed: number;
 }
 export interface Feed {
-  symbol: string; entry: number | null; bid: number | null; ask: number | null;
+  // `held` false means the fund is WATCHING this, not holding it. Blurring the
+  // two would let a glance read a watchlist as a portfolio.
+  symbol: string; held: boolean; entry: number | null; bid: number | null; ask: number | null;
   last: number | null; spread_bps: number | null; change_pct: number | null;
   reason: string | null;
 }

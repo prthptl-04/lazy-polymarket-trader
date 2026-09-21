@@ -117,18 +117,40 @@ class DashboardRuntime:
         whose quote fails is returned with its reason rather than dropped —
         a feed that silently shortens is indistinguishable from a flat book.
         """
+        from trading.venues.retired import is_retired
+        if is_retired(venue):
+            # Nothing is watched there, and quoting it would imply otherwise.
+            return []
+
         prediction = venue == "polymarket_us"
         held = [
             p for p in self.positions()
             if (p["asset_class"] == "prediction") == prediction
         ][:limit]
 
+        # Held FIRST, then whatever the fund is watching. Showing only the book
+        # meant an empty book returned [] for ever — and the period when you
+        # most want to see the fund is alive is the period before it has done
+        # anything. A watched symbol's spread is also the number that decides
+        # whether a crypto candidate rests or is refused outright.
+        entries = [(p, True) for p in held]
+        seen = {p["symbol"] for p in held}
+        for symbol in self._watched_symbols():
+            if len(entries) >= limit:
+                break
+            if symbol not in seen:
+                entries.append(({"symbol": symbol, "entry": None}, False))
+                seen.add(symbol)
+
         adapter = (self.venues or {}).get(venue)
         rows: list[dict] = []
-        for pos in held:
+        for pos, is_held in entries:
             row = {
                 "symbol": pos["symbol"],
                 "entry": pos["entry"],
+                # A feed that blurs watching and holding would let a glance
+                # read a watchlist as a portfolio.
+                "held": is_held,
                 "bid": None, "ask": None, "last": None,
                 "spread_bps": None, "change_pct": None, "reason": None,
             }
@@ -323,6 +345,15 @@ class DashboardRuntime:
             name, _, mode = key.rpartition(":")
             if name and mode in ("paper", "live"):
                 router.set_mode_enabled(name, mode, bool(on))
+
+    def _watched_symbols(self) -> list[str]:
+        """What the fund is looking at this session, whether or not it holds it."""
+        fund = getattr(self.fund_scheduler, "fund", None)
+        if fund is None:
+            return []
+        equity = getattr(fund, "equity_watchlist", ()) or ()
+        crypto = getattr(fund, "crypto_watchlist", ()) or ()
+        return [*equity, *crypto]
 
     def _router(self):
         sched = self.fund_scheduler

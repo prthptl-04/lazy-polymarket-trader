@@ -44,11 +44,19 @@ async def test_equity_feed_excludes_prediction_symbols(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_prediction_feed_excludes_equities(tmp_path):
+async def test_a_retired_venue_has_no_live_feed(tmp_path):
+    """This used to assert the prediction feed quoted its positions, and it was
+    right to at the time. Polymarket is retired now: nothing is watched there,
+    and a ticking feed beside a retired page would imply otherwise.
+
+    The asset-class split the old test covered still exists — `feeds` filters
+    prediction from non-prediction — it simply has no live venue to exercise it
+    on any more.
+    """
     venue = PaperVenue()
     venue.set_quote("will-x-happen", bid=0.44, ask=0.46)
     rows = await _runtime(tmp_path, {"polymarket_us": venue}).feeds("polymarket_us")
-    assert [r["symbol"] for r in rows] == ["will-x-happen"]
+    assert rows == []
 
 
 @pytest.mark.asyncio

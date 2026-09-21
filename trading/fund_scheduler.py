@@ -205,6 +205,10 @@ class FundScheduler:
             "equities_open": session.equities_open,
             "uptime_seconds": round(uptime, 1),
             "cycle_interval_seconds": self.cycle_interval_seconds,
+            # Five minutes between cycles means a four-second poll shows the
+            # same numbers seventy-five times in a row. A countdown is the
+            # difference between "working" and "hung".
+            "next_cycle_in_seconds": self._next_cycle_in(),
             "resumable_theses": list(self.resumable),
             "metrics": {
                 "cycles": self.metrics.cycles,
@@ -224,6 +228,15 @@ class FundScheduler:
         }
 
     # ---------- helpers ----------
+
+    def _next_cycle_in(self) -> Optional[float]:
+        """Seconds until the next cycle, or None when nothing is scheduled."""
+        if self.state != "running":
+            return None
+        if self.metrics.last_cycle_at is None:
+            return 0.0
+        elapsed = time.time() - self.metrics.last_cycle_at
+        return round(max(0.0, self.cycle_interval_seconds - elapsed), 1)
 
     def _publish(self) -> None:
         if self.on_status is None:
