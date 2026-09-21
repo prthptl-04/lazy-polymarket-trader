@@ -52,6 +52,11 @@ Respond with ONLY a JSON object, no prose around it, no code fences:
 }"""
 
 
+# Every asset class the fund trades. A seat declares which of these it has a
+# mandate for; the default is all of them.
+ALL_ASSET_CLASSES: tuple[str, ...] = ("equity", "crypto")
+
+
 @dataclass(frozen=True)
 class Seat:
     id: str
@@ -59,10 +64,18 @@ class Seat:
     mandate: str
     system_prompt: str
     round: int = 1
+    # Asset classes this seat can actually reason about. A seat outside its
+    # mandate does not attend — see `eligible_seats` for why that matters more
+    # than it sounds.
+    asset_classes: tuple[str, ...] = ALL_ASSET_CLASSES
 
 
 ANALYST = Seat(
     id="analyst",
+    # Altman Z and Piotroski F are undefined for an asset with no issuer, no
+    # financial statements and no accruals. This seat is not merely quiet on
+    # crypto, it has nothing to be quiet about.
+    asset_classes=("equity",),
     name="Fundamental Analyst",
     mandate="Business quality and financial health",
     round=1,
@@ -266,6 +279,9 @@ Respond with ONLY a JSON object, no prose around it, no code fences:
 
 CATALYST = Seat(
     id="catalyst",
+    # No earnings date, no 8-K, no Form 4 exists for a token. The headlines it
+    # would otherwise read belong to the Sentiment seat's mandate, not its own.
+    asset_classes=("equity",),
     name="Catalyst Analyst",
     mandate="Scheduled events, filings, and insider flow",
     round=1,
@@ -309,3 +325,36 @@ ROUND_TWO_SEATS: tuple[Seat, ...] = (DEVILS_ADVOCATE,)
 ALL_SEATS: tuple[Seat, ...] = ROUND_ONE_SEATS + ROUND_TWO_SEATS
 
 SEATS_BY_ID: dict[str, Seat] = {s.id: s for s in ALL_SEATS}
+
+
+def eligible_seats(asset_class: str,
+                   seats: tuple[Seat, ...] = ALL_SEATS) -> tuple[Seat, ...]:
+    """The seats that can actually hold a view on this asset class.
+
+    This exists because of a measured failure, not a theory. Over twelve live
+    crypto deliberations the committee returned neutral twelve times and
+    submitted nothing. Four of seven seats had never once expressed a direction
+    — correctly, because on an instrument with no issuer they have nothing to
+    reason from.
+
+    The trap is that a neutral answer is COUNTED, while only an errored seat
+    abstains and is excluded. So the chair read "six of seven seats are
+    neutral" as a committee-wide stand-aside, when four of them were never
+    eligible to speak. One eligible bullish voice against four ineligible
+    neutrals is not a close vote; it is a committee that cannot produce a
+    weekend trade by construction.
+
+    **An unknown asset class keeps the whole table.** Muting is the dangerous
+    direction: it removes a view, and a view removed is never recorded as
+    missing the way an abstention is. Refuse to mute on a guess.
+    """
+    if asset_class not in ALL_ASSET_CLASSES:
+        return seats
+    return tuple(s for s in seats if asset_class in s.asset_classes)
+
+
+def excluded_seats(asset_class: str,
+                   seats: tuple[Seat, ...] = ALL_SEATS) -> tuple[Seat, ...]:
+    """The inverse — for saying out loud who is not at the table."""
+    eligible = {s.id for s in eligible_seats(asset_class, seats)}
+    return tuple(s for s in seats if s.id not in eligible)

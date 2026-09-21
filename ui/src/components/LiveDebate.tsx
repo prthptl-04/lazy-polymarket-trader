@@ -22,16 +22,24 @@ interface LiveOpinion {
   confidence: number | null; reasoning: string | null;
   failed: boolean; error: string | null;
 }
+interface ExcludedSeat { id: string; name: string; reason: string }
 interface LiveDebateData {
-  symbol: string | null; opinions: LiveOpinion[];
+  symbol: string | null; asset_class: string | null; opinions: LiveOpinion[];
   answered: number; expected_seats: number; in_progress: boolean;
+  // Seats with no mandate on this asset class. They were never asked, so their
+  // absence is not a vote — the panel has to say that or a 5-seat crypto table
+  // reads as a 7-seat one that lost two members.
+  excluded_seats: ExcludedSeat[];
 }
 
 export function LiveDebate({ title = "Committee · thinking now" }: { title?: string }) {
   const { data } = usePoll<LiveDebateData>("/api/roundtable/live", LIVE);
   const answered = data?.answered ?? 0;
-  const expected = data?.expected_seats ?? 6;
+  // Falls back to the full committee, never to a guess that would render a
+  // finished debate as incomplete.
+  const expected = data?.expected_seats ?? 7;
   const running = !!data?.in_progress;
+  const excluded = data?.excluded_seats ?? [];
 
   if (!data?.symbol) {
     return (
@@ -99,6 +107,21 @@ export function LiveDebate({ title = "Committee · thinking now" }: { title?: st
             </motion.div>
           ))}
         </AnimatePresence>
+
+        {/* Seats with no mandate here. Drawn, struck through, and reasoned —
+            an absent seat that simply vanished would read as a committee that
+            lost members rather than one that was never that size today. */}
+        {excluded.map((seat) => (
+          <div key={seat.id} className="flex gap-2.5 opacity-45">
+            <div className="w-[26px] h-[26px] shrink-0 mt-0.5 rounded-full
+                            border border-dashed border-white/15 bg-transparent" />
+            <div className="flex-1 rounded-2xl rounded-tl-sm border border-dashed
+                            border-white/[0.09] px-3 py-1.5">
+              <span className="text-[11px] text-white/45 line-through">{seat.name}</span>
+              <span className="text-[10.5px] text-white/30 ml-2">{seat.reason} — not asked</span>
+            </div>
+          </div>
+        ))}
 
         {/* Seats still out. Showing the gap is what makes the panel read as a
             debate in progress rather than as a finished, thin one. */}

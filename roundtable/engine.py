@@ -38,6 +38,8 @@ from typing import Any, Optional, Sequence
 
 from cache.prompt_cache import cached_create
 from roundtable.seats import (
+    eligible_seats,
+    excluded_seats,
     CHAIR_SYSTEM_PROMPT,
     ROUND_ONE_SEATS,
     ROUND_TWO_SEATS,
@@ -107,9 +109,13 @@ class RoundTable:
 
         evidence = candidate.evidence_block()
 
-        # Round 1 — independent, concurrent.
+        # Round 1 — independent, concurrent, and only the seats that can
+        # actually hold a view on this asset class. A seat outside its mandate
+        # used to answer "neutral" and have that COUNTED, which is how twelve
+        # crypto debates produced twelve stand-asides and no trades.
+        seats_one = eligible_seats(candidate.asset_class, ROUND_ONE_SEATS)
         round_one = await asyncio.gather(
-            *(self._ask_seat(seat, evidence) for seat in ROUND_ONE_SEATS),
+            *(self._ask_seat(seat, evidence) for seat in seats_one),
             return_exceptions=False,
         )
         thesis.opinions.extend(round_one)
@@ -119,7 +125,7 @@ class RoundTable:
 
         # Round 2 — rebuttal, with round 1 visible.
         prior = self._render_opinions(round_one)
-        for seat in ROUND_TWO_SEATS:
+        for seat in eligible_seats(candidate.asset_class, ROUND_TWO_SEATS):
             opinion = await self._ask_seat(
                 seat, f"{evidence}\n\n--- THE OTHER SEATS ---\n{prior}"
             )
@@ -190,6 +196,7 @@ class RoundTable:
 
         content = (
             f"{candidate.evidence_block()}\n\n"
+            f"{self._eligibility_note(candidate.asset_class)}"
             f"--- SEAT POSITIONS ---\n{self._render_opinions(thesis.opinions)}"
         )
         try:
@@ -214,6 +221,33 @@ class RoundTable:
             transcript=str(parsed.get("transcript", "")).strip(),
             dissent=str(parsed.get("dissent", "")).strip(),
             synthesized_by_llm=True,
+        )
+
+    @staticmethod
+    def _eligibility_note(asset_class: str) -> str:
+        """Tell the chair how big the table actually is.
+
+        It was counting seats that never sat. "One of three eligible seats is
+        bullish" and "one of seven seats is bullish" describe the same vote and
+        imply opposite conclusions, and the chair reached the second one twelve
+        times in a row.
+
+        Silent when every seat is eligible: on equities there is nothing to
+        explain, and a line reading "7 of 7" is noise in a prompt that is paid
+        for by the token.
+        """
+        missing = excluded_seats(asset_class)
+        if not missing:
+            return ""
+        total = len(eligible_seats(asset_class)) + len(missing)
+        names = ", ".join(s.name for s in missing)
+        return (
+            f"--- TABLE SIZE ---\n"
+            f"{total - len(missing)} of {total} seats were eligible for this "
+            f"asset class. NOT CONSULTED: {names} — these seats have no mandate "
+            f"on {asset_class} and were never asked, so their silence is not a "
+            f"vote to stand aside. Judge the balance of opinion against the "
+            f"seats that actually sat, not against the full committee.\n\n"
         )
 
     def _fallback_consensus(self, thesis: Thesis, why: str) -> Consensus:

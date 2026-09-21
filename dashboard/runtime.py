@@ -254,20 +254,47 @@ class DashboardRuntime:
         reads very differently from two of two, and without it a half-finished
         debate looks like a decisive one.
         """
-        from roundtable.seats import ALL_SEATS
+        from roundtable.seats import ALL_SEATS, eligible_seats, excluded_seats
         live = dict(self._live_debate or {})
         opinions = live.get("opinions", [])
+        # The table is smaller on crypto: two seats have no mandate there and
+        # are never asked. Counting against the full committee would render a
+        # complete 5-seat debate as permanently 5/7 — stuck, not finished.
+        asset_class = self._asset_class_of(live.get("symbol"))
+        eligible = eligible_seats(asset_class) if asset_class else ALL_SEATS
         return {
             "symbol": live.get("symbol"),
+            "asset_class": asset_class,
             "opinions": opinions,
             "answered": len(opinions),
-            "expected_seats": len(ALL_SEATS),
+            "expected_seats": len(eligible),
+            "excluded_seats": [
+                {"id": s.id, "name": s.name, "reason": f"no mandate on {asset_class}"}
+                for s in (excluded_seats(asset_class) if asset_class else ())
+            ],
             "in_progress": bool(live.get("in_progress")),
             "started": live.get("started"),
             # Never a verdict while it is running. Four seats in is not a
             # decision, and a panel implying otherwise is worse than no panel.
             "consensus": None,
         }
+
+    def _asset_class_of(self, symbol: Optional[str]) -> Optional[str]:
+        """The asset class of the symbol under debate.
+
+        Read off its own in-progress deliberation row, which the engine writes
+        when the table convenes — so no new callback argument is needed to get
+        it here.
+        """
+        if not symbol:
+            return None
+        try:
+            for row in self.memory.recent_deliberations(limit=20):
+                if row.get("symbol") == symbol:
+                    return row.get("asset_class")
+        except Exception:
+            pass
+        return None
 
     def deliberations(self, limit: int = 25, *,
                       mode: Optional[str] = None) -> list[dict]:
@@ -847,6 +874,7 @@ class DashboardRuntime:
         }
         out = [
             {"id": s.id, "name": s.name, "mandate": s.mandate,
+             "asset_classes": list(s.asset_classes),
              "round": s.round, "icon": icons.get(s.id, "\U0001F464")}
             for s in ALL_SEATS
         ]

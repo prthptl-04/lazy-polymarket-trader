@@ -138,7 +138,12 @@ export interface SeatScore {
   seat_id: string; seat_name: string; samples: number; hit_rate: number;
   brier: number; overconfidence: number; calibrated: boolean; beats_coin_flip: boolean;
 }
-export interface Agent { id: string; name: string; mandate: string; round: number; icon: string }
+export interface Agent {
+  id: string; name: string; mandate: string; round: number; icon: string;
+  // Asset classes this seat has a mandate for. A seat outside it is not asked,
+  // so the roster greys it rather than implying it declined to speak.
+  asset_classes?: string[];
+}
 export interface Lesson { code: string; symbol: string | null; severity: string; lesson: string }
 export interface Position {
   symbol: string; asset_class: string; quantity: number; entry: number;
@@ -193,6 +198,9 @@ export interface EngineState {
   retired?: boolean;
 }
 export interface AgentMatrixRow {
+  // Null for the chair, which always sits. Otherwise the asset classes this
+  // seat has a mandate for — outside it the seat is not asked at all.
+  asset_classes?: string[] | null;
   id: string; name: string; mandate: string; round: number; icon: string;
   samples: number; abstentions: number;
   hit_rate: number | null; brier: number | null;

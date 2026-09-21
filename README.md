@@ -201,6 +201,13 @@ Undated is treated as stale because the costs are asymmetric: discounting fresh
 evidence loses one cycle's conviction, trusting stale evidence sizes a position
 against a market that has already moved.
 
+**The table changes size with the session.** A seat with no mandate for the
+asset class is not asked, rather than asked and answering neutral — because a
+neutral answer is *counted*, and four permanently-neutral votes made a crypto
+consensus arithmetically unreachable. Weekdays seat all seven; weekends seat
+five. The chair is told how many were eligible, so "one of three eligible" is
+never read as "one of seven".
+
 A seat that errors is an **abstention**, not a neutral vote — a crashed API
 call must never outvote a seat that answered. The transcript keeps the raw
 tally; a transcript that silently re-weights itself is not one.
@@ -327,6 +334,7 @@ does, and each is answerable for it.
 | **Risk Manager** | 1 | Exposure, sizing, the exit plan | States a spread without an execution style |
 | **Corroborator** | 1 | Independent verification of *facts*, not reasoning | Waves through a single-sourced number |
 | **Catalyst Analyst** | 1 | Scheduled events, filings, insider flow | Invents a direction from a calendar |
+| | | _Analyst and Catalyst are **equity-only** — no statements or filings exist for a token, so at weekends they are not asked at all_ | |
 | **Devil's Advocate** | 2 | Mandated dissent — break the emerging consensus | Agrees, which makes the seat decorative |
 | **Chair** | 3 | Synthesis, and carrying the surviving objection | Buries the dissent it was required to surface |
 
@@ -591,7 +599,7 @@ python -m dashboard                        # http://127.0.0.1:8765
 ```bash
 ./scripts/verify.sh                        # tests, self-checks, ui build, vuln scan
 python -m monitoring.paper_report          # what to change next, with pre-registered triggers
-pytest -q                                  # 1525 tests
+pytest -q                                  # 1536 tests
 python -m roundtable.replay                # does the aggregation help?
 python -m monitoring.telegram              # notification self-check
 python -c "from vulnerability_detector import VulnerabilityDetectionAgent as V; print(V(root='.').run())"

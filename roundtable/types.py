@@ -21,6 +21,12 @@ from typing import Literal, Optional
 from roundtable.knowledge import SourceRef
 
 
+def _excluded_seat_names(asset_class: str) -> str:
+    """Imported lazily inside the function to avoid a seats<->types cycle."""
+    from roundtable.seats import excluded_seats
+    return ", ".join(s.name for s in excluded_seats(asset_class))
+
+
 Signal = Literal["bullish", "bearish", "neutral"]
 VALID_SIGNALS: tuple[Signal, ...] = ("bullish", "bearish", "neutral")
 
@@ -129,6 +135,17 @@ class Candidate:
                 lines.append(
                     "  Anything marked STALE may have been overtaken by the market. "
                     "Lower your confidence rather than assuming it still holds.")
+
+        absent = _excluded_seat_names(self.asset_class)
+        if absent:
+            # A sparse vote must read as a smaller committee, not as weak
+            # conviction. The seats that sit are told who is missing and why.
+            lines.append(
+                f"\nSEATS NOT CONSULTED on {self.asset_class}: {absent}. They have "
+                "no mandate for this asset class and were not asked. The table is "
+                "smaller than usual by design — do not read the absent seats as "
+                "silent agreement or as caution."
+            )
 
         if self.asset_class == "crypto":
             lines.append(

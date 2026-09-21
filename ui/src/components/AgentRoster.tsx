@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { Avatar } from "./Avatar";
 import { GlassCard, PanelTitle } from "./GlassCard";
 import { Empty, Pill } from "./primitives";
-import { usePoll, type AgentMatrixRow } from "../lib/api";
+import { usePoll, NEAR, type AgentMatrixRow, type FundStatus } from "../lib/api";
 
 /**
  * The roster, best first.
@@ -12,9 +12,22 @@ import { usePoll, type AgentMatrixRow } from "../lib/api";
  * sort last rather than to the top or the middle: a seat with no record is not
  * performing well, it is untested, and either of the other placements would
  * claim otherwise.
+ *
+ * The table changes size with the session. Two seats have no mandate on crypto
+ * — there are no financial statements and no filings for a token — so at
+ * weekends they are not asked at all. They are shown struck through rather than
+ * hidden: a roster that silently shrank would read as seats having been
+ * removed, when the committee is simply smaller today.
  */
 export function AgentRoster() {
   const { data } = usePoll<AgentMatrixRow[]>("/api/agents/matrix", 20000);
+  const { data: status } = usePoll<FundStatus>("/api/status", NEAR);
+
+  // The universe on the rotation: equities in the week, crypto at weekends.
+  const assetClass = status?.equities_open ? "equity" : "crypto";
+  const sits = (a: AgentMatrixRow) =>
+    !a.asset_classes || a.asset_classes.includes(assetClass);
+  const seated = (data ?? []).filter(sits).length;
 
   const ranked = [...(data ?? [])].sort((a, b) => {
     if (!a.samples !== !b.samples) return a.samples ? -1 : 1;   // scored first
@@ -25,19 +38,29 @@ export function AgentRoster() {
 
   return (
     <GlassCard className="md:col-span-2 p-5" inert>
-      <PanelTitle right={<Pill>best first</Pill>}>
+      <PanelTitle right={
+        <div className="flex items-center gap-1.5">
+          <Pill tone={assetClass === "crypto" ? "warn" : "neutral"}>
+            {assetClass === "crypto" ? "weekend · crypto" : "weekday · equities"}
+          </Pill>
+          <Pill>{seated} seated</Pill>
+        </div>
+      }>
         Roster · who is carrying the table
       </PanelTitle>
       {ranked.length ? (
         <div className="space-y-1.5">
           {ranked.map((a, i) => {
             const good = a.hit_rate != null && a.hit_rate >= 50;
+            const seatedToday = sits(a);
             return (
               <motion.div key={a.id}
                 initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.04 }}
-                className="flex items-center gap-3 rounded-xl border border-white/[0.07]
-                           bg-white/[0.03] px-3 py-2">
+                className={`flex items-center gap-3 rounded-xl px-3 py-2 border ${
+                  seatedToday
+                    ? "border-white/[0.07] bg-white/[0.03]"
+                    : "border-dashed border-white/[0.07] bg-transparent opacity-45"}`}>
                 <span className="w-5 font-mono text-[11px] text-white/30 text-right">
                   {a.samples ? i + 1 : "—"}
                 </span>
@@ -46,9 +69,15 @@ export function AgentRoster() {
                   <div className="text-[12px] font-semibold text-white/85 leading-tight">
                     {a.name}
                   </div>
-                  {/* The duty, not a label: which seat to believe about what. */}
-                  <div className="text-[10.5px] text-white/40 leading-snug truncate">
-                    {a.mandate}
+                  {/* The duty, not a label: which seat to believe about what.
+                      When the seat is not sitting, the reason replaces it —
+                      "no mandate" is more useful than a mandate it cannot use. */}
+                  <div className="text-[10.5px] leading-snug truncate">
+                    {seatedToday
+                      ? <span className="text-white/40">{a.mandate}</span>
+                      : <span className="text-amber-400/70">
+                          not sitting — no mandate on {assetClass}
+                        </span>}
                   </div>
                 </div>
                 <div className="text-right shrink-0">
