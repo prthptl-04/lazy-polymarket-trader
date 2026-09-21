@@ -1,11 +1,11 @@
 # Robinhood — the road to a paper track record
 
-**Status: B0–B4, B6, B7, B11, B14–B20, B26, B27 and B30 are FIXED (17 items).** The fund books and closes
+**Status: 20 items FIXED** — B0–B4, B6, B7, B11, B14–B20, B24, B26, B27, B30, B31. The fund books and closes
 positions (rule-#13 counter reads `1 of 50`, not `0 of 50`), all seven
 round-table calls complete, and decisions and stops now run on the venue's live
 quote rather than yesterday's daily close, and the rule-#13 bar on the page is
 the same number the gate enforces, and a discretionary close now lands in the
-record instead of leaving a phantom. Five blockers remain, plus six filed. **B28 needs your decision — see §17.**
+record instead of leaving a phantom. Five blockers remain, plus five filed. B28 is **decided: keep the limit** (§17).
 
 Written 2026-09-20 after a four-agent audit (architecture, QA, product readiness,
 documentation drift) plus live probes against the real Robinhood MCP surface and
@@ -325,7 +325,52 @@ These do not stop a trade being booked; they make the resulting record a lie.
       reference price needs a fetch added to that function — a real design
       decision (and rule #16 I/O placement), not a one-liner.
 
-- [ ] **B24 · Postmortem fires on every loss, however small**
+- [x] **B24 · Postmortem fires on every loss, however small** — **DONE.**
+      `analyse` returned early only on `realized_return >= 0`, so a 0.2%
+      discretionary cut wrote `unanimous_loss` / `overconfident_loss` under
+      `agent_id="*"` — which `recent_lesson_lines` injects into **every**
+      subsequent deliberation. A trivial loss did not merely fail to teach, it
+      actively taught the whole committee an overconfidence penalty derived
+      from noise.
+
+      Losses are now judged in **R, against the risk the position was sized
+      for** (`MATERIAL_LOSS_R = 0.25`), not against zero. A volatile name with
+      a wide stop must not be measured by a tight name's yardstick: the same 1%
+      loss is a stop-out for one and a rounding error for the other. With no
+      stop recorded the loss cannot be expressed in R, so it falls back to a 2%
+      absolute floor — a worse instrument than R, a far better one than zero.
+
+- [x] **B31 · The fund only learned on restart** — **DONE.**
+      `fit_confidence_shrink` maps stated confidence onto realised hit rate,
+      and it reached `ThesisPipeline` exactly once, in `build_fund`. For a
+      daemon running for days that means **every outcome recorded while running
+      was ignored** — the documented feedback loop was connected at the input
+      and severed at the output.
+
+      Now refitted at the **cycle boundary**, which preserves the stability the
+      once-at-build design was protecting: two trades in the same cycle must
+      not size differently for reasons unrelated to either thesis, so the value
+      is fixed for the whole cycle. It refuses by default — too few rows, a bad
+      fit, or any exception leaves what is in force standing, because sizing
+      must never be loosened by a thin sample or a broken read. The value in
+      force is reported on every `CycleReport`, since a learning loop nobody
+      can see is one nobody will notice breaking.
+
+      Demonstrated end to end — the fund resizing itself from its own record,
+      in both directions:
+
+      ```
+      start                              shrink=0.50  -> $114.58 at conf 85
+      after 60 overconfident outcomes    shrink=0.13  -> $ 59.90
+      after 120 well-calibrated outcomes shrink=0.77  -> $150.00
+      ```
+
+      Claim 90 and hit 55, and the fund halves your size. Earn it back and it
+      returns. **This is only meaningful because B19 removed the binding cap**
+      — at `max_position_usd = 10` all three rows would have read $10, which is
+      why the loop looked connected and did nothing.
+
+- [ ] ~~**B24 (original text)**~~
       `Postmortem.analyse` returns early only on `realized_return >= 0`, so any
       loss writes `unanimous_loss` / `overconfident_loss` lessons under
       `agent_id="*"` — injected into every later deliberation. Discretionary
@@ -1017,9 +1062,20 @@ Three ways forward, and this is a judgement about cost, not a bug to fix:
    with a different expectation — but the measured spread has been 186–189 bps
    every time it has been sampled, so this may be indistinguishable from 1.
 
-My read: option **1**, and revisit if the spread is ever observed materially
-tighter. Raising a cost limit to make trades happen is how a strategy gets
-talked into paying for its own activity. But this is your call, and the
-"maximum profit" instruction could reasonably point at 2 — in which case the
-honest framing is that the fund would be taking a ~4% round-trip hurdle in
-exchange for trading two extra days a week.
+### DECIDED 2026-09-20: option 1 — keep the limit
+
+Account owner: *"We don't want slippage, but want max profit and self learning
+AI evaluated agents."*
+
+So the 50 bps limit stands and the fund does not pay 187 bps to manufacture
+weekend activity. Maximum profit is pursued through **better calls**, not
+through a wider cost tolerance — which is what B31 and B24 implement: the
+committee's own record now resizes its positions (a shrink that halves size on
+a run of overconfidence and restores it on a calibrated one), and its lessons
+come from material losses instead of noise.
+
+Consequence to keep in view: the 50-trade record will be **equities-only** for
+as long as the crypto spread stays where it is. Rule #23 requires that be
+reported as one of two strategies rather than as the fund's record, which the
+Overview split already does. B30 means a weekend candidate now costs zero LLM
+calls rather than seven, so the rotation is cheap to leave running.

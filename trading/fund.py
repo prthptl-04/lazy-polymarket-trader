@@ -61,6 +61,9 @@ class Holding:
 class CycleReport:
     moment: datetime
     session: str
+    # The calibration in force for this cycle. A learning loop nobody can see
+    # is a learning loop nobody will notice breaking.
+    confidence_shrink: Optional[float] = None
     universe: list[str] = field(default_factory=list)
     prescreened_out: list[dict] = field(default_factory=list)
     deliberated: list[str] = field(default_factory=list)
@@ -78,6 +81,7 @@ class CycleReport:
         return {
             "moment": self.moment.isoformat(),
             "session": self.session,
+            "confidence_shrink": self.confidence_shrink,
             "universe": len(self.universe),
             "prescreened_out": len(self.prescreened_out),
             "deliberated": len(self.deliberated),
@@ -123,6 +127,20 @@ class FundLoop:
     ) -> CycleReport:
         session = session_at(moment)
         report = CycleReport(moment=moment, session=session.value)
+
+        # 0. Re-read what the committee has actually achieved, and let it
+        #    resize the next decisions. `fit_confidence_shrink` maps stated
+        #    confidence onto realised hit rate, and it used to be fitted ONCE
+        #    in build_fund — so a daemon running for days learned nothing until
+        #    it was restarted, and every outcome recorded while running was
+        #    ignored.
+        #
+        #    At the CYCLE boundary, not per trade: two trades in the same cycle
+        #    must not size differently for reasons unrelated to either thesis.
+        #    That was the reason the original was pinned at build, and it is
+        #    preserved — the value is fixed for the whole cycle below.
+        self._recalibrate()
+        report.confidence_shrink = getattr(self.pipeline, "confidence_shrink", None)
 
         # 1. Show the mark to the kill-switch BEFORE anything is decided.
         if self.kill_switch is not None and equity_usd is not None:
@@ -321,6 +339,25 @@ class FundLoop:
                         "figure is computed on the book's quantity"
                     )
         return True
+
+    def _recalibrate(self) -> None:
+        """Refit the confidence shrink from resolved outcomes.
+
+        Refuses by default. Too few rows, a bad fit, or any exception leaves
+        whatever is currently in force standing — sizing must never be loosened
+        by a thin sample or a broken read, and `fit_confidence_shrink` already
+        declines below `MIN_SAMPLES_FOR_FIT` and clamps what it does return.
+        """
+        if self.memory is None or self.pipeline is None:
+            return
+        try:
+            from roundtable.calibration import fit_confidence_shrink
+            fit = fit_confidence_shrink(self.memory.resolved_outcomes(limit=1000))
+        except Exception:
+            logger.exception("could not refit the confidence shrink")
+            return
+        if fit.usable and fit.shrink is not None:
+            self.pipeline.confidence_shrink = fit.shrink
 
     async def _corroboration_notes(self, symbol: str) -> tuple[str, ...]:
         """Cross-check the primary provider's figures against a second source.

@@ -52,6 +52,15 @@ class Finding:
     severity: str = "note"          # note | warning
 
 
+# A loss worth learning from, as a fraction of the risk the position was sized
+# for. A quarter of planned risk is the smallest move that says something about
+# the thesis rather than about the spread.
+MATERIAL_LOSS_R = 0.25
+
+# Used only when no stop was recorded and the loss cannot be expressed in R.
+MIN_MATERIAL_LOSS_PCT = 0.02
+
+
 @dataclass
 class Postmortem:
     """Analyses a closed position and records what to do differently."""
@@ -72,6 +81,19 @@ class Postmortem:
         if realized_return >= 0:
             # Wins are not automatically right, but there is nothing here we can
             # establish from a win alone. Claiming otherwise teaches superstition.
+            return findings
+
+        # And nothing establishable from a loss too small to be a signal.
+        # Every finding here becomes a lesson under agent_id="*", which
+        # `recent_lesson_lines` injects into every subsequent deliberation — so
+        # a trivial loss does not merely fail to teach, it actively teaches the
+        # whole committee an overconfidence penalty derived from noise.
+        #
+        # Judged in R, against the risk the position was SIZED for, because a
+        # volatile name with a wide stop must not be measured by a tight name's
+        # yardstick: the same 1% loss is a stop-out for one and a rounding
+        # error for the other.
+        if not _is_material(realized_return, plan):
             return findings
 
         payload = (thesis or {}).get("payload") or thesis or {}
@@ -209,6 +231,22 @@ class Postmortem:
                                 thesis=thesis, exit_reason=exit_reason, plan=plan)
         self.record(findings, symbol=symbol)
         return findings
+
+
+def _is_material(realized_return: float, plan: Optional[dict]) -> bool:
+    """Is this loss big enough, relative to its own plan, to be evidence?"""
+    loss = abs(realized_return)
+    entry = (plan or {}).get("entry")
+    stop = (plan or {}).get("stop")
+    try:
+        planned_risk = abs(float(entry) - float(stop)) / float(entry)
+    except (TypeError, ValueError, ZeroDivisionError):
+        planned_risk = None
+    if not planned_risk:
+        # No stop recorded, so the loss cannot be expressed in R. An absolute
+        # floor is a worse instrument than R but a far better one than zero.
+        return loss >= MIN_MATERIAL_LOSS_PCT
+    return loss >= MATERIAL_LOSS_R * planned_risk
 
 
 def recent_lesson_lines(memory: Any, limit: int = MAX_LESSONS_SHOWN) -> tuple[str, ...]:
