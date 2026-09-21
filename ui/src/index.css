@@ -50,6 +50,18 @@
    --------------------------------------------------------------------------- */
 [data-surface="light"] { color: var(--dhan-ink); }
 
+/* An overlay that carries its OWN dark ground has to opt out of the page's
+   light-surface inversion, or it renders dark ink on a near-black panel.
+   `useDynamicBackground` stamps data-surface="light" on the whole document
+   when the P&L tint brightens, and the rules below are descendant selectors —
+   so a modal cannot escape them by setting its own data-surface.
+
+   Re-pointing the ink VARIABLE is what does it, rather than a wall of colour
+   overrides: every rule beneath reads `--dhan-ink-rgb`, custom properties
+   inherit, and each opacity tier therefore keeps working and simply resolves
+   to white. */
+.surface-dark { --dhan-ink: #ffffff; --dhan-ink-rgb: 255 255 255; }
+
 [data-surface="light"] .text-white,
 [data-surface="light"] [class*="text-white/9"],
 [data-surface="light"] [class*="text-white/8"] { color: rgb(var(--dhan-ink-rgb) / 1); }

@@ -27,8 +27,10 @@ export function Confirm({ open, title, body, confirmLabel = "Start", tone = "goo
           <motion.div role="dialog" aria-modal="true" aria-label={title}
             initial={{ scale: 0.96, y: 8 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", stiffness: 420, damping: 32 }}
-            className="relative w-full max-w-[420px] rounded-3xl border border-white/12
-                       bg-[#0c1016]/95 p-6 shadow-glass">
+            /* `surface-dark`: this panel supplies its own near-black ground,
+               so it must not inherit the page's light-surface ink inversion. */
+            className="surface-dark relative w-full max-w-[420px] rounded-3xl
+                       border border-white/12 bg-[#0c1016]/95 p-6 shadow-glass">
             <h2 className="text-[15px] font-semibold text-white">{title}</h2>
             {/* Full white, not a muted grey. This dialog is the last thing read
                 before the fund starts trading, and the sentence explaining what
