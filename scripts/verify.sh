@@ -33,7 +33,7 @@ $PY -m pytest -q || fail=1
 
 step "2/4  module self-checks"
 for m in roundtable.replay roundtable.knowledge trading.catalysts \
-         monitoring.paper_report; do
+         monitoring.paper_report backtest.committee; do
   if $PY -m "$m" --demo >/dev/null 2>&1; then echo "  ok   $m"
   else echo "  FAIL $m"; fail=1; fi
 done

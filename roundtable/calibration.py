@@ -274,18 +274,26 @@ def score_seats(
     return Scorecard(seats=seats, committee=committee, resolved=resolved)
 
 
+# Outcomes scored from the tape rather than from a position. `shadow:` is a
+# live deliberation resolved against a later quote; `replay:` is a past session
+# put to the committee tonight. One list so a third kind cannot be added and
+# silently leak into a sizing parameter.
+SYNTHETIC_OUTCOME_PREFIXES = ("shadow:", "replay:")
+
+
 def _is_position_outcome(outcome: dict) -> bool:
     """True for outcomes produced by a real position.
 
-    `roundtable.shadow` scores deliberations against the tape so the seats can
-    calibrate without the fund having to trade. Those are valid for judging
-    DIRECTION and invalid for fitting a SIZING parameter: a position is bounded
-    by its stop and can be taken out by a move that later reverses, while a
-    24-hour price change never is. Predictions therefore look better than the
-    trades they would have become, and a shrink fitted on them is optimistic —
-    which sizes bigger.
+    Synthetic outcomes let the seats calibrate on DIRECTION without the fund
+    having to trade, which is valid — judging a direction needs no position.
+    Fitting a SIZING parameter on them is not: a position is bounded by its stop
+    and can be taken out by a move that later reverses, while a raw forward
+    return never is. Predictions therefore look better than the trades they
+    would have become, and a shrink fitted on them is optimistic — which sizes
+    bigger, the expensive direction to be wrong in.
     """
-    return not str((outcome or {}).get("notes") or "").startswith("shadow:")
+    note = str((outcome or {}).get("notes") or "")
+    return not note.startswith(SYNTHETIC_OUTCOME_PREFIXES)
 
 
 def fit_confidence_shrink(
