@@ -73,9 +73,17 @@ class PaperVenue:
         exactly — verified numerically on a live object — and is what proves a
         restored account is internally consistent.
 
-        `_orders`, `fills` and `_quotes` are not stored: nothing outside this
-        module consumes them, quotes are refetched, and a paper resting limit
-        can never fill because no book is simulated.
+        RESTING ORDERS ARE STORED. They were not, on the reasoning that "a
+        paper resting limit can never fill because no book is simulated" — true
+        when written, and false from the moment `match_resting` was added.
+        Dropping them meant every restart discarded every working order, so
+        none lived long enough for the market to reach it, and the duplicate
+        guard woke up believing nothing was outstanding and re-placed. An order
+        is a commitment the account has made; forgetting it on restart resets
+        the fund's view of its own exposure.
+
+        `_orders`, `fills` and `_quotes` are still not stored: nothing outside
+        this module consumes them and quotes are refetched.
         """
         return {
             "starting_cash_usd": self.starting_cash_usd,
@@ -85,6 +93,16 @@ class PaperVenue:
                 {"symbol": p.symbol, "asset_class": p.asset_class,
                  "quantity": p.quantity, "avg_price": p.avg_price}
                 for p in self._positions.values()
+            ],
+            "resting": [
+                {"venue_order_id": oid, "symbol": r.symbol, "side": r.side,
+                 "asset_class": r.asset_class, "order_type": r.order_type,
+                 "quantity": r.quantity, "notional_usd": r.notional_usd,
+                 "limit_price": r.limit_price,
+                 "time_in_force": r.time_in_force,
+                 "client_order_id": r.client_order_id,
+                 "thesis_id": r.thesis_id}
+                for oid, r in self._resting.items()
             ],
         }
 
@@ -106,6 +124,32 @@ class PaperVenue:
                 )
             except (KeyError, TypeError, ValueError):
                 continue
+
+        for row in state.get("resting") or []:
+            # A resting order rebuilt WRONG is worse than one lost: it would
+            # fill at a price nobody chose. Anything malformed is dropped.
+            try:
+                oid = str(row["venue_order_id"])
+                # EXACTLY ONE of quantity / notional_usd — `OrderRequest`
+                # refuses both, on the grounds that passing them together
+                # leaves the venue to guess which was meant. It caught this
+                # restore passing quantity alongside a defaulted zero notional.
+                sized = ({"quantity": float(row["quantity"])}
+                         if row.get("quantity") is not None
+                         else {"notional_usd": float(row["notional_usd"])})
+                request = OrderRequest(
+                    symbol=str(row["symbol"]), side=str(row["side"]),
+                    asset_class=row.get("asset_class", "equity"),
+                    order_type=str(row["order_type"]),
+                    limit_price=float(row["limit_price"]),
+                    time_in_force=row.get("time_in_force", "gtc"),
+                    client_order_id=str(row.get("client_order_id") or oid),
+                    thesis_id=row.get("thesis_id"),
+                    **sized,
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            self._resting[oid] = request
 
     # ---------- test/eval hooks ----------
 
