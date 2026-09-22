@@ -44,9 +44,14 @@ SERVERS: dict[str, str] = {
 
 CALLBACK_PORT = 8900
 CALLBACK_URL = f"http://localhost:{CALLBACK_PORT}/callback"
-# How long the operator has to finish in the browser before we give up and free
-# the port. Long enough for a password manager and an MFA prompt.
-BROWSER_TIMEOUT_SECONDS = 300.0
+# How long the operator has to finish before we give up and free the port.
+#
+# Fifteen minutes, not five. Robinhood's consent does not end in the browser:
+# approving there sends a push to the phone app, and the flow only completes
+# once THAT is approved. Between finding the phone, unlocking it, waiting for
+# the notification and approving, five minutes is a tab that dies halfway
+# through — and the operator would have no idea which half.
+BROWSER_TIMEOUT_SECONDS = 900.0
 
 
 @dataclass
@@ -184,9 +189,11 @@ def _callback_server(captured: dict, arrived: asyncio.Event, loop: Any) -> HTTPS
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(
-                b"<body style='font:16px system-ui;padding:3rem'>"
-                b"<h2>Authorised.</h2><p>Close this tab \xe2\x80\x94 the fund "
-                b"dashboard will start the engine.</p></body>")
+                b"<body style='font:16px system-ui;padding:3rem;line-height:1.6'>"
+                b"<h2>Authorised.</h2>"
+                b"<p>The fund dashboard has what it needs and is starting the "
+                b"engine. You can close this window whenever you like \xe2\x80\x94 "
+                b"nothing here is waiting on it.</p></body>")
             loop.call_soon_threadsafe(arrived.set)
 
         def log_message(self, *a: Any) -> None:

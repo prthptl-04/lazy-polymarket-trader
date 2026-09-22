@@ -24,6 +24,13 @@ type Phase = "idle" | "checking" | "authorising" | "waiting" | "failed";
  * The popup is opened from the CLICK, synchronously. A window opened from an
  * await resolution is a pop-up blocker's definition of one, and the operator
  * would get a silently blocked tab and a button that appeared to do nothing.
+ *
+ * **The window is never closed from here.** Robinhood's consent does not end in
+ * the browser: approving there sends a push to the phone app, and the flow
+ * completes only once that is approved too. A tab closed on our schedule can
+ * land in the middle of that — and on the failure paths it would take the
+ * error message with it, leaving a button that did nothing for no stated
+ * reason. The operator closes it; the callback page already says they can.
  */
 export function useAuthGate(onReady: () => void | Promise<void>) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -54,7 +61,8 @@ export function useAuthGate(onReady: () => void | Promise<void>) {
     const flow = await postJSON<{ authorize_url?: string | null; error?: string | null }>(
       `/api/auth/${venue}/begin`);
     if (!flow?.authorize_url) {
-      popup.current?.close();
+      // Left OPEN on purpose: if the venue put an error on that page, closing
+      // it is destroying the only explanation the operator will get.
       setPhase("failed");
       setDetail(flow?.error || "the venue did not return an authorisation URL");
       return;
@@ -64,22 +72,42 @@ export function useAuthGate(onReady: () => void | Promise<void>) {
     else window.open(flow.authorize_url, "_blank", "noopener");
 
     setPhase("waiting");
-    setDetail("Approve in the Robinhood window, then this starts the engine.");
+    setDetail("Approve in the Robinhood window, then approve the push on your phone.");
+
+    // Matches the server's callback window. Robinhood pushes to the phone app
+    // after the browser consent, so this has to outlast finding the phone,
+    // unlocking it and waiting for the notification.
+    const deadline = Date.now() + 15 * 60 * 1000;
+    let waited = 0;
 
     poll.current = window.setInterval(async () => {
+      waited += 2;
+      if (Date.now() > deadline) {
+        if (poll.current) window.clearInterval(poll.current);
+        setPhase("failed");
+        setDetail("Timed out after 15 minutes. The window is still open — " +
+                  "finish there and press GO again, or close it and retry.");
+        return;
+      }
+      if (waited === 30) {
+        setDetail("Still waiting. Robinhood sends a push to your phone app " +
+                  "after the browser step — approve it there.");
+      }
       const now = await getJSON<AuthStatus>(`/api/auth/${venue}`);
-      if (!now || now.needs_auth) return;   // keep waiting; the flow times out
+      if (!now || now.needs_auth) return;
       if (poll.current) window.clearInterval(poll.current);
-      popup.current?.close();
+      // Deliberately NOT closing the popup — see the note above.
       setPhase("idle");
       await onReady();
     }, 2000);
   }
 
   return { phase, detail, start,
+           // Stops watching. Leaves the window alone: the operator may still
+           // be mid-approval on their phone, and closing it would end a flow
+           // that was about to succeed.
            cancel: () => {
              if (poll.current) window.clearInterval(poll.current);
-             popup.current?.close();
              setPhase("idle");
            } };
 }
