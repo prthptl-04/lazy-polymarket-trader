@@ -94,6 +94,10 @@ def size_position(
     risk_budget: float = DEFAULT_RISK_BUDGET,
     kelly_multiplier: float = DEFAULT_KELLY_MULTIPLIER,
     max_position_usd: Optional[float] = None,
+    # What this name is ALREADY worth in the book, at the mark. `max_position_usd`
+    # is a cap on the position, not on each order that builds it; without this
+    # it caps only the increment and a name compounds without limit.
+    existing_position_usd: float = 0.0,
     cvar: Optional[float] = None,
 ) -> SizeResult:
     """Size one directional position.
@@ -144,13 +148,23 @@ def size_position(
 
     # --- hard caps ---
     if max_position_usd is not None:
-        candidates.append(("max_position", max_position_usd))
+        # ROOM LEFT in the name, not a fresh allowance. Measured 2026-09-22:
+        # ARM and META were each bought twice on consecutive bullish theses,
+        # the second add LARGER than the first, because every order was sized
+        # as though the book were flat. A $150 cap that resets on every cycle
+        # is not a position cap, it is a cap on how fast the position grows.
+        candidates.append(
+            ("max_position", max(0.0, max_position_usd - existing_position_usd)))
     if available_cash_usd is not None:
         candidates.append(("cash", available_cash_usd))
 
     binding, size = min(candidates, key=lambda kv: kv[1])
     size = max(0.0, size)
     if size <= 0:
+        if binding == "max_position" and existing_position_usd > 0:
+            return _nil(
+                f"already holding ${existing_position_usd:,.2f} of a "
+                f"${max_position_usd:,.2f} position cap — no room to add")
         return _nil(f"{binding} cap left no room")
 
     quantity = size / plan.entry if plan.entry > 0 else 0.0
