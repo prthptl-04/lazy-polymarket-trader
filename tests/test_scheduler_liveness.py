@@ -110,23 +110,37 @@ def test_the_loop_absorbs_failures_but_never_operator_intent(exc, swallowed):
 
 def test_status_reports_dead_when_the_task_is_dead():
     """The defect that cost eleven hours. `status()` must describe the task,
-    not a string set when it was created."""
+    not a string set when it was created.
+
+    Killed with a real exception, not a cancellation — cancellation is how STOP
+    stops and is covered separately. Using cancel() here would have passed
+    against a scheduler that called every ordinary stop a death.
+    """
     async def go():
         s = _sched(_Fund())
         await s.start()
         await asyncio.sleep(0.02)
-        # Kill the loop the way the MCP failure did: task gone, state untouched.
+        # Kill the loop the way the MCP failure did: an exception the handler
+        # is not expected to survive, leaving `state` untouched at "running".
         s._task.cancel()
         try:
             await s._task
         except BaseException:
             pass
+        s._task = _DeadTask(RuntimeError("stream closed"))
         s.state = "running"
         return s.status()
 
-    status = go and asyncio.run(go())
+    status = asyncio.run(go())
     assert status["state"] != "running"
-    assert status.get("failed_reason"), "a dead scheduler must say why"
+    assert "stream closed" in status["failed_reason"]
+
+
+class _DeadTask:
+    """A finished task that raised. Stands in for a loop that died."""
+    def __init__(self, exc): self._exc = exc
+    def done(self): return True
+    def exception(self): return self._exc
 
 
 def test_status_is_unchanged_while_the_loop_is_healthy():
@@ -147,3 +161,38 @@ def test_a_never_started_scheduler_is_not_reported_as_failed():
     s = _sched(_Fund())
     assert s.status()["state"] == "stopped"
     assert not s.status().get("failed_reason")
+
+
+def test_an_ordinary_stop_is_not_reported_as_a_death():
+    """Cancellation is how STOP stops. Reporting it as a failure made every
+    ordinary stop render "engine died" in the status pill — a fund that looked
+    broken when nothing was wrong, which is its own kind of lie."""
+    async def go():
+        s = _sched(_Fund())
+        await s.start()
+        await asyncio.sleep(0.03)
+        await s.stop()
+        return s.status()
+
+    status = asyncio.run(go())
+    assert status["state"] == "stopped"
+    assert status["failed_reason"] is None
+
+
+def test_a_cancelled_task_left_behind_is_still_not_a_death():
+    """Same rule when the task is cancelled without `stop()` tidying up."""
+    async def go():
+        s = _sched(_Fund())
+        await s.start()
+        await asyncio.sleep(0.02)
+        s._task.cancel()
+        try:
+            await s._task
+        except asyncio.CancelledError:
+            pass
+        s.state = "running"
+        return s.status()
+
+    status = asyncio.run(go())
+    assert status["state"] == "stopped"
+    assert status["failed_reason"] is None

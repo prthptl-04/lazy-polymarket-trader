@@ -128,6 +128,15 @@ class McpSession:
     session_factory: Any = None
     timeout_seconds: float = 60.0
     _session: Any = field(default=None, init=False)
+    # The supervisor owns the session's whole life. anyio pins a task group's
+    # __aenter__ and __aexit__ to ONE task, and the session used to be opened
+    # by whichever fund cycle first needed a quote — so a STOP cancelling that
+    # cycle tore the context down from the wrong task and crashed the loop.
+    _supervisor: Any = field(default=None, init=False)
+    _ready: Any = field(default=None, init=False)
+    _shutdown: Any = field(default=None, init=False)
+    _open_error: Any = field(default=None, init=False)
+    _on_close: Any = field(default=None, init=False)
     _tools: dict[str, dict] = field(default_factory=dict, init=False)
     _stack: Any = field(default=None, init=False)
 
@@ -150,12 +159,60 @@ class McpSession:
             logger.info("MCP %s: no stored credentials; run the auth flow once",
                         self.server_url)
             return False
+        self._ready = asyncio.Event()
+        self._shutdown = asyncio.Event()
+        self._open_error = None
+        # Deliberately shielded from the caller's cancellation: the supervisor
+        # must outlive the cycle that happened to ask for it first.
+        self._supervisor = asyncio.create_task(
+            self._serve(), name=f"mcp-supervisor:{self.server_url}")
         try:
-            self._session = await self._open()
-        except Exception as e:
-            logger.warning("MCP %s: connect failed (%s)", self.server_url, type(e).__name__)
+            await asyncio.wait_for(self._ready.wait(), timeout=self.timeout_seconds)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            await self.close()
+            return False
+        if self._open_error is not None or self._session is None:
+            logger.warning("MCP %s: connect failed (%s)", self.server_url,
+                           type(self._open_error).__name__ if self._open_error
+                           else "no session")
+            await self.close()
             return False
         return True
+
+    async def _serve(self) -> None:
+        """Hold the session open for its whole life, in THIS task.
+
+        Everything that anyio pins to a single task — entering the transport's
+        context, and unwinding it — happens here and nowhere else. Callers from
+        other tasks still use `self._session` freely; it is the teardown anyio
+        cares about, not the use.
+        """
+        try:
+            try:
+                self._session = await self._open()
+            except Exception as e:                  # noqa: BLE001 - reported, not raised
+                self._open_error = e
+                return
+            finally:
+                self._ready.set()
+            await self._shutdown.wait()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._session = None
+            stack, self._stack = self._stack, None
+            if stack is not None:
+                try:
+                    await stack.aclose()
+                except Exception:
+                    # A server that has already dropped the connection makes
+                    # the unwind noisy; the session is gone either way.
+                    logger.debug("MCP unwind was not clean", exc_info=True)
+            if self._on_close is not None:
+                try:
+                    self._on_close()
+                except Exception:
+                    logger.debug("MCP close hook failed", exc_info=True)
 
     async def discover_tools(self) -> dict[str, dict]:
         """The live tool surface. Robinhood does not publish a schema, so this
@@ -188,15 +245,30 @@ class McpSession:
         return _unwrap(result)
 
     async def close(self) -> None:
+        """Ask the supervisor to stand down, and wait for it.
+
+        Idempotent, and never raises: closing a venue must not be able to end a
+        cycle. The unwind itself happens inside `_serve`, in the task that
+        opened it.
+        """
         self._session = None
-        stack, self._stack = self._stack, None
-        if stack is not None:
+        supervisor, self._supervisor = self._supervisor, None
+        if supervisor is None:
+            self._stack = None
+            return
+        if self._shutdown is not None:
+            self._shutdown.set()
+        try:
+            await asyncio.wait_for(asyncio.shield(supervisor),
+                                   timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            supervisor.cancel()
             try:
-                await stack.aclose()
-            except Exception:
-                # A server that has already dropped the connection makes the
-                # unwind noisy; the session is gone either way.
-                logger.debug("MCP unwind was not clean", exc_info=True)
+                await supervisor
+            except BaseException:
+                pass
+        except BaseException:
+            pass
 
     async def _open(self) -> Any:
         if self.session_factory is not None:

@@ -246,14 +246,18 @@ class FundScheduler:
             return "running", None
         reason = self.failed_reason
         if reason is None:
-            exc = None
             try:
                 exc = self._task.exception()
-            except (asyncio.CancelledError, asyncio.InvalidStateError):
-                reason = "cycle loop was cancelled"
-            if reason is None:
-                reason = (f"cycle loop died: {type(exc).__name__}: {exc}"
-                          if exc else "cycle loop exited without an error")
+            except asyncio.CancelledError:
+                # Cancellation is how STOP stops. Reporting it as a death made
+                # every ordinary stop render as "engine died" and, because the
+                # pill keyed off `failed_reason`, made the fund look broken
+                # when nothing was wrong.
+                return "stopped", None
+            except asyncio.InvalidStateError:
+                return "running", None          # not finished after all
+            reason = (f"cycle loop died: {type(exc).__name__}: {exc}"
+                      if exc else "cycle loop exited without an error")
         return "stopped", reason
 
     def status(self) -> dict:
