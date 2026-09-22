@@ -38,8 +38,10 @@ from typing import Any, Optional, Sequence
 
 from cache.prompt_cache import cached_create
 from roundtable.seats import (
+    SEATS_BY_ID,
     eligible_seats,
     excluded_seats,
+    voting_seats,
     CHAIR_SYSTEM_PROMPT,
     ROUND_ONE_SEATS,
     ROUND_TWO_SEATS,
@@ -55,6 +57,13 @@ from roundtable.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _seat_votes(seat_id: str) -> bool:
+    """Unknown seats vote. A seat missing from the registry is more likely a
+    test double than an advisory role, and silencing it would hide it."""
+    seat = SEATS_BY_ID.get(seat_id)
+    return True if seat is None else seat.votes
 
 # Measured against the live API on a real candidate: completing seats spent
 # 656-964 output tokens, and the two most verbose — Risk and the Devil's
@@ -398,7 +407,10 @@ class RoundTable:
         unfalsifiable override bolted onto the one part of this system that is
         measured. The chair still decides.
         """
-        live = [o for o in opinions if not o.failed]
+        # Advisory seats speak but do not vote. Counting a seat that has never
+        # held a direction inflates the "no view" pile the chair reads.
+        live = [o for o in opinions
+                if not o.failed and _seat_votes(o.seat_id)]
         if not live and not opinions:
             return ""
         bulls = sum(1 for o in live if o.signal == "bullish")

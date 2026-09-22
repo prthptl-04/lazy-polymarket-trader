@@ -68,6 +68,10 @@ class Seat:
     # mandate does not attend — see `eligible_seats` for why that matters more
     # than it sounds.
     asset_classes: tuple[str, ...] = ALL_ASSET_CLASSES
+    # Whether this seat's signal counts toward the balance of opinion. A seat
+    # whose mandate is not directional still speaks and is still read; it just
+    # does not cast a vote it has never used. See `voting_seats`.
+    votes: bool = True
 
 
 ANALYST = Seat(
@@ -184,6 +188,16 @@ Say which specific constraint drove it.""",
 
 CORROBORATOR = Seat(
     id="corroborator",
+    # ADVISORY. Measured over 54 completed debates across both asset classes:
+    # 0 directional calls. Its mandate is whether the FACTS are sourced, which
+    # is orthogonal to whether the price rises — it answers "1 field confirmed,
+    # 3 unverified", and the only honest signal for that is neutral.
+    #
+    # That neutral was being counted, so in a five-seat crypto table it was a
+    # permanent fifth of the balance arguing for nothing, and the chair read the
+    # resulting pile of neutrals as a stand-aside. It still sits, still speaks,
+    # and its concerns still reach the chair; it simply stops voting.
+    votes=False,
     name="Corroborator",
     mandate="Independent verification of the facts, not the reasoning",
     round=1,
@@ -356,6 +370,18 @@ def eligible_seats(asset_class: str,
     if asset_class not in ALL_ASSET_CLASSES:
         return seats
     return tuple(s for s in seats if asset_class in s.asset_classes)
+
+
+def voting_seats(asset_class: str,
+                 seats: tuple[Seat, ...] = ALL_SEATS) -> tuple[Seat, ...]:
+    """Eligible seats whose signal counts toward the balance of opinion.
+
+    Narrower than `eligible_seats`: an advisory seat attends and is read, but a
+    mandate that is not directional must not contribute a vote. Counting one
+    overstates how thin a directional case is — which is exactly how one
+    bullish seat against four neutrals came to read as a stand-aside.
+    """
+    return tuple(s for s in eligible_seats(asset_class, seats) if s.votes)
 
 
 def excluded_seats(asset_class: str,
