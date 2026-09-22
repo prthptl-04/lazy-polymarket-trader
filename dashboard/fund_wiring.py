@@ -35,6 +35,7 @@ from trading.kill_switch import DailyLossKillSwitch
 from trading.live_gate import LiveTradingGate
 from trading.market_data import StaticProvider, VenueQuoteProvider
 from trading.catalysts import CatalystFeed
+from trading.crypto_discovery import CryptoScout
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
 from trading.discovery import MarketScout
@@ -85,6 +86,42 @@ def build_data_provider(config: FundConfig, venue: Any) -> Optional[Any]:
         "unknown data provider %r; falling back to quotes-only", provider
     )
     return VenueQuoteProvider(adapter=venue)
+
+
+def build_crypto_scout(data_provider: Any, venue: Any) -> Optional[Any]:
+    """Wire the crypto scout to Massive's grouped aggregate and Robinhood's
+    tradable pair list. Returns None when either source is missing — the
+    watchlist then stands, rather than the fund screening nothing silently.
+    """
+    massive = getattr(data_provider, "fallback", data_provider)
+    if not hasattr(massive, "_call") or not hasattr(venue, "currency_pairs"):
+        return None
+
+    def grouped(day):
+        data = massive._call(
+            f"/v2/aggs/grouped/locale/global/market/crypto/{day.isoformat()}",
+            {"adjusted": "true"})
+        return (data or {}).get("results") or []
+
+    def pairs():
+        return _run_sync(venue.currency_pairs())
+
+    return CryptoScout(grouped=grouped, pairs=pairs)
+
+
+def _run_sync(coro: Any) -> Any:
+    """The scout is sync (it runs in the deterministic screen, off the hot
+    path) while the venue is async. One place, clearly marked."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Already inside the loop: hand it to a worker so the screen can stay sync
+    # without blocking the cycle it runs in.
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def build_fund(
@@ -279,6 +316,9 @@ def build_fund(
         # The earnings calendar comes off the fund's OWN broker session — it
         # needs no third-party data key, and one market-wide call per cycle
         # serves every candidate.
+        # Screens every tradable Robinhood pair rather than the two names in
+        # FUND_CRYPTO_WATCHLIST. The watchlist still overrides when set.
+        crypto_scout=build_crypto_scout(data_provider, trading_venue),
         catalysts=CatalystFeed(
             earnings_source=getattr(trading_venue, "earnings_calendar", None),
             filing_source=getattr(trading_venue, "sec_filings", None),

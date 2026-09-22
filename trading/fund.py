@@ -109,6 +109,9 @@ class FundLoop:
     cost_ledger: Any = None                  # cache.cost_ledger.CostLedger
     corroborator: Any = None                 # roundtable.corroborator.Corroborator
     scout: Any = None
+    # trading.crypto_discovery.CryptoScout — the weekend equivalent of
+    # `scout`. None falls back to the configured watchlist.
+    crypto_scout: Any = None
     memory: Any = None
     postmortem: Any = None
     # trading.catalysts.CatalystFeed. Optional: None disables the
@@ -190,12 +193,14 @@ class FundLoop:
             # A cycle that reports nothing at all is indistinguishable from a
             # quiet market. Say which it is — an unconfigured weekend is most
             # of the week under rule #23, and it used to be silent.
-            if not session.equities_open and not self.crypto_watchlist:
+            if (not session.equities_open and not self.crypto_watchlist
+                    and self.crypto_scout is None):
                 report.errors.append(
-                    "no crypto watchlist configured, so there is nothing to "
-                    "trade while equities are shut. Set FUND_CRYPTO_WATCHLIST "
-                    "(e.g. BTC,ETH) — the scout screens the US equity tape and "
-                    "has no crypto equivalent."
+                    "no crypto watchlist configured and no crypto scout "
+                    "attached, so there is nothing to trade while equities are "
+                    "shut. Either set FUND_CRYPTO_WATCHLIST or attach "
+                    "trading.crypto_discovery.CryptoScout, which screens every "
+                    "tradable Robinhood pair."
                 )
             elif should_flatten_crypto(moment):
                 report.errors.append(
@@ -912,7 +917,18 @@ class FundLoop:
             return []
 
         if not session.equities_open:
-            names = list(self.crypto_watchlist)
+            # A configured crypto list is an override, exactly as on the equity
+            # side. Left empty, the crypto scout screens the whole tradable
+            # market instead of the two names somebody once typed.
+            names = list(self.crypto_watchlist) or None
+            if names is None and self.crypto_scout is not None:
+                try:
+                    return self._not_cooling_off(
+                        [c.symbol for c in self.crypto_scout.scan(
+                            limit=self.max_candidates_per_cycle * 2)], moment)
+                except Exception:
+                    logger.exception("crypto scout scan failed")
+                    return []
         elif self.equity_watchlist:
             names = list(self.equity_watchlist)
         else:

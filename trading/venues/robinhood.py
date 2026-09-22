@@ -66,6 +66,7 @@ TOOL_NAMES = {
     "cancel_crypto": "cancel_crypto_order",
     "pnl_history": "get_pnl_trade_history",
     "earnings_calendar": "get_earnings_calendar",
+    "currency_pairs": "get_currency_pairs",
     "sec_filings": "get_sec_filing_index",
     "price_book": "get_equity_price_book",
     "option_chains": "get_option_chains",
@@ -226,6 +227,29 @@ class RobinhoodVenue:
         payload = data.get("data") if isinstance(data, dict) else None
         rows = (payload or {}).get("results") if isinstance(payload, dict) else None
         return list(rows or [])
+
+    async def currency_pairs(self) -> list[str]:
+        """Crypto pairs this account can actually trade.
+
+        Filtered to tradable, not halted, not display-only — 58 of 91 listed
+        today. Screening a pair the broker will not sell us spends a
+        deliberation, eight model calls, on a name that cannot become a
+        position.
+        """
+        try:
+            data = await self.session.call(TOOL_NAMES["currency_pairs"],
+                                           {"limit": 700})
+        except Exception as e:
+            logger.warning("currency pairs unavailable: %s", redact(e))
+            return []
+        out = []
+        for row in _rows(data, "results"):
+            if (row.get("tradability") == "tradable"
+                    and not row.get("halted") and not row.get("display_only")):
+                symbol = str(row.get("symbol") or "").upper()
+                if symbol:
+                    out.append(symbol)
+        return out
 
     async def sec_filings(self, symbol: str, since: str) -> list[dict]:
         """Material filings since a date. An 8-K is a dated event, not background."""

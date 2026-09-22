@@ -265,6 +265,13 @@ def test_tool_names_match_the_verified_surface():
         #       for one weekly expiry, which is why implied move is gated.
         "get_sec_filing_index", "get_equity_price_book",
         "get_option_chains", "get_option_instruments", "get_option_quotes",
+        # Verified 2026-09-21 against the live server: returns
+        # {"data": {"results": [{"symbol", "display_symbol", "tradability",
+        #   "halted", "display_only", "market_orders_only", "min_order_size",
+        #   ...}]}} — 91 pairs listed, 58 tradable and not halted, and NONE
+        # market_orders_only, so the resting-limit execution style applies to
+        # every one of them.
+        "get_currency_pairs",
     }
     assert set(TOOL_NAMES.values()) == verified
 
