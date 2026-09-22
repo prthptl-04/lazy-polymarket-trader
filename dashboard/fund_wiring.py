@@ -136,7 +136,21 @@ def build_fund(
         logger.warning("fund config: %s", warning)
 
     # An empty watchlist is now the normal case: the scout finds candidates.
-    scout = MarketScout(limit=cfg.max_candidates_per_cycle * 2) if not cfg.equity_watchlist else None
+    # 4x, not 2x. Measured 2026-09-22 08:47 on a universe of ten: FIVE were
+    # prescreened out as Altman Z distressed (AMD 1.00, INTC 0.72, WBD 0.24,
+    # MSTR -0.10, MRVL 0.82) before a seat was asked anything, and four of the
+    # five survivors were already held. The committee had one genuinely new
+    # name to consider.
+    #
+    # 2x assumed roughly half the screen would survive to a deliberation. The
+    # solvency filter alone takes half, and holdings take more, so the pool has
+    # to be wider for the five deliberation slots to be worth having.
+    #
+    # This widens what is CONSIDERED. Every candidate still faces the same
+    # prescreen, the same seven seats, the same grader and the same floors —
+    # nothing here makes a trade easier to pass, it gives the committee more to
+    # legitimately reject.
+    scout = MarketScout(limit=cfg.max_candidates_per_cycle * 4) if not cfg.equity_watchlist else None
     if not cfg.is_tradable and scout is None:
         logger.info("fund not attached: no watchlist and no scout")
         return None

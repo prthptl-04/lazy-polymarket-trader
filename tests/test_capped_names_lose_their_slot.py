@@ -117,3 +117,15 @@ def test_it_is_not_a_cooldown():
     assert FundLoop._drop_working(fund, ["ARM"])[0] == []
     pos.quantity = 0.5
     assert FundLoop._drop_working(fund, ["ARM"])[0] == ["ARM"]
+
+
+def test_the_scout_is_wide_enough_for_the_attrition_it_meets():
+    """Measured on a universe of ten: five were rejected as Altman Z
+    distressed before a seat was asked anything, and four of the five
+    survivors were already held. A 2x scout assumed roughly half would
+    survive; the solvency filter alone takes half, and holdings take more."""
+    import inspect
+
+    from dashboard import fund_wiring
+    src = inspect.getsource(fund_wiring.build_fund)
+    assert "max_candidates_per_cycle * 4" in src
