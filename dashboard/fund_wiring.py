@@ -37,6 +37,7 @@ from trading.market_data import StaticProvider, VenueQuoteProvider
 from trading.catalysts import CatalystFeed
 from trading.crypto_discovery import CryptoScout
 from trading.political_trades import PoliticalTradeFeed
+from trading.social_sentiment import SocialSentimentFeed
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
 from trading.discovery import MarketScout
@@ -320,6 +321,7 @@ def build_fund(
         # Screens every tradable Robinhood pair rather than the two names in
         # FUND_CRYPTO_WATCHLIST. The watchlist still overrides when set.
         crypto_scout=build_crypto_scout(data_provider, trading_venue),
+        social=SocialSentimentFeed(),
         catalysts=CatalystFeed(
             earnings_source=getattr(trading_venue, "earnings_calendar", None),
             filing_source=getattr(trading_venue, "sec_filings", None),

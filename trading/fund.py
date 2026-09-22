@@ -112,6 +112,8 @@ class FundLoop:
     # trading.crypto_discovery.CryptoScout — the weekend equivalent of
     # `scout`. None falls back to the configured watchlist.
     crypto_scout: Any = None
+    # trading.social_sentiment.SocialSentimentFeed. Optional.
+    social: Any = None
     memory: Any = None
     postmortem: Any = None
     # trading.catalysts.CatalystFeed. Optional: None disables the
@@ -282,6 +284,7 @@ class FundLoop:
 
         news_at = time.time()
         sentiment_notes = await self._news_notes(symbol)
+        sentiment_notes = sentiment_notes + await self._social_notes(symbol)
         catalysts_at = time.time()
         catalyst_notes = await self._catalyst_notes(
             symbol, asset_class, spot=price, session=session,
@@ -571,6 +574,23 @@ class FundLoop:
             logger.exception("catalyst feed failed for %s", symbol)
             return ()
         return evidence.as_notes()
+
+    async def _social_notes(self, symbol: str) -> tuple[str, ...]:
+        """Retail chatter, for the Sentiment seat.
+
+        Joins the SENTIMENT block rather than CATALYSTS: a forum post is mood
+        and positioning, which is that seat's mandate, while the Catalyst seat
+        owns dated facts. Optional and silent when unconfigured — a missing
+        social feed must never be the reason a candidate is not debated.
+        """
+        if self.social is None:
+            return ()
+        try:
+            pulse = await self.social.pulse_for(symbol)
+        except Exception:
+            logger.exception("social feed failed for %s", symbol)
+            return ()
+        return pulse.notes if pulse.available else ()
 
     async def _news_notes(self, symbol: str) -> tuple[str, ...]:
         """Headlines for the Sentiment seat.
