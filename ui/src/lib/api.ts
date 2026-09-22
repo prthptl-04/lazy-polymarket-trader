@@ -116,7 +116,13 @@ export interface FundStatus {
                fill_rate_pct: number | null;
                fill_rate_by_session: Record<string, { graded: number; filled: number }> };
     graduation?: GraduationItem[] } | null;
-  last_cycle?: Record<string, unknown> | null;
+  last_cycle?: {
+    session?: string;
+    universe_names?: string[];
+    deliberated_names?: string[];
+    prescreen_rejections?: { symbol: string; reason: string }[];
+    [k: string]: unknown;
+  } | null;
 }
 export interface Balances {
   [venue: string]: { available: boolean; cash_usd?: number; equity_usd?: number; reason?: string };

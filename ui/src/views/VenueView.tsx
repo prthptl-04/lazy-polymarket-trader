@@ -6,6 +6,7 @@ import { LiveFeed } from "../components/LiveFeed";
 import { MarketStance } from "../components/MarketStance";
 import { LiveDebate } from "../components/LiveDebate";
 import { CatalystsInFocus } from "../components/Catalysts";
+import { Universe } from "../components/Universe";
 import { Provenance } from "../components/Provenance";
 import { LivePrices } from "../components/LivePrices";
 import { RoundTableFeed } from "../components/RoundTableFeed";
@@ -206,6 +207,9 @@ export function VenueView({ venue }: { venue: Venue }) {
 
           {/* Why the price is where it is. Sits directly above the debate
               because it is the evidence the Catalyst seat is reading. */}
+          {/* What the screen found, before any model was consulted. */}
+          <Universe />
+
           <CatalystsInFocus venue={venue} />
 
           {/* The other half of a transcript: how old the evidence was. */}

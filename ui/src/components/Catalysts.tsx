@@ -25,8 +25,13 @@ export function Catalysts({ symbol, assetClass = "equity" }: {
   const { data } = usePoll<Cat>(
     `/api/catalysts?symbol=${encodeURIComponent(symbol)}&asset_class=${assetClass}`, SLOW);
 
-  const headlines = (data?.notes ?? []).filter((n) => n.startsWith("["));
-  const insider = (data?.notes ?? []).find((n) => n.startsWith("Insiders:"));
+  // Split on shape, not on a list of known prefixes. The previous version
+  // matched "[" and "Insiders:" and silently dropped five other note types —
+  // earnings, filings, order book, implied move and disclosed official trades —
+  // so the committee was reading evidence the operator could not see.
+  const notes = data?.notes ?? [];
+  const headlines = notes.filter((n) => n.startsWith("["));
+  const facts = notes.filter((n) => !n.startsWith("["));
 
   return (
     <GlassCard className="p-4" inert>
@@ -43,17 +48,27 @@ export function Catalysts({ symbol, assetClass = "equity" }: {
         <Empty title="No catalyst evidence this cycle." hint={data.reason} />
       ) : (
         <div className="space-y-3">
-          {insider && (
-            <div className={`rounded-xl border px-3 py-2 ${
-              insider.includes("cluster buying")
-                ? "border-hood-green/30 bg-hood-green/[0.06]"
-                : "border-white/[0.09] bg-white/[0.03]"}`}>
-              <div className="text-[10px] uppercase tracking-wide text-white/35 mb-1">
-                Insider flow · 90 days
+          {facts.map((note, i) => {
+            // "Earnings: COST reports in 3 days…" -> label + body.
+            const cut = note.indexOf(":");
+            const label = cut > 0 && cut < 34 ? note.slice(0, cut) : "Note";
+            const body = cut > 0 && cut < 34 ? note.slice(cut + 1).trim() : note;
+            const good = /cluster buying|cluster/i.test(note);
+            // The lines that change a decision rather than colour one in.
+            const warn = /wider than the stop|reports (TODAY|in [0-3] days)|NO RESTING/i
+              .test(note);
+            return (
+              <div key={i} className={`rounded-xl border px-3 py-2 ${
+                warn ? "border-amber-400/30 bg-amber-400/[0.06]"
+                     : good ? "border-hood-green/30 bg-hood-green/[0.06]"
+                            : "border-white/[0.09] bg-white/[0.03]"}`}>
+                <div className="text-[10px] uppercase tracking-wide text-white/35 mb-1">
+                  {label}
+                </div>
+                <div className="text-[11.5px] text-white/70 leading-relaxed">{body}</div>
               </div>
-              <div className="text-[11.5px] text-white/70 leading-relaxed">{insider}</div>
-            </div>
-          )}
+            );
+          })}
 
           <div>
             <div className="text-[10px] uppercase tracking-wide text-white/35 mb-1.5">

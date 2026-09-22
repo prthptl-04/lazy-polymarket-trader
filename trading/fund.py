@@ -86,6 +86,15 @@ class CycleReport:
             "universe": len(self.universe),
             "prescreened_out": len(self.prescreened_out),
             "deliberated": len(self.deliberated),
+            # The NAMES, not just the counts. A universe of 12 screened from 58
+            # is a different object from a hand-typed pair, and "12" on its own
+            # says nothing about which 12 or why the rest were dropped.
+            "universe_names": list(self.universe),
+            "prescreen_rejections": [
+                {"symbol": r.get("symbol"), "reason": r.get("reason")}
+                for r in self.prescreened_out
+            ][:20],
+            "deliberated_names": list(self.deliberated),
             "submitted": len(self.submitted),
             "flattened": len(self.flattened),
             "exits": len(self.exits),
