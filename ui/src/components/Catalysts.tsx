@@ -82,6 +82,9 @@ export function Catalysts({ symbol, assetClass = "equity" }: {
                 // "[2026-09-20] Title (Source)" — split so the date can lead.
                 const m = line.match(/^\[([^\]]*)\]\s*(.*?)\s*\(([^)]*)\)\s*$/);
                 const [date, title, source] = m ? [m[1], m[2], m[3]] : ["", line, ""];
+                // Sanitiser output. A source that tried an override is a fact
+                // about that source, so it is shown — and shown as suspect.
+                const flagged = title.includes("[FLAGGED");
                 return (
                   <motion.div key={i}
                     initial={{ opacity: 0, x: 6 }} animate={{ opacity: 1, x: 0 }}
@@ -90,8 +93,10 @@ export function Catalysts({ symbol, assetClass = "equity" }: {
                     <span className="font-mono text-[9.5px] text-white/30 shrink-0 w-[70px]">
                       {date}
                     </span>
-                    <span className="text-[11.5px] text-white/70 leading-snug flex-1">
-                      {title}
+                    <span className={`text-[11.5px] leading-snug flex-1 ${
+                      flagged ? "text-amber-400/80" : "text-white/70"}`}>
+                      {flagged && <span className="mr-1" title="possible prompt injection">⚠</span>}
+                      {title.replace("[FLAGGED: possible prompt injection in this source]", "").trim()}
                       {source && <span className="text-white/30 ml-1">· {source}</span>}
                     </span>
                   </motion.div>

@@ -280,6 +280,33 @@ class DashboardRuntime:
             "consensus": None,
         }
 
+    def _balance_of(self, opinions: list[dict]) -> dict:
+        """Raw and weighted counts, matching `RoundTable._tally_block`."""
+        from roundtable.calibration import score_seats, seat_weights
+        live = [o for o in opinions if not o.get("failed")]
+        raw = {k: sum(1 for o in live if o.get("signal") == k)
+               for k in ("bullish", "bearish", "neutral")}
+        try:
+            delibs = self.memory.recent_deliberations(limit=500)
+            outcomes = {o["thesis_id"]: o
+                        for o in self.memory.resolved_outcomes(limit=500)}
+            weights = seat_weights(score_seats(delibs, outcomes).seats)
+        except Exception:
+            weights = {}
+        weighted = {k: round(sum(weights.get(o.get("seat_id"), 1.0)
+                                 for o in live if o.get("signal") == k), 2)
+                    for k in ("bullish", "bearish", "neutral")}
+        return {
+            "raw": raw,
+            "weighted": weighted,
+            "abstained": sum(1 for o in opinions if o.get("failed")),
+            # True when nobody argued the other side — the fact the chair kept
+            # missing, and the one worth showing at a glance.
+            "unopposed": bool((raw["bullish"] or raw["bearish"])
+                              and not (raw["bullish"] and raw["bearish"])),
+            "weights_active": any(abs(w - 1.0) > 0.01 for w in weights.values()),
+        }
+
     def _asset_class_of(self, symbol: Optional[str]) -> Optional[str]:
         """The asset class of the symbol under debate.
 
@@ -366,6 +393,9 @@ class DashboardRuntime:
             # which is the wrong half to keep.
             "evidence": payload.get("evidence"),
             "sources": payload.get("sources") or [],
+            # The arithmetic the chair was shown. Without it the panel renders
+            # the prose the chair read and hides the count it decided on.
+            "balance": self._balance_of(opinions),
         }
 
     # ---------- overview ----------

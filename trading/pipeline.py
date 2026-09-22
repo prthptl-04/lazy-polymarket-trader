@@ -63,6 +63,58 @@ MIN_RESPONDING_SEATS = 3
 # 3-5 bps wide and waiting to save two of them is not worth a missed entry.
 RESTING_SPREAD_BPS = 40
 
+# How much of the permitted cost budget a resting order actually spends on
+# price improvement. Below 1.0 so the order does not sit exactly on the net
+# reward:risk floor — the fund has been bitten once already by a threshold its
+# own geometry met precisely and never exceeded.
+IMPROVEMENT_FRACTION = 0.6
+
+
+def resting_limit(candidate: "Candidate", side: str) -> float:
+    """Where to rest, given what the grader will still pass.
+
+    Measured before this existed: four orders placed at the MARK, zero filled.
+    On a market-maker-routed venue the ask sits permanently ~92bps above the
+    mark, so a resting buy only fills if the whole quote falls to it.
+
+    Crossing is not the alternative. The net reward:risk floor tolerates a round
+    trip of `0.128 x ATR`, and a 185bps crossing needs ATR >= 14.5% of price to
+    clear it — typical crypto ATR is 2-6%, so crossing can NEVER clear the
+    floor on this book.
+
+    So the limit is improved toward the touch by exactly as much as the floor
+    allows and no more. The grader's own cost budget sets the execution price,
+    which is what makes this a derived number rather than a tuned one:
+
+        (3A - c) / (2A + c) >= f   =>   c <= A(3 - 2f) / (1 + f)
+
+    Self-limiting by construction. A name whose ATR cannot pay for any
+    improvement gets none — the correct answer for something too quiet to trade
+    through a spread this wide. And the improvement is capped at the
+    half-spread, because beyond the touch is not resting, it is crossing.
+    """
+    price = float(candidate.price or 0.0)
+    atr = candidate.atr
+    spread_bps = candidate.spread_bps
+    if price <= 0 or not atr or not spread_bps:
+        return price
+
+    from verification.criteria import DEFAULT_CRITERIA
+    floor = DEFAULT_CRITERIA.min_net_reward_risk_ratio
+    budget = float(atr) * (3.0 - 2.0 * floor) / (1.0 + floor)
+
+    # The budget is a ROUND TRIP, and the exit will want to be reachable on the
+    # same reasoning as the entry — so each leg may spend half of it. Spending
+    # the whole budget here would have the grader refuse on the way out what
+    # execution paid for on the way in.
+    per_leg = budget / 2.0
+
+    half_spread = price * (float(spread_bps) / 10_000.0) / 2.0
+    improvement = min(per_leg * IMPROVEMENT_FRACTION, half_spread)
+    if improvement <= 0:
+        return price
+    return price + improvement if side == "buy" else price - improvement
+
 Outcome = str  # "submitted" | "skipped" | "rejected"
 
 
@@ -453,10 +505,13 @@ def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None
     # the mark costs nothing if it fills; the price is that it may not. That is
     # the right trade here and the wrong one for equities, whose books are 3-5
     # bps wide — waiting to save two basis points is not worth a missed entry.
+    # Priced to be REACHABLE, not merely passive. Resting at the bare mark
+    # produced four orders and zero fills; `resting_limit` improves toward the
+    # touch by exactly what the net reward:risk floor still permits.
     if candidate.asset_class == "crypto" and candidate.spread_bps \
             and candidate.spread_bps > RESTING_SPREAD_BPS:
         return {"order_type": "limit",
-                "limit_price": round(candidate.price, 2),
+                "limit_price": round(resting_limit(candidate, side), 2),
                 "time_in_force": "gtc"}
 
     if candidate.session not in ("premarket", "after_hours"):

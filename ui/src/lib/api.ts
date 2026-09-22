@@ -193,7 +193,17 @@ export interface Opinion {
   reasoning: string; key_points: string[]; concerns: string[];
   failed: boolean; error: string | null;
 }
+export interface Balance {
+  raw: { bullish: number; bearish: number; neutral: number };
+  weighted: { bullish: number; bearish: number; neutral: number };
+  abstained: number;
+  // Nobody argued the other side — the fact the chair kept missing.
+  unopposed: boolean;
+  // False while every seat sits at 1.00x, i.e. nothing resolved yet.
+  weights_active: boolean;
+}
 export interface LatestDebate {
+  balance?: Balance | null;
   thesis_id: string; symbol: string; status: string; created: number;
   opinions: Opinion[]; unanimous: boolean; abstentions: string[];
   consensus: { signal?: string; confidence?: number; summary?: string;

@@ -156,9 +156,19 @@ def _crypto(spread_bps=187, session="crypto_only"):
 
 
 def test_a_crypto_order_rests_rather_than_crossing():
-    kwargs = _session_order_kwargs(_crypto(), limit_price=81_144.87, side="buy")
+    """Rests INSIDE the spread — improved toward the touch, never through it.
+
+    It used to sit exactly at the mark. That produced four orders and zero
+    fills, because the ask is permanently ~92bps above the mark on this book,
+    so `resting_limit` now improves toward the touch by what the net
+    reward:risk floor still permits. The invariant that matters is unchanged
+    and is what this asserts: the order does not cross.
+    """
+    c = _crypto()
+    kwargs = _session_order_kwargs(c, limit_price=81_144.87, side="buy")
+    ask = c.price * (1 + (c.spread_bps / 10_000.0) / 2)
     assert kwargs["order_type"] == "limit"
-    assert kwargs["limit_price"] == pytest.approx(81_144.87), "at the mark"
+    assert c.price < kwargs["limit_price"] < ask, "inside the spread, not through it"
 
 
 def test_an_equity_order_in_the_regular_session_still_crosses():
