@@ -70,6 +70,40 @@ RESTING_SPREAD_BPS = 40
 IMPROVEMENT_FRACTION = 0.6
 
 
+def round_to_tick(price: float) -> float:
+    """Quantise a limit to a tick the instrument can actually carry.
+
+    Every limit used to be rounded to two decimals, which is harmless on BTC
+    and destroys anything below a cent: PEPE trades near 0.0000052, and
+    `round(0.0000052, 2)` is `0.0` — refused by `OrderRequest` as a limit that
+    is not positive. That was written when the universe was two names; the
+    crypto scout grew it to fifty-eight, roughly a fifth of which trade
+    sub-cent, and every one of them was unreachable.
+
+    Significant figures rather than a fixed scale, so what is preserved is
+    RELATIVE precision: the rounding error stays below 1e-7 of the price on any
+    instrument, from a five-figure BTC to a 1e-08 coin. That is the property
+    that matters, because the limit was chosen by `resting_limit` against a cost
+    budget measured in basis points — a round that moved it by more than a basis
+    point would spend budget nobody allocated.
+
+    Never returns zero for a positive input: a limit at zero is not a cheap
+    order, it is an invalid one.
+
+    ponytail: eight significant figures, not the venue's own
+    `min_order_price_increment` — which Robinhood publishes per pair in the list
+    we already fetch. Thread that through when an order is ever rejected for
+    tick size; until then this is strictly finer than any real increment.
+
+    Zero and negatives pass through untouched: inventing a price is not this
+    function's job, and the caller already refuses them.
+    """
+    if price <= 0:
+        return price
+    quantised = float(f"{price:.8g}")
+    return quantised if quantised > 0 else price
+
+
 def resting_limit(candidate: "Candidate", side: str) -> float:
     """Where to rest, given what the grader will still pass.
 
@@ -511,7 +545,7 @@ def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None
     if candidate.asset_class == "crypto" and candidate.spread_bps \
             and candidate.spread_bps > RESTING_SPREAD_BPS:
         return {"order_type": "limit",
-                "limit_price": round(resting_limit(candidate, side), 2),
+                "limit_price": round_to_tick(resting_limit(candidate, side)),
                 "time_in_force": "gtc"}
 
     if candidate.session not in ("premarket", "after_hours"):
@@ -523,7 +557,7 @@ def _session_order_kwargs(candidate: Candidate, limit_price: float | None = None
     price = reference * (1 + through) if side == "buy" else reference * (1 - through)
     return {
         "order_type": "limit",
-        "limit_price": round(price, 4),
+        "limit_price": round_to_tick(price),
         "extended_hours": True,
     }
 
