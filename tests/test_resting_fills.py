@@ -126,7 +126,9 @@ def test_the_reconciler_books_a_fill_the_market_reached():
         report = _report()
         await fund._reconcile_resting(report)
         assert not v._resting, "the order should have filled"
-        assert any("RESTING FILL" in e for e in report.errors)
+        assert any("RESTING FILL" in n for n in report.notes)
+        assert not any("RESTING FILL" in e for e in report.errors), \
+            "a fill is the system working, not a fault"
 
     asyncio.run(go())
 

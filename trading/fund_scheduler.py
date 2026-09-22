@@ -65,6 +65,9 @@ class SchedulerMetrics:
     halted: int = 0
     errors: int = 0
     last_error: Optional[str] = None
+    # Normal-operation messages: a fill, a planned decline to trade.
+    notes: int = 0
+    last_note: Optional[str] = None
     last_cycle_at: Optional[float] = None
 
 
@@ -189,6 +192,12 @@ class FundScheduler:
         if report.errors:
             self.metrics.errors += len(report.errors)
             self.metrics.last_error = report.errors[-1]
+        # Notes are the opposite: a fill, or a cycle that correctly declined to
+        # open anything. Surfaced, never counted as a fault.
+        notes = list(getattr(report, "notes", ()) or ())
+        if notes:
+            self.metrics.notes += len(notes)
+            self.metrics.last_note = notes[-1]
         self.metrics.last_cycle_at = time.time()
 
         if self.save_state is not None:
@@ -289,6 +298,8 @@ class FundScheduler:
                 "submitted": self.metrics.submitted,
                 "halted": self.metrics.halted,
                 "errors": self.metrics.errors,
+                "notes": self.metrics.notes,
+                "last_note": self.metrics.last_note,
                 "last_error": self.metrics.last_error,
                 "last_cycle_at": self.metrics.last_cycle_at,
             },

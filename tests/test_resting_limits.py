@@ -250,7 +250,9 @@ async def test_a_cycle_reconciles_resting_fills_before_deciding(tmp_path):
                                   available_cash_usd=BANKROLL)
 
     assert len(await venue.positions()) == 1, "the resting order filled"
-    assert any("RESTING FILL" in e for e in report.errors), \
+    assert not any("RESTING FILL" in e for e in report.errors), \
+        "a fill is the system working, not a fault"
+    assert any("RESTING FILL" in n for n in report.notes), \
         "a fill we did not decide on this cycle must be reported"
 
 

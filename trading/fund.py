@@ -78,6 +78,12 @@ class CycleReport:
     flattened: list[str] = field(default_factory=list)
     exits: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Things worth SAYING that are not things going wrong. The scheduler counts
+    # `errors` and the hourly health check reads that count, so a cycle that
+    # declined to trade for a planned reason must not land there — an error
+    # counter that ticks twelve times an hour during correct operation is an
+    # error counter nobody reads.
+    notes: list[str] = field(default_factory=list)
     halted_reason: Optional[str] = None
 
     @property
@@ -107,6 +113,7 @@ class CycleReport:
             "flattened": len(self.flattened),
             "exits": len(self.exits),
             "errors": len(self.errors),
+            "notes": list(self.notes),
             "halted_reason": self.halted_reason,
         }
 
@@ -247,7 +254,7 @@ class FundLoop:
                     "tradable Robinhood pair."
                 )
             elif should_flatten_crypto(moment):
-                report.errors.append(
+                report.notes.append(
                     "inside the weekend handoff window: the crypto book is "
                     "being flattened for the equity open, so no new positions "
                     "are opened this cycle"
@@ -489,7 +496,9 @@ class FundLoop:
                                  symbol, exc_info=True)
             try:
                 for ack in match():
-                    report.errors.append(
+                    # A fill is the system working. It belongs in the record,
+                    # not in the error count.
+                    report.notes.append(
                         f"RESTING FILL {ack.raw.get('symbol', '?')}: an order "
                         f"placed on an earlier cycle filled at "
                         f"{ack.raw.get('fill_price')}. It is held at the venue."
