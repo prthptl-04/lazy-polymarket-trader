@@ -198,6 +198,7 @@ class RoundTable:
             f"{candidate.evidence_block()}\n\n"
             f"{self._eligibility_note(candidate.asset_class)}"
             f"{self._independence_note(self._measured_independence())}"
+            f"{self._tally_block(thesis.opinions)}"
             f"--- SEAT POSITIONS ---\n{self._render_opinions(thesis.opinions)}"
         )
         try:
@@ -381,6 +382,51 @@ class RoundTable:
             return text
         response = cached_create(self.client, **kwargs)
         return _extract_text(response)
+
+    @staticmethod
+    def _tally_block(opinions: Sequence[SeatOpinion]) -> str:
+        """The balance of opinion as a count, not as five paragraphs to read.
+
+        The chair was inferring the balance from prose and getting one fact
+        wrong repeatedly: it could not distinguish OPPOSITION from ABSENCE OF A
+        VIEW. Across 47 of 51 neutral verdicts the typical table was one bullish
+        seat, nobody bearish, and the rest with no view — which the chair read
+        as a committee-wide stand-aside. `2 bullish / 0 bearish / 3 no view` and
+        `2 bullish / 3 bearish` are the same headcount and opposite situations.
+
+        Supplies the arithmetic and stops. The review this came from proposes a
+        meta-classifier that OVERTURNS the majority; that would be an
+        unfalsifiable override bolted onto the one part of this system that is
+        measured. The chair still decides.
+        """
+        live = [o for o in opinions if not o.failed]
+        if not live and not opinions:
+            return ""
+        bulls = sum(1 for o in live if o.signal == "bullish")
+        bears = sum(1 for o in live if o.signal == "bearish")
+        flat = sum(1 for o in live if o.signal == "neutral")
+        abstained = sum(1 for o in opinions if o.failed)
+
+        parts = [f"{bulls} bullish / {bears} bearish / {flat} no view"]
+        if abstained:
+            parts.append(f"{abstained} abstained (seat errored, did not weigh in)")
+        line = " · ".join(parts)
+
+        notes: list[str] = []
+        if (bulls or bears) and not (bulls and bears):
+            side = "bullish" if bulls else "bearish"
+            notes.append(
+                f"NO SEAT ARGUED THE OTHER SIDE. The {side} case is unopposed: "
+                f"the remaining seats reported no view, which is not the same as "
+                f"disagreeing with it.")
+        if len(live) >= 2 and (bulls == len(live) or bears == len(live)):
+            notes.append(
+                "Every seat that spoke agrees. Unanimity in this panel is a "
+                "caution rather than a confirmation — it usually means one "
+                "framing was shared rather than independently reached.")
+
+        return ("--- BALANCE OF OPINION ---\n" + line
+                + ("\n" + " ".join(notes) if notes else "") + "\n\n")
 
     def _render_opinions(self, opinions: Sequence[SeatOpinion]) -> str:
         """The seat positions, each annotated with that seat's own record.

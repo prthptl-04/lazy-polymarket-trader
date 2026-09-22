@@ -236,13 +236,16 @@ def summarise_news(rows: list[dict]) -> tuple[str, ...]:
     The date is not decoration: without it a seat cannot tell this morning's
     story from last year's, and an LLM will happily treat both as current.
     """
+    from roundtable.sanitize import clean_external
+
     out: list[str] = []
     for row in rows[:MAX_HEADLINES]:
-        title = str(row.get("title") or "").strip()
+        # Written by strangers, read by a model. See roundtable.sanitize.
+        title = clean_external(row.get("title"))
         if not title:
             continue
         date = str(row.get("date") or "")[:10]
-        source = str(row.get("source") or "unknown source").strip()
+        source = clean_external(row.get("source")) or "unknown source"
         out.append(f"[{date}] {title} ({source})")
     return tuple(out)
 

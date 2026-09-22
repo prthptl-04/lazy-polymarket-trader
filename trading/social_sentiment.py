@@ -148,8 +148,12 @@ def summarise_social(pulse: SocialPulse) -> str:
                          "buy on this may already have.")
 
     if pulse.top_quote:
-        parts.append(f'Loudest post: "{pulse.top_quote[:120]}" — an unverified '
-                     "opinion from a forum, never a fact about the business.")
+        # A forum post is the most hostile text this fund ingests: anyone can
+        # write one, and it lands in a prompt. See roundtable.sanitize.
+        from roundtable.sanitize import clean_external
+        quote = clean_external(pulse.top_quote)[:160]
+        parts.append(f'Loudest post: "{quote}" — an unverified opinion from a '
+                     "forum, never a fact about the business.")
     return " ".join(parts)
 
 
