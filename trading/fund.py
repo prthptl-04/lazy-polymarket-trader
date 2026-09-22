@@ -658,8 +658,15 @@ class FundLoop:
         total = 0.0
         for position in positions.values():
             try:
+                # `position.plan.stop`, NOT
+                # `getattr(position.plan, "stop", position.stop)` — Python
+                # evaluates that default EAGERLY, and `ManagedPosition` has no
+                # `.stop` of its own (the plan holds it). So every position
+                # raised AttributeError straight into the `continue` below and
+                # this returned 0.00 for a book with six positions in it,
+                # silently switching off the risk budget it exists to enforce.
                 entry = float(position.entry_price)
-                stop = float(getattr(position.plan, "stop", position.stop))
+                stop = float(position.plan.stop)
                 total += float(position.quantity) * abs(entry - stop)
             except (AttributeError, TypeError, ValueError):
                 continue

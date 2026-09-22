@@ -119,6 +119,30 @@ def _fund(book):
     return f
 
 
+def test_it_sums_a_REAL_managed_position():
+    """The stub below has a `.stop` attribute. `ManagedPosition` does not — the
+    plan holds it — and the first version of this read
+    `getattr(position.plan, "stop", position.stop)`, whose default Python
+    evaluates eagerly. Every real position raised AttributeError into the
+    `continue` and the total came back 0.00 for a book of six. The stub passed
+    because it was shaped like the snapshot dict, not like the object.
+
+    So: a real one, built the way the book builds it."""
+    from finance.exits import ExitPlan
+    from trading.fund import FundLoop
+    from trading.position_book import ManagedPosition
+
+    assert not hasattr(ManagedPosition, "stop"), \
+        "if this ever gains a .stop, the eager-default bug stops being visible"
+
+    plan = ExitPlan(entry=100.0, stop=90.0, target=115.0,
+                    direction="long", atr=5.0)
+    position = ManagedPosition(symbol="ARM", asset_class="equity",
+                               quantity=2.0, entry_price=100.0, plan=plan)
+    book = type("B", (), {"positions": {"ARM": position}})()
+    assert FundLoop._portfolio_risk_usd(_fund(book)) == pytest.approx(20.0)
+
+
 def test_the_fund_sums_risk_at_the_stops():
     from trading.fund import FundLoop
 
