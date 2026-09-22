@@ -38,6 +38,13 @@ from roundtable.seats import ALL_SEATS, RISK
 # The largest output observed from a seat that DID complete (end_turn).
 MEASURED_SEAT_PEAK = 964
 
+# The chair's peak, measured across 56 stored deliberations, counting only what
+# it still writes: `summary` + `dissent` came to 2337 characters at the worst,
+# roughly 585 tokens. It no longer reproduces the seat positions — that field
+# was 5623 characters at the median and is now rendered deterministically from
+# the stored opinions — so the chair is no longer the longest call at the table.
+MEASURED_CHAIR_PEAK = 585
+
 
 # ---------- the budgets ----------
 
@@ -46,9 +53,16 @@ def test_seat_budget_has_headroom_over_measured_usage():
     assert DEFAULT_MAX_TOKENS >= MEASURED_SEAT_PEAK * 2
 
 
-def test_the_chair_gets_more_room_than_a_seat():
-    """It restates every seat's position plus a transcript; it is the longest call."""
-    assert CHAIR_MAX_TOKENS > DEFAULT_MAX_TOKENS
+def test_chair_budget_has_headroom_over_measured_usage():
+    """The same 2x standard the seats are held to, against the chair's own peak.
+
+    This assertion used to read `CHAIR_MAX_TOKENS > DEFAULT_MAX_TOKENS`, on the
+    reasoning that the chair "restates every seat's position plus a transcript".
+    It no longer does either — so the premise is gone and the comparison with a
+    seat's budget measures nothing. What still matters is that the budget clears
+    what the chair actually writes, by the same margin.
+    """
+    assert CHAIR_MAX_TOKENS >= MEASURED_CHAIR_PEAK * 2
 
 
 # ---------- telling truncation from nonsense ----------
