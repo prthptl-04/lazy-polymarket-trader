@@ -160,22 +160,39 @@ class MassiveProvider:
             return json.load(r)
 
 
+# Bare symbols only. The override path (FUND_CRYPTO_WATCHLIST=BTC,ETH) carries
+# no `-USD` suffix to read, so these still need naming — but a HYPHENATED pair
+# no longer consults this list, and a coin missing from it is no longer invisible.
 _CRYPTO_BASES = ("BTC", "ETH", "SOL", "DOGE", "XRP", "LTC", "ADA", "AVAX", "LINK", "DOT")
 
 
 def _ticker(symbol: str) -> str:
     """Crypto needs the X: prefix and a USD quote; equities pass through.
 
-    Accepts the hyphenated pair too. `BTC-USD` used to fall through to the
-    final `return s` and be sent as an equity ticker, so `get_history` came
-    back None and every crypto candidate was pre-screened out with "no price
-    data available" — while the venue, which requires exactly that spelling,
-    was the only one getting it right.
+    ANY `BASE-USD` is crypto. That rule replaces a hardcoded list of known
+    coins, and the list is why this broke twice.
+
+    The first time, `BTC-USD` fell through and went out as an equity ticker, so
+    every crypto candidate was pre-screened out with "no price data available"
+    while the venue — which requires exactly that spelling — was the only one
+    getting it right. That was fixed by ADDING to the list.
+
+    The second time was the crypto scout growing the universe from two
+    hand-typed names to fifty-eight screened ones: ZEC, SUI, NEAR and PEPE were
+    all outside the list, so four of ten screened names were dropped for
+    "no price data" while Robinhood quoted them fine and Massive held the bars
+    under `X:ZECUSD`.
+
+    `trading.fund.classify_asset_class` already decides this the general way —
+    Robinhood spells every pair `BASE-USD` and no US equity ticker contains a
+    hyphen — so using the same rule here means the list cannot go stale again.
+    It survives only for BARE symbols, which have no suffix to read.
     """
-    s = symbol.upper()
+    s = symbol.upper().strip()
     if s.startswith("X:"):
         return s
-    base = s.split("-")[0]
-    if base in _CRYPTO_BASES:
-        return f"X:{base}USD"
+    if s.endswith("-USD"):
+        return f"X:{s[:-4]}USD"
+    if s in _CRYPTO_BASES:
+        return f"X:{s}USD"
     return s

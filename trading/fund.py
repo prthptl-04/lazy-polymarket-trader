@@ -177,7 +177,7 @@ class FundLoop:
         #     resting limit fills when the market comes to it, which is between
         #     cycles by definition — and a fill the book does not know about is
         #     inventory the fund will act as though it does not hold.
-        self._reconcile_resting(report)
+        await self._reconcile_resting(report)
 
         self._recalibrate()
         report.confidence_shrink = getattr(self.pipeline, "confidence_shrink", None)
@@ -444,8 +444,16 @@ class FundLoop:
                     )
         return True
 
-    def _reconcile_resting(self, report: CycleReport) -> None:
+    async def _reconcile_resting(self, report: CycleReport) -> None:
         """Book any resting order the market reached since the last cycle.
+
+        REFRESHES THE QUOTE FIRST, and that is the whole point. `match_resting`
+        compares the limit against the venue's quote CACHE, which is populated
+        by `get_quote`. Without a refresh, every resting order was matched
+        against the quote captured at placement — which by definition did not
+        fill it — so a resting order could never fill. Not rarely: never,
+        whatever the market did. Twelve orders, zero fills, including one
+        sitting 0.9% through the touch.
 
         Reported rather than silent: these are positions nobody decided on THIS
         cycle, and a fill that appears in the book with no deliberation behind
@@ -457,6 +465,17 @@ class FundLoop:
             match = getattr(adapter, "match_resting", None)
             if match is None:
                 continue
+            # One refresh per symbol, on the cycle's own loop. A dead quote
+            # source must not leave every OTHER resting order unmatched.
+            for symbol in {getattr(r, "symbol", None)
+                           for r in (getattr(adapter, "_resting", {}) or {}).values()}:
+                if not symbol:
+                    continue
+                try:
+                    await adapter.get_quote(symbol)
+                except Exception:
+                    logger.debug("could not refresh %s before matching",
+                                 symbol, exc_info=True)
             try:
                 for ack in match():
                     report.errors.append(
