@@ -15,6 +15,7 @@ knowing before reading too much into the numbers.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
@@ -51,6 +52,9 @@ class PaperVenue:
     _orders: dict[str, OrderAck] = field(default_factory=dict)
     # venue_order_id -> the request still waiting for the market to reach it.
     _resting: dict[str, OrderRequest] = field(default_factory=dict)
+    # venue_order_id -> when it started resting. Needed because a GTC limit
+    # with no age is a commitment with no end: see `expire_resting`.
+    _resting_since: dict[str, float] = field(default_factory=dict)
     _quotes: dict[str, Quote] = field(default_factory=dict)
     realized_pnl_usd: float = 0.0
     fills: list[dict] = field(default_factory=list)
@@ -101,7 +105,10 @@ class PaperVenue:
                  "limit_price": r.limit_price,
                  "time_in_force": r.time_in_force,
                  "client_order_id": r.client_order_id,
-                 "thesis_id": r.thesis_id}
+                 "thesis_id": r.thesis_id,
+                 # Persisted, so a restart does not reset an order's age and
+                 # hand it another full lifetime.
+                 "resting_since": self._resting_since.get(oid)}
                 for oid, r in self._resting.items()
             ],
         }
@@ -150,6 +157,22 @@ class PaperVenue:
             except (KeyError, TypeError, ValueError):
                 continue
             self._resting[oid] = request
+            # Re-register the ack too. `_orders` is deliberately not
+            # snapshotted, but `cancel_order` looks the order up there and
+            # returns False when it is missing — so every restored order was
+            # UNCANCELLABLE, which is how seven of them accumulated. An order
+            # you can restore but not cancel is worse than one you forgot.
+            self._orders[oid] = OrderAck(
+                accepted=True, client_order_id=request.client_order_id,
+                venue_order_id=oid, status="open", venue=self.name)
+            # An unknown age reads as "just placed" rather than "expired". A
+            # missing timestamp is a row written by an older build, and
+            # cancelling an order because we forgot when it arrived would
+            # destroy a real commitment over a bookkeeping gap.
+            try:
+                self._resting_since[oid] = float(row["resting_since"])
+            except (KeyError, TypeError, ValueError):
+                self._resting_since[oid] = time.time()
 
     # ---------- test/eval hooks ----------
 
@@ -195,6 +218,7 @@ class PaperVenue:
             )
             self._orders[ack.venue_order_id] = ack
             self._resting[ack.venue_order_id] = request
+            self._resting_since[ack.venue_order_id] = time.time()
             return ack
 
         return self._settle(request, price)
@@ -268,6 +292,7 @@ class PaperVenue:
                 continue
 
             del self._resting[venue_order_id]
+            self._resting_since.pop(venue_order_id, None)
             ack = self._settle(request, limit)
             self._orders[venue_order_id] = ack
             if ack.is_filled:
@@ -279,11 +304,45 @@ class PaperVenue:
         if ack is None or ack.status in ("filled", "cancelled", "rejected"):
             return False
         self._resting.pop(venue_order_id, None)
+        self._resting_since.pop(venue_order_id, None)
         self._orders[venue_order_id] = OrderAck(
             accepted=True, client_order_id=ack.client_order_id,
             venue_order_id=venue_order_id, status="cancelled", venue=self.name,
         )
         return True
+
+    async def expire_resting(self, max_age_seconds: float) -> list[str]:
+        """Cancel every order that has rested longer than `max_age_seconds`.
+        Returns the symbols cancelled.
+
+        A GTC limit placed below the touch is a bet on a pullback that has not
+        come. There is nothing wrong with it resting for a while — that IS the
+        strategy — but it was justified by a thesis with a horizon, and once
+        that horizon has passed and the call has been scored, the order is
+        acting on a view nobody holds any more.
+
+        The concrete failure, measured on 2026-09-22: seven crypto names each
+        had an unfilled GTC buy 1.0-2.2% below mid. `FundLoop._drop_working`
+        skips any symbol with an order working — correctly, so six orders do
+        not fill together on one dip — so every one of those names was locked
+        out of a new decision permanently. The crypto book was frozen: not
+        halted, not erroring, just unable to consider anything it had ever
+        considered before. One of them, DOGE, was resting at a price the old
+        rounding had put 4% wrong, and it was never going to fill or leave.
+
+        This only ever CANCELS. It cannot open a position, cannot resize one,
+        and cannot make the fund trade something it declined — the symbol goes
+        back to the screen and has to win a fresh deliberation on its merits.
+        """
+        cutoff = time.time() - max_age_seconds
+        stale = [oid for oid, since in self._resting_since.items()
+                 if since <= cutoff and oid in self._resting]
+        symbols = []
+        for oid in stale:
+            symbol = self._resting[oid].symbol
+            if await self.cancel_order(oid):
+                symbols.append(symbol)
+        return symbols
 
     async def positions(self) -> list[VenuePosition]:
         return [p for p in self._positions.values() if p.quantity > 0]

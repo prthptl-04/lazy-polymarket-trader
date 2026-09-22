@@ -42,6 +42,9 @@ from typing import Any, Optional, Sequence
 
 from roundtable.knowledge import SourceRef
 from roundtable.postmortem import Postmortem, relevant_lesson_lines
+# One horizon, one definition. An order outlives its thesis at the moment
+# that thesis gets scored against the tape — see _expire_stale_orders.
+from roundtable.shadow import DEFAULT_HORIZON_HOURS as SHADOW_HORIZON_HOURS
 from trading.candidate_builder import build_candidate
 from trading.fund_config import is_thesis_stale
 from trading.pipeline import EXTENDED_HOURS_CUSHION_BPS
@@ -68,6 +71,7 @@ class CycleReport:
     universe: list[str] = field(default_factory=list)
     # Past deliberations resolved against the tape this cycle.
     scored_calls: int = 0
+    expired_orders: list[str] = field(default_factory=list)
     prescreened_out: list[dict] = field(default_factory=list)
     deliberated: list[str] = field(default_factory=list)
     results: list[Any] = field(default_factory=list)     # PipelineResult
@@ -86,6 +90,7 @@ class CycleReport:
             "session": self.session,
             "confidence_shrink": self.confidence_shrink,
             "scored_calls": self.scored_calls,
+            "expired_orders": list(self.expired_orders),
             "universe": len(self.universe),
             "prescreened_out": len(self.prescreened_out),
             "deliberated": len(self.deliberated),
@@ -216,6 +221,12 @@ class FundLoop:
         await self._refresh_crypto_pairs()
 
         await self._score_past_calls(report)
+
+        # BEFORE the working-order guard, because the guard is what makes a
+        # stale order permanent: it skips any name with an order outstanding,
+        # so an order that never fills and never leaves locks that name out of
+        # every future cycle.
+        await self._expire_stale_orders(report)
 
         universe = self._universe_for(session, moment)
         # A name with an order already working is not a new opportunity.
@@ -504,6 +515,31 @@ class FundLoop:
                 if symbol:
                     out.add(str(symbol).upper())
         return out
+
+    async def _expire_stale_orders(self, report: CycleReport) -> None:
+        """Cancel resting orders that have outlived the thesis behind them.
+
+        The horizon is the SHADOW horizon, not a number of its own: that is the
+        point at which the call gets scored against the tape. Past it, the
+        deliberation is a resolved prediction and the order is the only thing
+        still acting on it.
+
+        Never raises. A failure to tidy must not become a failure to trade.
+        """
+        for adapter in getattr(getattr(self, "router", None), "adapters", []) or []:
+            expire = getattr(adapter, "expire_resting", None)
+            if expire is None:
+                continue
+            try:
+                cancelled = await expire(SHADOW_HORIZON_HOURS * 3600.0)
+            except Exception:
+                logger.exception("could not expire stale orders at %s",
+                                 getattr(adapter, "name", adapter))
+                continue
+            if cancelled:
+                report.expired_orders.extend(cancelled)
+                logger.info("cancelled %d order(s) that outlived their thesis: %s",
+                            len(cancelled), ", ".join(cancelled))
 
     def _drop_working(self, names: list[str]) -> tuple[list[str], list[dict]]:
         """Skip names that already have an order working.
