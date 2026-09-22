@@ -15,6 +15,7 @@ knowing before reading too much into the numbers.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
@@ -33,6 +34,13 @@ from trading.venues.base import (
 QuoteSource = Callable[[str], "Quote | Awaitable[Quote]"]
 
 DEFAULT_SLIPPAGE_BPS = 5
+
+
+logger = logging.getLogger(__name__)
+
+# Fills kept in the snapshot. Enough to explain a cash line, bounded so one
+# long-lived account cannot grow the state row without limit.
+FILL_HISTORY = 200
 
 
 @dataclass
@@ -111,6 +119,14 @@ class PaperVenue:
                  "resting_since": self._resting_since.get(oid)}
                 for oid, r in self._resting.items()
             ],
+            # The audit trail for the cash line. It was NOT stored, and the
+            # first time the identity below broke — a $43.75 gap on
+            # 2026-09-22 — nothing in the saved state could say which fill
+            # was responsible, because every fill that made the cash had been
+            # discarded at the previous restart. A balance you cannot explain
+            # is a balance you cannot trust. Bounded so the row cannot grow
+            # without limit; the tail is what a reconciliation needs.
+            "fills": self.fills[-FILL_HISTORY:],
         }
 
     def restore(self, state: Optional[dict]) -> None:
@@ -173,6 +189,16 @@ class PaperVenue:
                 self._resting_since[oid] = float(row["resting_since"])
             except (KeyError, TypeError, ValueError):
                 self._resting_since[oid] = time.time()
+
+        self.fills = list(state.get("fills") or [])
+
+        # Check the books the moment they are rebuilt. A restart is where a
+        # position can go missing while the cash that bought it does not, and
+        # a silent restore is how such a gap survives every later cycle
+        # looking like a balance somebody chose.
+        gap = self.reconcile()
+        if gap:
+            logger.error("restored paper account does not reconcile: %s", gap)
 
     # ---------- test/eval hooks ----------
 
@@ -310,6 +336,44 @@ class PaperVenue:
             venue_order_id=venue_order_id, status="cancelled", venue=self.name,
         )
         return True
+
+    def reconcile(self, tolerance_usd: float = 0.01) -> Optional[str]:
+        """Prove the cash line, or say exactly how far off it is.
+
+        The identity the snapshot has always claimed:
+
+            starting_cash - sum(quantity x avg_price) + realized == cash
+
+        Every buy debits cash and books inventory at the same price; every sell
+        credits cash and takes the difference to realised. So the three stored
+        primitives must agree, and any gap means money moved without inventory
+        moving with it.
+
+        This exists because the identity BROKE and nothing noticed. Measured
+        2026-09-22: cash 454.53, realised -1.72, zero positions, against a 500
+        start. 500 - 43.75 - 1.72 to the cent — one $43.75 position debited
+        from cash and then gone, with no sale and no realised entry. The venue
+        had been carrying that gap across restarts as if it were a balance
+        somebody had chosen.
+
+        Returns None when the books agree, and a description otherwise. It does
+        not repair anything: a reconciliation that silently adjusts the cash to
+        match is not a reconciliation, it is a cover-up, and the gap is the
+        evidence.
+        """
+        inventory = sum(p.quantity * p.avg_price for p in self._positions.values())
+        expected = self.starting_cash_usd - inventory + self.realized_pnl_usd
+        gap = self.cash_usd - expected
+        if abs(gap) <= tolerance_usd:
+            return None
+        return (
+            f"cash ${self.cash_usd:,.2f} but the book implies "
+            f"${expected:,.2f} (start ${self.starting_cash_usd:,.2f} "
+            f"- inventory ${inventory:,.2f} + realised "
+            f"${self.realized_pnl_usd:,.2f}); gap ${gap:,.2f}. "
+            f"{len(self.fills)} fill(s) on record, "
+            f"{len(self._positions)} position(s) held"
+        )
 
     async def expire_resting(self, max_age_seconds: float) -> list[str]:
         """Cancel every order that has rested longer than `max_age_seconds`.

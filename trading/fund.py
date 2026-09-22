@@ -190,6 +190,7 @@ class FundLoop:
         #     cycles by definition — and a fill the book does not know about is
         #     inventory the fund will act as though it does not hold.
         await self._reconcile_resting(report)
+        self._reconcile_cash(report)
 
         self._recalibrate()
         report.confidence_shrink = getattr(self.pipeline, "confidence_shrink", None)
@@ -505,6 +506,31 @@ class FundLoop:
                     )
             except Exception:
                 logger.exception("could not reconcile resting orders")
+
+    def _reconcile_cash(self, report: CycleReport) -> None:
+        """Ask every venue that can prove its books to prove them.
+
+        A REAL error, not a note: money that moved without inventory moving
+        with it is the one thing in a trading system that must never be
+        absorbed quietly. It went unnoticed for hours precisely because
+        nothing asked.
+
+        The gap is reported, never repaired — a reconciliation that adjusts
+        the cash to match the book is not a reconciliation.
+        """
+        for adapter in getattr(getattr(self, "router", None), "adapters", []) or []:
+            check = getattr(adapter, "reconcile", None)
+            if check is None:
+                continue
+            try:
+                gap = check()
+            except Exception:
+                logger.exception("could not reconcile %s",
+                                 getattr(adapter, "name", adapter))
+                continue
+            if gap:
+                report.errors.append(
+                    f"{getattr(adapter, 'name', 'venue')} does not reconcile: {gap}")
 
     def _resting_symbols(self) -> set[str]:
         """Symbols with an order already working at some venue.

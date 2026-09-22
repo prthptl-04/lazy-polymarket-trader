@@ -1,0 +1,201 @@
+"""The paper account must be able to prove its own cash.
+
+Measured on 2026-09-22 at 03:45, after the first crypto fills of the run:
+
+    starting_cash   500.00
+    cash            454.5263
+    realized         -1.7237
+    positions        none
+
+    500.00 - 43.75 - 1.7237 = 454.5263    to the cent
+
+The -1.7237 is a complete round trip and is correct. The 43.75 is not: one
+position was debited from cash and then disappeared with no sale and no
+realised entry. The venue had been carrying that gap across four restarts,
+presenting it as a balance somebody had chosen.
+
+It went unnoticed for hours for two reasons, and both are fixed here rather
+than the symptom:
+
+  1. Nothing ever checked the identity the snapshot docstring has always
+     claimed held: `starting - sum(qty x avg) + realized == cash`.
+  2. `fills` was not persisted, so by the time anyone looked, every fill that
+     produced the cash had been discarded at the previous restart. The books
+     could not be audited even in principle.
+
+`reconcile()` reports the gap and REPAIRS NOTHING. A reconciliation that
+adjusts the cash to match the book is not a reconciliation, and the gap is the
+only evidence of what happened.
+"""
+
+import asyncio
+
+import pytest
+
+from trading.venues.base import OrderRequest
+from trading.venues.paper import FILL_HISTORY, PaperVenue
+
+
+def _venue(cash=500.0):
+    v = PaperVenue(starting_cash_usd=cash)
+    v.set_quote("LINK-USD", bid=12.71, ask=12.95)
+    return v
+
+
+async def _buy(v, notional=43.75, cid="b1", symbol="LINK-USD"):
+    return await v.place_order(OrderRequest(
+        symbol=symbol, side="buy", asset_class="crypto", order_type="market",
+        notional_usd=notional, client_order_id=cid))
+
+
+# ---------- the identity ----------
+
+def test_a_fresh_account_reconciles():
+    assert _venue().reconcile() is None
+
+
+def test_an_account_reconciles_after_a_buy():
+    v = _venue()
+    asyncio.run(_buy(v))
+    assert v.reconcile() is None
+
+
+def test_an_account_reconciles_after_a_round_trip():
+    v = _venue()
+    asyncio.run(_buy(v))
+    qty = v._positions["LINK-USD"].quantity
+    v.set_quote("LINK-USD", bid=12.30, ask=12.40)
+    asyncio.run(v.place_order(OrderRequest(
+        symbol="LINK-USD", side="sell", asset_class="crypto",
+        order_type="market", quantity=qty, client_order_id="s1")))
+    assert v._positions == {}
+    assert v.reconcile() is None
+    assert v.realized_pnl_usd < 0
+
+
+def test_the_observed_gap_is_detected():
+    """The exact shape of the live failure: cash spent, position gone, no
+    sale, no realised entry."""
+    v = _venue()
+    asyncio.run(_buy(v, notional=43.75))
+    v._positions.clear()                       # what actually happened
+    gap = v.reconcile()
+    assert gap is not None
+    assert "-43.75" in gap or "43.75" in gap
+    assert "gap" in gap
+
+
+def test_reconcile_reports_and_never_repairs():
+    """The gap is the evidence. Erasing it to make the numbers agree would
+    destroy the only record that anything went wrong."""
+    v = _venue()
+    asyncio.run(_buy(v))
+    before = v.cash_usd
+    v._positions.clear()
+    v.reconcile()
+    v.reconcile()
+    assert v.cash_usd == before
+    assert v.realized_pnl_usd == 0.0
+    assert v.reconcile() is not None, "still broken, still saying so"
+
+
+def test_floating_point_noise_is_not_a_gap():
+    """A cent of tolerance. Reporting rounding as theft would train everyone
+    to ignore the one message that must never be ignored."""
+    v = _venue()
+    asyncio.run(_buy(v))
+    v.cash_usd += 0.002
+    assert v.reconcile() is None
+    v.cash_usd += 0.5
+    assert v.reconcile() is not None
+
+
+# ---------- the audit trail survives a restart ----------
+
+def test_fills_are_persisted():
+    v = _venue()
+    asyncio.run(_buy(v))
+    assert v.snapshot()["fills"], "the fills that made the cash must be stored"
+    w = PaperVenue(starting_cash_usd=500.0)
+    w.restore(v.snapshot())
+    assert len(w.fills) == 1
+    assert w.fills[0]["symbol"] == "LINK-USD"
+    assert w.reconcile() is None
+
+
+def test_the_fill_history_is_bounded():
+    """One long-lived account must not grow the state row without limit."""
+    v = _venue()
+    v.fills = [{"symbol": "X", "side": "buy", "quantity": 1, "price": 1}
+               for _ in range(FILL_HISTORY * 3)]
+    assert len(v.snapshot()["fills"]) == FILL_HISTORY
+
+
+def test_a_restore_that_does_not_reconcile_is_logged(caplog):
+    """A restart is exactly where a position goes missing while the cash that
+    bought it does not. A silent restore is how such a gap survives."""
+    v = _venue()
+    asyncio.run(_buy(v))
+    snap = v.snapshot()
+    snap["positions"] = []                     # the corruption, as observed
+    w = PaperVenue(starting_cash_usd=500.0)
+    with caplog.at_level("ERROR"):
+        w.restore(snap)
+    assert any("does not reconcile" in r.message for r in caplog.records)
+
+
+# ---------- the cycle asks ----------
+
+def test_the_cycle_reconciles_cash_every_pass():
+    import inspect
+
+    from trading.fund import FundLoop
+    src = inspect.getsource(FundLoop.run_cycle)
+    assert "_reconcile_cash" in src
+
+
+def test_a_gap_is_an_error_not_a_note():
+    """Money that moved without inventory moving with it is the one thing that
+    must never be absorbed quietly."""
+    from datetime import datetime
+
+    from zoneinfo import ZoneInfo
+
+    from trading.fund import CycleReport, FundLoop
+
+    class _Adapter:
+        name = "paper"
+        def reconcile(self): return "cash $1.00 but the book implies $2.00; gap $-1.00"
+
+    class _Router:
+        adapters = [_Adapter()]
+
+    fund = object.__new__(FundLoop)
+    fund.router = _Router()
+    report = CycleReport(moment=datetime(2026, 9, 22, 3, 45,
+                                         tzinfo=ZoneInfo("America/New_York")),
+                         session="crypto_only")
+    FundLoop._reconcile_cash(fund, report)
+    assert len(report.errors) == 1
+    assert "does not reconcile" in report.errors[0]
+    assert report.notes == []
+
+
+def test_a_venue_that_cannot_reconcile_is_skipped():
+    """A live adapter's books live at the broker."""
+    from datetime import datetime
+
+    from zoneinfo import ZoneInfo
+
+    from trading.fund import CycleReport, FundLoop
+
+    class _Router:
+        adapters = [object()]
+
+    fund = object.__new__(FundLoop)
+    fund.router = _Router()
+    report = CycleReport(moment=datetime(2026, 9, 22, 3, 45,
+                                         tzinfo=ZoneInfo("America/New_York")),
+                         session="crypto_only")
+    FundLoop._reconcile_cash(fund, report)
+    assert report.errors == []
