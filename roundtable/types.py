@@ -74,6 +74,9 @@ class Candidate:
     # than a system prompt, same as lessons: the system prompt carries the
     # cache tag (rule #2) and must stay byte-identical between deliberations.
     budget_notes: tuple[str, ...] = ()
+    # Facts about the operating regime, not about the instrument. Present only
+    # while they change the answer — see `fund_config.cold_start_note`.
+    regime_notes: tuple[str, ...] = ()
     # Where each block above came from and when it was true. Empty renders
     # exactly as before, so every existing caller is unaffected.
     sources: tuple[SourceRef, ...] = ()
@@ -145,6 +148,7 @@ class Candidate:
             ("CORROBORATION", self.corroboration_notes),
             ("LESSONS FROM PAST LOSSES (apply these)", self.lessons),
             ("WHAT THIS COMMITTEE COSTS TO RUN", self.budget_notes),
+            ("THE REGIME YOU ARE OPERATING IN", self.regime_notes),
         ):
             if notes:
                 lines.append(f"\n{header}:")

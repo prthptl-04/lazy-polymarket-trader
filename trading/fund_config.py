@@ -204,3 +204,46 @@ def is_thesis_stale(created: Optional[float], *, max_age_seconds: float, now: fl
     if created is None:
         return True
     return (now - created) > max_age_seconds
+
+
+# ---------------------------------------------------------------- cold start
+
+def cold_start_note(*, paper: bool, resolved: int, required: int) -> str:
+    """Tell the committee which regime it is in, while that changes the answer.
+
+    33 of the fund's first 36 completed debates ended neutral. Every learning
+    mechanism here is gated behind resolved trades — seat weights, the
+    confidence shrink, post-mortem lessons, all at `required` — so a committee
+    that never trades never resolves anything, never calibrates, and never
+    improves. The system could not bootstrap itself.
+
+    The cause is that the decision rule does not distinguish exploration from
+    exploitation. In paper mode with nothing resolved, being wrong is free and a
+    resolved outcome is the entire product; a stand-aside produces nothing at
+    all. That asymmetry is real, temporary, and the committee had no way to know
+    about it.
+
+    It is NOT a relaxed gate. The grader, the router, the net reward:risk floor
+    and the kill switch are all untouched, and the note says so — implying
+    otherwise would invite the table to pass something the pipeline will refuse
+    anyway.
+
+    **Never in live mode.** A standing nudge toward trading, attached to a live
+    account, is the worst thing this module could contain. Gated on paper AND on
+    the sample count, and gone the instant either changes.
+    """
+    if not paper or resolved >= required:
+        return ""
+    return (
+        f"REGIME: this is PAPER trading with no money at risk, and the fund has "
+        f"{resolved} of the {required} resolved trades it needs before it can "
+        f"calibrate anything. Seat weights, the confidence shrink and the "
+        f"post-mortem lessons are all switched off until then, and they are fed "
+        f"only by positions that actually open and close. A trade that turns out "
+        f"badly here costs nothing and teaches the fund something; a stand-aside "
+        f"costs nothing and teaches it NO INFORMATION at all. That asymmetry "
+        f"holds only in this regime and only until the sample bar is reached. "
+        f"Every gate still applies — the grader, the risk limits and the "
+        f"execution rules will refuse a bad trade regardless of what you "
+        f"conclude, so a marginal call is not yours to veto on their behalf."
+    )

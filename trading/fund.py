@@ -277,7 +277,7 @@ class FundLoop:
         report: CycleReport,
     ) -> bool:
         """Returns True if the round table was actually convened."""
-        asset_class = "crypto" if symbol in self.crypto_watchlist else "equity"
+        asset_class = self._asset_class_of(symbol)
 
         history = await self.data.get_history(symbol, lookback=self.lookback_bars)
         quote = await self.data.get_quote(symbol)
@@ -324,6 +324,7 @@ class FundLoop:
             # time we got round to writing it down, not the time it was true.
             sources=self._sources(quote_at, news_at, catalysts_at),
             budget_notes=self._budget_notes(),
+            regime_notes=self._regime_notes(),
         )
 
         if not built.prescreen.worth_debating:
@@ -933,6 +934,9 @@ class FundLoop:
 
     # ---------- helpers ----------
 
+    def _asset_class_of(self, symbol: str) -> str:
+        return classify_asset_class(symbol, self.crypto_watchlist)
+
     def _universe_for(self, session: Session, moment: datetime) -> list[str]:
         """Configured watchlist if one exists, otherwise the scout screens the
         whole tape. A configured list is an override, not the normal path."""
@@ -974,6 +978,31 @@ class FundLoop:
         except Exception as e:
             logger.exception("scout scan failed")
             return []
+
+    def _regime_notes(self) -> tuple[str, ...]:
+        """Whether the committee is exploring or exploiting.
+
+        Read from the ROUTER's live gate rather than a config flag: the gate is
+        what actually decides whether money can move, and a note that keyed off
+        anything else could appear against a live account through a
+        disagreement between two settings. Anything unknown resolves to LIVE,
+        which yields no note — the same refuse-by-default stance the gate takes.
+        """
+        from trading.fund_config import cold_start_note
+        from roundtable.calibration import MIN_SAMPLES_FOR_FIT
+        try:
+            gate = getattr(getattr(self, "router", None), "live_gate", None)
+            paper = True if gate is None else not gate.status().get("live_possible", True)
+        except Exception:
+            logger.exception("could not read the live gate; assuming LIVE")
+            return ()
+        try:
+            resolved = len(self.memory.resolved_outcomes(limit=MIN_SAMPLES_FOR_FIT))
+        except Exception:
+            return ()
+        note = cold_start_note(paper=paper, resolved=resolved,
+                               required=MIN_SAMPLES_FOR_FIT)
+        return (note,) if note else ()
 
     def _budget_notes(self) -> tuple[str, ...]:
         """The burn-versus-earn line the seats read before every debate.
@@ -1109,6 +1138,31 @@ def _stop_distance_pct(bars: Sequence[Any], price: float) -> Optional[float]:
     if not atr or atr <= 0:
         return None
     return round(atr * DEFAULT_STOP_MULTIPLIER / price * 100.0, 2)
+
+
+def classify_asset_class(symbol: str,
+                         crypto_watchlist: Sequence[str] = ()) -> str:
+    """Crypto or equity, decided by the INSTRUMENT.
+
+    This used to be `symbol in crypto_watchlist`, which broke the moment the
+    crypto scout made an empty watchlist the normal case: every pair the scout
+    found classified as an equity, so the fund asked SEC EDGAR for a token's
+    balance sheet, attempted Altman Z on a coin, and convened the two
+    equity-only seats for instruments they have no mandate over.
+
+    Robinhood spells every crypto pair `BASE-USD`, and no US equity ticker
+    contains a hyphen — so the symbol carries the answer and no configuration
+    can drift out of step with it.
+
+    The configured watchlist still counts, because the override path uses bare
+    symbols (`FUND_CRYPTO_WATCHLIST=BTC,ETH`) that have no suffix to read.
+    """
+    name = (symbol or "").strip().upper()
+    if name.endswith("-USD") or name.endswith("-USDC"):
+        return "crypto"
+    if name in {s.strip().upper() for s in crypto_watchlist or ()}:
+        return "crypto"
+    return "equity"
 
 
 def _trading_day(moment: datetime):
