@@ -276,18 +276,17 @@ Rules:
   lower confidence rather than raising it.
 - Invent nothing. You may only use what the seats said.
 
-Write the transcript as a readable debate: each line `[Seat Name]: ...`,
-capturing the actual positions and the actual disagreements. It will be shown
-to a human in a monitoring UI, so it must be honest about conflict rather than
-smoothing it.
+Do NOT reproduce the seat positions. The monitoring UI renders them from what
+the seats actually wrote; anything you retyped would be a paraphrase presented
+as a record, and a record that drifts from the thing it records is worse than
+none. Judge them instead.
 
 Respond with ONLY a JSON object, no prose around it, no code fences:
 {
   "signal": "bullish" | "bearish" | "neutral",
   "confidence": <number 0-100>,
   "summary": "<3-5 sentences: the decision and what drove it>",
-  "dissent": "<the strongest surviving objection, or '' if none>",
-  "transcript": "<the debate, one '[Seat Name]: ...' per line>"
+  "dissent": "<the strongest surviving objection, or '' if none>"
 }"""
 
 

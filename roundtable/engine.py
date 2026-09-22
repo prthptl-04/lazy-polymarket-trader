@@ -77,7 +77,9 @@ def _seat_votes(seat_id: str) -> bool:
 # the model stops at end_turn — so the only calls that get more expensive are
 # the ones that were previously broken.
 DEFAULT_MAX_TOKENS = 4096
-CHAIR_MAX_TOKENS = 8192
+# Down from 8192. The chair no longer reproduces the seat positions — that
+# field was 76% of its output — so what remains is a summary and a dissent.
+CHAIR_MAX_TOKENS = 3072
 
 
 @dataclass
@@ -229,7 +231,12 @@ class RoundTable:
             signal=_coerce_signal(parsed.get("signal")),
             confidence=_coerce_confidence(parsed.get("confidence")),
             summary=str(parsed.get("summary", "")).strip(),
-            transcript=str(parsed.get("transcript", "")).strip(),
+            # Rendered from what the seats WROTE, never from what the chair
+            # retyped. The chair used to be asked for this and spent ~1,450
+            # output tokens a deliberation on it — 76% of its output — and a
+            # model-regenerated transcript is a paraphrase presented as a
+            # record. The fallback path has always derived it this way.
+            transcript=self._render_opinions(thesis.opinions),
             dissent=str(parsed.get("dissent", "")).strip(),
             synthesized_by_llm=True,
         )
