@@ -960,26 +960,32 @@ class FundLoop:
         if should_flatten_crypto(moment):
             return []
 
+        # The crypto branch RETURNS on every path. It used to fall through
+        # when no crypto scout was attached, and control continued past the
+        # elif chain into the equity screen — so a crypto_only session at 22:10
+        # debated META, MU, QCOM and GOOGL. A session boundary has to hold
+        # whatever is or is not attached, so nothing here may reach the code
+        # below.
         if not session.equities_open:
             # A configured crypto list is an override, exactly as on the equity
             # side. Left empty, the crypto scout screens the whole tradable
             # market instead of the two names somebody once typed.
-            names = list(self.crypto_watchlist) or None
-            if names is None and self.crypto_scout is not None:
-                try:
-                    return self._not_cooling_off(
-                        [c.symbol for c in self.crypto_scout.scan(
-                            limit=self.max_candidates_per_cycle * 2)], moment)
-                except Exception:
-                    logger.exception("crypto scout scan failed")
-                    return []
-        elif self.equity_watchlist:
-            names = list(self.equity_watchlist)
-        else:
-            names = None
+            configured = list(self.crypto_watchlist)
+            if configured:
+                return self._not_cooling_off(configured, moment)
+            if self.crypto_scout is None:
+                return []
+            try:
+                return self._not_cooling_off(
+                    [c.symbol for c in self.crypto_scout.scan(
+                        limit=self.max_candidates_per_cycle * 2)], moment)
+            except Exception:
+                logger.exception("crypto scout scan failed")
+                return []
 
-        if names is not None:
-            return self._not_cooling_off(names, moment)
+        if self.equity_watchlist:
+            return self._not_cooling_off(list(self.equity_watchlist), moment)
+
         if self.scout is None:
             return []
         try:

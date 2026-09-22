@@ -103,8 +103,13 @@ def _sync_quote(provider: Any, symbol: str) -> Optional[float]:
 
 def build_crypto_scout(data_provider: Any, venue: Any) -> Optional[Any]:
     """Wire the crypto scout to Massive's grouped aggregate and Robinhood's
-    tradable pair list. Returns None when either source is missing — the
-    watchlist then stands, rather than the fund screening nothing silently.
+    tradable pair list.
+
+    `venue` must be the ROBINHOOD adapter, not whatever orders are routed to:
+    in paper mode those are different objects, and PaperVenue has no
+    `currency_pairs`. Returns None when either source is missing, and the
+    caller must treat that as "no crypto universe" rather than falling back to
+    something else — `FundLoop._universe_for` learned that the hard way.
     """
     massive = getattr(data_provider, "fallback", data_provider)
     if not hasattr(massive, "_call") or not hasattr(venue, "currency_pairs"):
@@ -331,7 +336,12 @@ def build_fund(
         # serves every candidate.
         # Screens every tradable Robinhood pair rather than the two names in
         # FUND_CRYPTO_WATCHLIST. The watchlist still overrides when set.
-        crypto_scout=build_crypto_scout(data_provider, trading_venue),
+        # The pair list comes from ROBINHOOD, not from the venue orders are
+        # routed to. In paper mode those differ: PaperVenue simulates fills and
+        # has no `currency_pairs`, so passing it here left the scout unbuilt —
+        # and an unbuilt crypto scout used to mean a crypto session ran the
+        # EQUITY screen.
+        crypto_scout=build_crypto_scout(data_provider, robinhood or trading_venue),
         social=SocialSentimentFeed(),
         # Scores past deliberations against the tape, so the seats calibrate
         # from every call rather than only from positions that closed.
