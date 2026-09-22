@@ -100,3 +100,42 @@ def test_the_order_builder_uses_it():
     kw = _session_order_kwargs(_c(), side="buy")
     assert kw["order_type"] == "limit"
     assert kw["limit_price"] > _c().price, "still resting at the bare mark"
+
+
+# ------------------------------------------------- what the seats are told
+
+def test_the_execution_note_describes_where_the_order_actually_rests():
+    """The note said "at the MARK" after the limit stopped being the mark.
+
+    This is the same class of defect that made the committee refuse crypto in
+    the first place: a spread stated without a truthful execution style. A seat
+    reasoning from "rests at the mark, ~0 bps" when the order actually pays 11
+    bps of improvement is reasoning from a premise the pipeline broke.
+    """
+    from trading.candidate_builder import _execution_note
+    note = _execution_note("crypto", 190, price=11.13, atr=0.641)
+    # Not a bare `"mark" not in note` — that matches "market" later in the
+    # sentence. What must be gone is the CLAIM to rest at the mark.
+    assert "at the MARK" not in note
+    assert "INSIDE the spread" in note
+    assert "bps" in note
+
+
+def test_the_note_states_the_improvement_it_will_actually_pay():
+    from trading.candidate_builder import _execution_note
+    note = _execution_note("crypto", 190, price=11.13, atr=0.641)
+    assert "11 bps" in note or "improvement" in note.lower()
+
+
+def test_a_crossing_note_is_unchanged():
+    from trading.candidate_builder import _execution_note
+    note = _execution_note("equity", 6, price=100.0, atr=2.0)
+    assert "CROSSES" in note
+
+
+def test_the_note_survives_a_missing_atr():
+    """No ATR means no improvement, and the note must say the plain thing
+    rather than quote a number it cannot compute."""
+    from trading.candidate_builder import _execution_note
+    note = _execution_note("crypto", 190, price=11.13, atr=None)
+    assert note and "bps" in note

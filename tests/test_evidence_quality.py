@@ -72,9 +72,22 @@ def test_a_resting_order_says_the_spread_will_not_be_paid():
 
 def test_the_block_states_the_cost_actually_expected():
     """The number the seats should reason about is what we pay, not what the
-    book quotes."""
+    book quotes.
+
+    That number used to be zero, because the order rested exactly at the mark.
+    It no longer is: `resting_limit` improves toward the touch by what the
+    reward:risk floor permits, so the order pays a small, bounded cost in
+    exchange for being reachable — four orders at the bare mark produced zero
+    fills. What must hold is that the cost quoted is the IMPROVEMENT, not the
+    189bps the book advertises.
+    """
     block = _crypto().evidence_block()
-    assert "0 bps" in block or "0bps" in block
+    assert "a side" in block, "the block must price the side, not the round trip"
+    assert "189 bps quoted above is NOT a round trip we pay" in block
+    # Whatever the improvement is, it has to be far below the quoted spread.
+    import re
+    improvement = int(re.search(r"improved (\d+) bps", block).group(1))
+    assert 0 < improvement < 189 / 4, improvement
 
 
 def test_a_crossing_order_still_warns_about_its_spread():

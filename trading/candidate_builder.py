@@ -116,7 +116,9 @@ def build_candidate(
         # live ETH deliberation reported "no directional evidence in the
         # block", and all of this is computable from the bars already in hand.
         technical_notes=tuple(technical_notes) + _derived_technicals(bars, price),
-        execution_note=_execution_note(asset_class, spread_bps),
+        execution_note=_execution_note(
+            asset_class, spread_bps, price=price,
+            atr=exit_plan.atr if exit_plan else None),
         portfolio_notes=tuple(portfolio_notes),
         corroboration_notes=tuple(corroboration_notes),
         lessons=tuple(lessons),
@@ -244,7 +246,9 @@ def _derived_technicals(bars: Sequence[Bar], price: float) -> tuple[str, ...]:
     return tuple(notes)
 
 
-def _execution_note(asset_class: str, spread_bps: Optional[int]) -> Optional[str]:
+def _execution_note(asset_class: str, spread_bps: Optional[int],
+                    price: Optional[float] = None,
+                    atr: Optional[float] = None) -> Optional[str]:
     """How the order reaches the market, and therefore what the spread costs us.
 
     Without this the block said "Spread: 189 bps" and six seats priced a ~378
@@ -257,13 +261,27 @@ def _execution_note(asset_class: str, spread_bps: Optional[int]) -> Optional[str
     if spread_bps is None:
         return None
     if asset_class == "crypto" and spread_bps > RESTING_SPREAD_BPS:
-        return (f"this order RESTS as a limit at the MARK — the midpoint, not the "
-                f"bid — so it improves on the best bid and fills on ordinary "
-                f"two-way flow rather than only on a reversal. It does NOT cross "
-                f"the spread, so the {spread_bps} bps quoted above is NOT a cost "
-                f"we pay: expect ~0 bps of crossing cost. What resting DOES cost "
-                f"is real and unmodelled — the order may not fill, and it is more "
-                f"likely to fill when the market is about to move through it. "
-                f"Weigh that, but do not price a round trip across this spread.")
+        # Quote the improvement the pipeline will ACTUALLY price in. The note
+        # used to say "at the MARK" and kept saying it after `resting_limit`
+        # started improving toward the touch — a spread stated with an untrue
+        # execution style, which is the exact defect that made the committee
+        # refuse crypto in the first place.
+        from trading.pipeline import resting_limit
+        improvement_bps = 0
+        if price and atr:
+            probe = Candidate(symbol="", asset_class="crypto", price=price,
+                              spread_bps=spread_bps, atr=atr)
+            improvement_bps = round(
+                (resting_limit(probe, "buy") - price) / price * 10_000)
+        return (f"this order RESTS as a limit INSIDE the spread — improved "
+                f"{improvement_bps} bps toward the touch from the midpoint, never "
+                f"through it. It does NOT cross, so the {spread_bps} bps quoted "
+                f"above is NOT a round trip we pay: the cost priced in is about "
+                f"{improvement_bps} bps a side. The improvement is bounded by what "
+                f"the reward:risk floor still permits, so it cannot make the trade "
+                f"uneconomic. What resting DOES cost is real and unmodelled — the "
+                f"order may not fill, and it is likelier to fill when the market is "
+                f"about to move through it. Weigh that, but do not price a round "
+                f"trip across this spread.")
     return (f"this order CROSSES the spread, so expect to pay about "
             f"{spread_bps // 2} bps per side, {spread_bps} bps round trip.")
