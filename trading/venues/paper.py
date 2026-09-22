@@ -65,6 +65,12 @@ class PaperVenue:
     _resting_since: dict[str, float] = field(default_factory=dict)
     _quotes: dict[str, Quote] = field(default_factory=dict)
     realized_pnl_usd: float = 0.0
+    # A gap between the cash line and the book that has been INVESTIGATED and
+    # could not be explained, booked explicitly so it stays visible instead of
+    # hiding inside the cash. A suspense account, not an eraser: see
+    # `absorb_gap`. Never written automatically.
+    unexplained_usd: float = 0.0
+    unexplained_reason: Optional[str] = None
     fills: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -101,6 +107,8 @@ class PaperVenue:
             "starting_cash_usd": self.starting_cash_usd,
             "cash_usd": self.cash_usd,
             "realized_pnl_usd": self.realized_pnl_usd,
+            "unexplained_usd": self.unexplained_usd,
+            "unexplained_reason": self.unexplained_reason,
             "positions": [
                 {"symbol": p.symbol, "asset_class": p.asset_class,
                  "quantity": p.quantity, "avg_price": p.avg_price}
@@ -137,6 +145,8 @@ class PaperVenue:
             state.get("starting_cash_usd", self.starting_cash_usd))
         self.cash_usd = float(state.get("cash_usd", self.cash_usd))
         self.realized_pnl_usd = float(state.get("realized_pnl_usd", 0.0))
+        self.unexplained_usd = float(state.get("unexplained_usd", 0.0))
+        self.unexplained_reason = state.get("unexplained_reason")
         for row in state.get("positions") or []:
             try:
                 symbol = str(row["symbol"])
@@ -362,7 +372,8 @@ class PaperVenue:
         evidence.
         """
         inventory = sum(p.quantity * p.avg_price for p in self._positions.values())
-        expected = self.starting_cash_usd - inventory + self.realized_pnl_usd
+        expected = (self.starting_cash_usd - inventory + self.realized_pnl_usd
+                    + self.unexplained_usd)
         gap = self.cash_usd - expected
         if abs(gap) <= tolerance_usd:
             return None
@@ -370,10 +381,49 @@ class PaperVenue:
             f"cash ${self.cash_usd:,.2f} but the book implies "
             f"${expected:,.2f} (start ${self.starting_cash_usd:,.2f} "
             f"- inventory ${inventory:,.2f} + realised "
-            f"${self.realized_pnl_usd:,.2f}); gap ${gap:,.2f}. "
+            f"${self.realized_pnl_usd:,.2f}, unexplained "
+            f"${self.unexplained_usd:,.2f}); gap ${gap:,.2f}. "
             f"{len(self.fills)} fill(s) on record, "
             f"{len(self._positions)} position(s) held"
         )
+
+    def absorb_gap(self, reason: str) -> Optional[float]:
+        """Book the current gap to the unexplained line. Returns the amount.
+
+        For a discrepancy that has been INVESTIGATED and could not be
+        explained, which is a different thing from one that has not been
+        looked at. It does not touch cash, positions or realised P&L — the
+        money stays exactly where it is and the amount is now carried under
+        its own name, where the snapshot and the dashboard show it.
+
+        Two failures this sits between. Erasing the gap by adjusting cash
+        destroys the only evidence anything went wrong. Leaving it unbooked
+        means `reconcile` fails on every cycle forever, and an alarm that is
+        always on is an alarm nobody hears — which is how the gap survived
+        four restarts in the first place.
+
+        Requires a stated reason, and refuses when the books already agree:
+        there is nothing to book, and creating an entry would make a correct
+        account look repaired.
+        """
+        if not reason or not reason.strip():
+            raise ValueError("booking an unexplained gap requires a reason")
+        gap = self.reconcile(tolerance_usd=0.0)
+        if gap is None:
+            return None
+        inventory = sum(p.quantity * p.avg_price
+                        for p in self._positions.values())
+        amount = self.cash_usd - (self.starting_cash_usd - inventory
+                                  + self.realized_pnl_usd
+                                  + self.unexplained_usd)
+        self.unexplained_usd += amount
+        note = reason.strip()
+        self.unexplained_reason = (
+            f"{self.unexplained_reason}; {note}" if self.unexplained_reason
+            else note)
+        logger.error("booked an unexplained $%.2f on the paper account: %s",
+                     amount, note)
+        return amount
 
     async def expire_resting(self, max_age_seconds: float) -> list[str]:
         """Cancel every order that has rested longer than `max_age_seconds`.

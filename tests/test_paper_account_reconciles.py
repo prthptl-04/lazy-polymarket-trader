@@ -199,3 +199,80 @@ def test_a_venue_that_cannot_reconcile_is_skipped():
                          session="crypto_only")
     FundLoop._reconcile_cash(fund, report)
     assert report.errors == []
+
+
+# ---------- an investigated gap is booked, not erased ----------
+
+def test_absorb_gap_books_the_amount_without_moving_money():
+    v = _venue()
+    asyncio.run(_buy(v, notional=43.75))
+    v._positions.clear()
+    cash, realized = v.cash_usd, v.realized_pnl_usd
+
+    amount = v.absorb_gap("position vanished with no sale; fills not retained")
+    assert amount == pytest.approx(-43.75, abs=0.01)
+    assert v.cash_usd == cash, "the money does not move"
+    assert v.realized_pnl_usd == realized, "it is not a trading loss"
+    assert v.unexplained_usd == pytest.approx(-43.75, abs=0.01)
+    assert v.reconcile() is None, "the books agree, with the gap NAMED"
+
+
+def test_the_reason_survives_and_is_visible():
+    v = _venue()
+    asyncio.run(_buy(v))
+    v._positions.clear()
+    v.absorb_gap("investigated 2026-09-22, cause not found")
+    snap = v.snapshot()
+    assert snap["unexplained_usd"] == pytest.approx(-43.75, abs=0.01)
+    assert "not found" in snap["unexplained_reason"]
+    w = PaperVenue(starting_cash_usd=500.0)
+    w.restore(snap)
+    assert w.unexplained_usd == pytest.approx(-43.75, abs=0.01)
+    assert "not found" in w.unexplained_reason
+    assert w.reconcile() is None
+
+
+def test_booking_requires_a_reason():
+    v = _venue()
+    asyncio.run(_buy(v))
+    v._positions.clear()
+    with pytest.raises(ValueError):
+        v.absorb_gap("")
+    with pytest.raises(ValueError):
+        v.absorb_gap("   ")
+    assert v.unexplained_usd == 0.0, "a silent booking is the thing being banned"
+
+
+def test_booking_a_healthy_account_does_nothing():
+    """Creating an entry on books that already agree would make a correct
+    account look repaired."""
+    v = _venue()
+    asyncio.run(_buy(v))
+    assert v.absorb_gap("nothing wrong here") is None
+    assert v.unexplained_usd == 0.0
+    assert v.unexplained_reason is None
+
+
+def test_a_second_gap_is_added_not_replaced():
+    """Two unexplained events are two, and the account must say so."""
+    v = _venue()
+    asyncio.run(_buy(v, notional=40.0))
+    v._positions.clear()
+    v.absorb_gap("first")
+    asyncio.run(_buy(v, notional=10.0, cid="b2"))
+    v._positions.clear()
+    v.absorb_gap("second")
+    assert v.unexplained_usd == pytest.approx(-50.0, abs=0.01)
+    assert "first" in v.unexplained_reason and "second" in v.unexplained_reason
+
+
+def test_booking_a_gap_does_not_make_new_trades_reconcile_wrongly():
+    """The booked amount is a constant offset, not a licence to drift."""
+    v = _venue()
+    asyncio.run(_buy(v, notional=43.75))
+    v._positions.clear()
+    v.absorb_gap("investigated")
+    asyncio.run(_buy(v, notional=20.0, cid="b3"))
+    assert v.reconcile() is None
+    v._positions.clear()                        # a NEW unexplained loss
+    assert v.reconcile() is not None, "a fresh gap must still be caught"
