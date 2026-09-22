@@ -119,13 +119,20 @@ def test_it_is_not_a_cooldown():
     assert FundLoop._drop_working(fund, ["ARM"])[0] == ["ARM"]
 
 
-def test_the_scout_is_wide_enough_for_the_attrition_it_meets():
-    """Measured on a universe of ten: five were rejected as Altman Z
-    distressed before a seat was asked anything, and four of the five
-    survivors were already held. A 2x scout assumed roughly half would
-    survive; the solvency filter alone takes half, and holdings take more."""
+def test_the_screen_breadth_has_exactly_one_definition():
+    """There were two, and the one that mattered was not the one that looked
+    like the knob. `build_fund` passed a limit to the MarketScout constructor
+    and `_universe_for` passed another to every `scan` call — and the scan
+    argument won. Raising the constructor's changed nothing at all, which is
+    precisely the failure a duplicated constant produces: the change looks
+    applied and the number does not move."""
     import inspect
 
+    from trading.fund import SCREEN_BREADTH, FundLoop
     from dashboard import fund_wiring
-    src = inspect.getsource(fund_wiring.build_fund)
-    assert "max_candidates_per_cycle * 4" in src
+
+    assert SCREEN_BREADTH == 4
+    universe = inspect.getsource(FundLoop._universe_for)
+    assert universe.count("SCREEN_BREADTH") == 2, "equity AND crypto"
+    assert "* 2)" not in universe, "no second multiplier left behind"
+    assert "SCREEN_BREADTH" in inspect.getsource(fund_wiring.build_fund)

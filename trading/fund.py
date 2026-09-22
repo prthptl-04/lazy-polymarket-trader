@@ -43,6 +43,24 @@ from typing import Any, Optional, Sequence
 from finance.exits import ExitPlan
 from roundtable.knowledge import SourceRef
 from roundtable.postmortem import Postmortem, relevant_lesson_lines
+# How many names the scout screens, as a multiple of the deliberation slots.
+#
+# ONE definition, because there were two. `build_fund` passed a limit to the
+# MarketScout constructor and `_universe_for` passed another to every `scan`
+# call, and the scan argument silently won. Raising the constructor's had no
+# effect at all, which is exactly the failure a duplicated constant produces:
+# the change looks applied and nothing moves.
+#
+# 4x, not 2x. Measured 2026-09-22 on a ten-name universe: five were rejected
+# as Altman Z distressed before a seat was asked anything (AMD 1.00, INTC
+# 0.72, WBD 0.24, MSTR -0.10, MRVL 0.82), and four of the five survivors were
+# already held. 2x assumes about half the screen survives; the solvency filter
+# alone takes half and holdings take more.
+#
+# This widens what is CONSIDERED. Every candidate still meets the same
+# prescreen, seats, grader, floors and spread caps.
+SCREEN_BREADTH = 4
+
 # One horizon, one definition. An order outlives its thesis at the moment
 # that thesis gets scored against the tape — see _expire_stale_orders.
 from roundtable.shadow import DEFAULT_HORIZON_HOURS as SHADOW_HORIZON_HOURS
@@ -1332,7 +1350,7 @@ class FundLoop:
             try:
                 return self._not_cooling_off(
                     [c.symbol for c in self.crypto_scout.scan(
-                        limit=self.max_candidates_per_cycle * 2)], moment)
+                        limit=self.max_candidates_per_cycle * SCREEN_BREADTH)], moment)
             except Exception:
                 logger.exception("crypto scout scan failed")
                 return []
@@ -1345,7 +1363,7 @@ class FundLoop:
         try:
             return self._not_cooling_off(
                 [c.symbol for c in self.scout.scan(
-                    limit=self.max_candidates_per_cycle * 2)], moment)
+                    limit=self.max_candidates_per_cycle * SCREEN_BREADTH)], moment)
         except Exception as e:
             logger.exception("scout scan failed")
             return []
