@@ -407,6 +407,11 @@ class FundLoop:
             held_quantity=holding.quantity if holding else 0.0,
             open_positions=open_positions,
             available_cash_usd=available_cash_usd,
+            # What the open book already stands to lose if every stop fires,
+            # and the limit that loss shares with any new position.
+            portfolio_risk_usd=self._portfolio_risk_usd(),
+            portfolio_risk_limit_usd=getattr(
+                self.kill_switch, "max_daily_loss_usd", None),
         )
         report.results.append(result)
 
@@ -614,6 +619,33 @@ class FundLoop:
             report.errors.append(
                 f"{symbol} filled but could not be booked; it is held at the "
                 f"venue with an unwatched stop")
+
+    def _portfolio_risk_usd(self) -> float:
+        """What the open book loses if every stop fires. Never raises.
+
+        The daily loss limit is enforced by the kill switch, which reacts AFTER
+        equity has fallen. Nothing stopped a book being ASSEMBLED whose own
+        plan, fully executed, breached it — and the positions are not
+        independent: on 2026-09-22 four of five were semis or tech, so their
+        stops fire together or not at all.
+
+        Zero when the book is unreadable, which permits a trade. That is the
+        wrong direction for a risk control, and it is deliberate: this runs per
+        candidate inside a cycle, the kill switch is still watching equity
+        directly, and a sizing helper that can halt the fund by raising is a
+        worse failure than one that occasionally lets a trade through.
+        """
+        book = getattr(self, "position_book", None)
+        positions = getattr(book, "positions", None) or {}
+        total = 0.0
+        for position in positions.values():
+            try:
+                entry = float(position.entry_price)
+                stop = float(getattr(position.plan, "stop", position.stop))
+                total += float(position.quantity) * abs(entry - stop)
+            except (AttributeError, TypeError, ValueError):
+                continue
+        return total
 
     def _booked_suspense(self) -> float:
         """Total booked to venue suspense accounts. Negative for a shortfall.

@@ -228,6 +228,8 @@ class ThesisPipeline:
         moment: datetime,
         *,
         held_quantity: float = 0.0,
+        portfolio_risk_usd: float = 0.0,
+        portfolio_risk_limit_usd: float | None = None,
         open_positions: int = 0,
         available_cash_usd: Optional[float] = None,
     ) -> PipelineResult:
@@ -280,7 +282,9 @@ class ThesisPipeline:
             thesis, candidate, plan,
             available_cash_usd=available_cash_usd,
             open_positions=open_positions,
-            existing_position_usd=held_quantity * float(candidate.price or 0.0))
+            existing_position_usd=held_quantity * float(candidate.price or 0.0),
+            portfolio_risk_usd=portfolio_risk_usd,
+            portfolio_risk_limit_usd=portfolio_risk_limit_usd)
         if not size.is_actionable:
             return stop("sizing", size.reason, win_probability=p, size=size)
 
@@ -407,7 +411,9 @@ class ThesisPipeline:
 
     def _size_for(self, thesis: Thesis, candidate: Candidate, plan: ExitPlan, *,
                   available_cash_usd: float | None = None,
-                  open_positions: int = 0, existing_position_usd: float = 0.0) -> tuple[float, SizeResult]:
+                  open_positions: int = 0, existing_position_usd: float = 0.0,
+                  portfolio_risk_usd: float = 0.0,
+                  portfolio_risk_limit_usd: float | None = None) -> tuple[float, SizeResult]:
         """Kelly size for one thesis. Returns (win_probability, size).
 
         Confidence is scaled by PARTICIPATION before the shrink is applied.
@@ -425,6 +431,8 @@ class ThesisPipeline:
         size = size_position(
             win_probability=p,
             existing_position_usd=existing_position_usd,
+            portfolio_risk_usd=portfolio_risk_usd,
+            portfolio_risk_limit_usd=portfolio_risk_limit_usd,
             plan=plan,
             bankroll_usd=self.bankroll_usd,
             available_cash_usd=available_cash_usd,
