@@ -83,6 +83,9 @@ class CatalystFeed:
     depth_source: Optional[Callable[[str], Any]] = None
     # (symbol, spot, after_date) -> implied move %, or None.
     implied_move_source: Optional[Callable[[str, float, str], Any]] = None
+    # trading.political_trades.PoliticalTradeFeed — disclosed STOCK Act filings
+    # by tracked officials. Equity only: nobody files a crypto disclosure.
+    political_feed: Optional[Any] = None
     # Injected so tests never touch the network and never import OpenBB.
     _import: Optional[Callable[[], Any]] = None
 
@@ -136,6 +139,18 @@ class CatalystFeed:
                                         already_async=True)
                 if rows is not None:
                     notes.append(summarise_filings(rows))
+            if self.political_feed is not None:
+                try:
+                    pol = await asyncio.wait_for(
+                        self.political_feed.trades_for(symbol),
+                        timeout=self.timeout_seconds)
+                    if pol.available:
+                        notes.extend(pol.notes)
+                    else:
+                        degraded.append(f"disclosed official trades ({pol.reason[:70]})")
+                except Exception as e:
+                    degraded.append(f"disclosed official trades ({type(e).__name__})")
+
             if self.depth_source is not None:
                 book = await self._safe(obb, "order book", symbol, degraded,
                                         lambda: self.depth_source(symbol),

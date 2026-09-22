@@ -36,6 +36,7 @@ from trading.live_gate import LiveTradingGate
 from trading.market_data import StaticProvider, VenueQuoteProvider
 from trading.catalysts import CatalystFeed
 from trading.crypto_discovery import CryptoScout
+from trading.political_trades import PoliticalTradeFeed
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
 from trading.discovery import MarketScout
@@ -323,7 +324,8 @@ def build_fund(
             earnings_source=getattr(trading_venue, "earnings_calendar", None),
             filing_source=getattr(trading_venue, "sec_filings", None),
             depth_source=getattr(trading_venue, "price_book", None),
-            implied_move_source=getattr(trading_venue, "implied_move_pct", None)),
+            implied_move_source=getattr(trading_venue, "implied_move_pct", None),
+            political_feed=PoliticalTradeFeed()),
         lookback_bars=cfg.lookback_bars,
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,
         resume_max_age_seconds=cfg.resume_max_age_seconds,
