@@ -349,6 +349,10 @@ class Thesis:
         """
         return {
             "evidence": self.candidate.evidence_block() if self.candidate else None,
+            # The price the call was made at. Without it a deliberation cannot
+            # be scored against the tape later, which is the whole of
+            # `roundtable.shadow`.
+            "price": self.candidate.price if self.candidate else None,
             "sources": [r.as_dict() for r in self.candidate.sources] if self.candidate else [],
             "thesis_id": self.thesis_id,
             "symbol": self.symbol,

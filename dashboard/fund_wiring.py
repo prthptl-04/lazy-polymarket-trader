@@ -37,6 +37,7 @@ from trading.market_data import StaticProvider, VenueQuoteProvider
 from trading.catalysts import CatalystFeed
 from trading.crypto_discovery import CryptoScout
 from trading.political_trades import PoliticalTradeFeed
+from roundtable.shadow import ShadowResolver
 from trading.social_sentiment import SocialSentimentFeed
 from trading.massive_provider import MassiveProvider
 from trading.position_book import PositionBook
@@ -88,6 +89,16 @@ def build_data_provider(config: FundConfig, venue: Any) -> Optional[Any]:
         "unknown data provider %r; falling back to quotes-only", provider
     )
     return VenueQuoteProvider(adapter=venue)
+
+
+def _sync_quote(provider: Any, symbol: str) -> Optional[float]:
+    """Last price for a symbol, sync. Used only by the shadow resolver, which
+    runs at the top of a cycle and never on the hot path."""
+    try:
+        quote = _run_sync(provider.get_quote(symbol))
+    except Exception:
+        return None
+    return getattr(quote, "mid", None) or getattr(quote, "last", None)
 
 
 def build_crypto_scout(data_provider: Any, venue: Any) -> Optional[Any]:
@@ -322,6 +333,11 @@ def build_fund(
         # FUND_CRYPTO_WATCHLIST. The watchlist still overrides when set.
         crypto_scout=build_crypto_scout(data_provider, trading_venue),
         social=SocialSentimentFeed(),
+        # Scores past deliberations against the tape, so the seats calibrate
+        # from every call rather than only from positions that closed.
+        shadow=ShadowResolver(
+            memory=memory,
+            quote=lambda sym: _sync_quote(data_provider, sym)),
         catalysts=CatalystFeed(
             earnings_source=getattr(trading_venue, "earnings_calendar", None),
             filing_source=getattr(trading_venue, "sec_filings", None),

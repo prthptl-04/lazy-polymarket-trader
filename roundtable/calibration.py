@@ -274,6 +274,20 @@ def score_seats(
     return Scorecard(seats=seats, committee=committee, resolved=resolved)
 
 
+def _is_position_outcome(outcome: dict) -> bool:
+    """True for outcomes produced by a real position.
+
+    `roundtable.shadow` scores deliberations against the tape so the seats can
+    calibrate without the fund having to trade. Those are valid for judging
+    DIRECTION and invalid for fitting a SIZING parameter: a position is bounded
+    by its stop and can be taken out by a move that later reverses, while a
+    24-hour price change never is. Predictions therefore look better than the
+    trades they would have become, and a shrink fitted on them is optimistic —
+    which sizes bigger.
+    """
+    return not str((outcome or {}).get("notes") or "").startswith("shadow:")
+
+
 def fit_confidence_shrink(
     outcomes: Iterable[dict],
     *,
@@ -292,6 +306,9 @@ def fit_confidence_shrink(
     rows = [
         o for o in outcomes
         if o.get("confidence") is not None and o.get("correct") is not None
+        # Positions only — see `_is_position_outcome`. Seat scoring uses the
+        # predictions too; a sizing parameter must not.
+        and _is_position_outcome(o)
     ]
     if len(rows) < min_samples:
         return ShrinkFit(

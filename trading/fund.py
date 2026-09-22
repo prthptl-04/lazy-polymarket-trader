@@ -66,6 +66,8 @@ class CycleReport:
     # is a learning loop nobody will notice breaking.
     confidence_shrink: Optional[float] = None
     universe: list[str] = field(default_factory=list)
+    # Past deliberations resolved against the tape this cycle.
+    scored_calls: int = 0
     prescreened_out: list[dict] = field(default_factory=list)
     deliberated: list[str] = field(default_factory=list)
     results: list[Any] = field(default_factory=list)     # PipelineResult
@@ -83,6 +85,7 @@ class CycleReport:
             "moment": self.moment.isoformat(),
             "session": self.session,
             "confidence_shrink": self.confidence_shrink,
+            "scored_calls": self.scored_calls,
             "universe": len(self.universe),
             "prescreened_out": len(self.prescreened_out),
             "deliberated": len(self.deliberated),
@@ -123,6 +126,9 @@ class FundLoop:
     crypto_scout: Any = None
     # trading.social_sentiment.SocialSentimentFeed. Optional.
     social: Any = None
+    # roundtable.shadow.ShadowResolver — scores past deliberations against
+    # the tape so the seats calibrate without waiting on positions.
+    shadow: Any = None
     memory: Any = None
     postmortem: Any = None
     # trading.catalysts.CatalystFeed. Optional: None disables the
@@ -198,6 +204,11 @@ class FundLoop:
                 return report
 
         # 5. Universe follows the session.
+        # Score what the committee already said, before it says anything new.
+        # Runs first so this cycle's seat weights reflect every call resolved
+        # since the last one — including calls that never became positions.
+        self._score_past_calls(report)
+
         universe = self._universe_for(session, moment)
         report.universe = list(universe)
         if not universe:
@@ -978,6 +989,20 @@ class FundLoop:
         except Exception as e:
             logger.exception("scout scan failed")
             return []
+
+    def _score_past_calls(self, report: CycleReport) -> None:
+        """Resolve due deliberations against the tape. Never raises — a failure
+        to learn must not become a failure to trade."""
+        if self.shadow is None:
+            return
+        try:
+            scored = self.shadow.resolve_due()
+        except Exception:
+            logger.exception("scoring past calls failed")
+            return
+        if scored:
+            report.scored_calls = scored
+            logger.info("scored %d past deliberation(s) against the tape", scored)
 
     def _regime_notes(self) -> tuple[str, ...]:
         """Whether the committee is exploring or exploiting.
