@@ -218,6 +218,9 @@ class FundLoop:
         self._score_past_calls(report)
 
         universe = self._universe_for(session, moment)
+        # A name with an order already working is not a new opportunity.
+        universe, working = self._drop_working(universe)
+        report.prescreened_out.extend(working)
         report.universe = list(universe)
         if not universe:
             # A cycle that reports nothing at all is indistinguishable from a
@@ -463,6 +466,59 @@ class FundLoop:
                     )
             except Exception:
                 logger.exception("could not reconcile resting orders")
+
+    def _resting_symbols(self) -> set[str]:
+        """Symbols with an order already working at some venue.
+
+        Read from the adapter's own resting book rather than tracked here, so
+        it cannot drift from the truth. A live adapter has no local book — its
+        orders live at the broker — and that degrades to "nothing known
+        resting" rather than raising.
+        """
+        out: set[str] = set()
+        for adapter in getattr(getattr(self, "router", None), "adapters", []) or []:
+            resting = getattr(adapter, "_resting", None)
+            if not resting:
+                continue
+            for request in resting.values():
+                symbol = getattr(request, "symbol", None)
+                if symbol:
+                    out.add(str(symbol).upper())
+        return out
+
+    def _drop_working(self, names: list[str]) -> tuple[list[str], list[dict]]:
+        """Skip names that already have an order working.
+
+        Not an untidiness — a risk. These orders rest BELOW the touch waiting
+        for the market to come to them, so they do not fill one at a time, they
+        fill together on the first dip that reaches the price. Six orders of
+        $38 is $228 of a $500 account arriving at once in a name the sizer
+        approved at $38.
+
+        No existing guard covers this. `_not_cooling_off` bars a symbol only
+        after a position CLOSES, the position book tracks positions rather than
+        orders, and a resting order is by definition not a position yet — the
+        gap is exactly the window between placing and filling, which on this
+        venue is where orders live.
+
+        Not a cooldown: the block lasts only while the order is working. Once it
+        fills or is cancelled the name is tradable again.
+        """
+        working = self._resting_symbols()
+        if not working:
+            return list(names), []
+        kept, skipped = [], []
+        for name in names:
+            if str(name).upper() in working:
+                skipped.append({
+                    "symbol": name,
+                    "reason": "an order is already resting on this symbol; a "
+                              "second would fill alongside the first rather "
+                              "than instead of it",
+                })
+            else:
+                kept.append(name)
+        return kept, skipped
 
     def _not_cooling_off(self, names: list[str], moment: datetime) -> list[str]:
         """Drop names this session already closed.
