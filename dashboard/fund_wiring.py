@@ -101,7 +101,7 @@ def _sync_quote(provider: Any, symbol: str) -> Optional[float]:
     return getattr(quote, "mid", None) or getattr(quote, "last", None)
 
 
-def build_crypto_scout(data_provider: Any, venue: Any) -> Optional[Any]:
+def build_crypto_scout(data_provider: Any) -> Optional[Any]:
     """Wire the crypto scout to Massive's grouped aggregate and Robinhood's
     tradable pair list.
 
@@ -112,7 +112,7 @@ def build_crypto_scout(data_provider: Any, venue: Any) -> Optional[Any]:
     something else — `FundLoop._universe_for` learned that the hard way.
     """
     massive = getattr(data_provider, "fallback", data_provider)
-    if not hasattr(massive, "_call") or not hasattr(venue, "currency_pairs"):
+    if not hasattr(massive, "_call"):
         return None
 
     def grouped(day):
@@ -121,10 +121,8 @@ def build_crypto_scout(data_provider: Any, venue: Any) -> Optional[Any]:
             {"adjusted": "true"})
         return (data or {}).get("results") or []
 
-    def pairs():
-        return _run_sync(venue.currency_pairs())
-
-    return CryptoScout(grouped=grouped, pairs=pairs)
+    # The pair list arrives via `refresh_pairs` from the cycle's own loop.
+    return CryptoScout(grouped=grouped)
 
 
 def _run_sync(coro: Any) -> Any:
@@ -341,7 +339,9 @@ def build_fund(
         # has no `currency_pairs`, so passing it here left the scout unbuilt —
         # and an unbuilt crypto scout used to mean a crypto session ran the
         # EQUITY screen.
-        crypto_scout=build_crypto_scout(data_provider, robinhood or trading_venue),
+        crypto_scout=build_crypto_scout(data_provider),
+        # Awaited on the cycle's loop; see FundLoop._refresh_crypto_pairs.
+        pair_source=robinhood,
         social=SocialSentimentFeed(),
         # Scores past deliberations against the tape, so the seats calibrate
         # from every call rather than only from positions that closed.

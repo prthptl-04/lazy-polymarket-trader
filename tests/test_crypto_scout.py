@@ -34,7 +34,12 @@ def _row(sym, close, open_, vol, n=1000):
 
 
 def _scout(rows, pairs=("BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD"), **kw):
-    return CryptoScout(grouped=lambda day: rows, pairs=lambda: list(pairs), **kw)
+    """The pair list now arrives via `refresh_pairs`, from the fund's own event
+    loop — it used to be a callable, and calling it reached the MCP session
+    from a worker thread's fresh loop, which anyio refuses."""
+    scout = CryptoScout(grouped=lambda day: rows, **kw)
+    scout.refresh_pairs(list(pairs))
+    return scout
 
 
 def test_only_pairs_the_broker_will_actually_trade_are_screened():
@@ -91,17 +96,16 @@ def test_the_scan_is_capped_so_a_cycle_cannot_run_away():
     assert len(_scout(rows, pairs=pairs).scan(limit=5)) == 5
 
 
-def test_a_dead_pair_list_yields_nothing_rather_than_everything():
+def test_a_scout_never_given_a_pair_list_yields_nothing():
     """Failing open here would screen 392 tickers against a broker that trades
-    58 of them."""
-    s = CryptoScout(grouped=lambda day: [_row("X:BTCUSD", 80000, 79000, 5000)],
-                    pairs=lambda: (_ for _ in ()).throw(RuntimeError("mcp down")))
+    58 of them. A scout that has never been refreshed has no universe."""
+    s = CryptoScout(grouped=lambda day: [_row("X:BTCUSD", 80000, 79000, 5000)])
     assert s.scan() == []
 
 
 def test_a_dead_grouped_call_yields_nothing_rather_than_raising():
-    s = CryptoScout(grouped=lambda day: (_ for _ in ()).throw(RuntimeError("no data")),
-                    pairs=lambda: ["BTC-USD"])
+    s = CryptoScout(grouped=lambda day: (_ for _ in ()).throw(RuntimeError("no data")))
+    s.refresh_pairs(["BTC-USD"])
     assert s.scan() == []
 
 

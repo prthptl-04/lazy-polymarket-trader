@@ -124,6 +124,9 @@ class FundLoop:
     # trading.crypto_discovery.CryptoScout — the weekend equivalent of
     # `scout`. None falls back to the configured watchlist.
     crypto_scout: Any = None
+    # Venue exposing `currency_pairs()`. Awaited in the cycle's own loop —
+    # the MCP session cannot be used from another one.
+    pair_source: Any = None
     # trading.social_sentiment.SocialSentimentFeed. Optional.
     social: Any = None
     # roundtable.shadow.ShadowResolver — scores past deliberations against
@@ -207,6 +210,11 @@ class FundLoop:
         # Score what the committee already said, before it says anything new.
         # Runs first so this cycle's seat weights reflect every call resolved
         # since the last one — including calls that never became positions.
+        # Refresh the tradable pair list HERE, on the cycle's loop. The scout
+        # is sync and cannot await, and doing this from a worker thread's own
+        # event loop is what silently emptied the crypto universe.
+        await self._refresh_crypto_pairs()
+
         self._score_past_calls(report)
 
         universe = self._universe_for(session, moment)
@@ -995,6 +1003,22 @@ class FundLoop:
         except Exception as e:
             logger.exception("scout scan failed")
             return []
+
+    async def _refresh_crypto_pairs(self) -> None:
+        """Hand the scout the pairs this account can actually trade.
+
+        Never raises: a pair list that cannot be refreshed leaves the previous
+        one standing, and a failure to learn what is tradable must not become a
+        failure to run the cycle.
+        """
+        if self.crypto_scout is None or self.pair_source is None:
+            return
+        try:
+            pairs = await self.pair_source.currency_pairs()
+        except Exception:
+            logger.exception("could not refresh the tradable crypto pairs")
+            return
+        self.crypto_scout.refresh_pairs(pairs or [])
 
     def _score_past_calls(self, report: CycleReport) -> None:
         """Resolve due deliberations against the tape. Never raises — a failure

@@ -31,7 +31,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from trading.discovery import ScoutCandidate
 
@@ -58,25 +58,35 @@ class CryptoScout:
 
     # day -> grouped rows. Injected so tests never touch the network.
     grouped: Callable[[date], list[dict]]
-    # () -> tradable pair symbols, e.g. ["BTC-USD", ...]
-    pairs: Callable[[], list[str]]
+    # Tradable pairs, refreshed by `refresh_pairs` from the fund's own event
+    # loop. NOT a callable: it used to be, and the call reached the MCP session
+    # from a worker thread's fresh event loop, which anyio refuses — quietly,
+    # with an empty exception message, so every crypto cycle screened nothing
+    # and the UI simply stopped moving.
+    _pairs: tuple[str, ...] = ()
 
     min_dollar_volume: float = MIN_DOLLAR_VOLUME
     min_abs_move_pct: float = MIN_ABS_MOVE_PCT
     max_abs_move_pct: float = MAX_ABS_MOVE_PCT
     exclude: tuple[str, ...] = field(default_factory=tuple)
 
+    def refresh_pairs(self, pairs: Sequence[str]) -> None:
+        """Replace the tradable list. Called from the fund's event loop.
+
+        An EMPTY refresh is ignored rather than applied: a transient MCP failure
+        must not blank the universe for a whole cycle, and the last good list is
+        a better answer than none.
+        """
+        if pairs:
+            self._pairs = tuple(pairs)
+
     def scan(self, *, day: Optional[date] = None,
              limit: int = DEFAULT_LIMIT) -> list[ScoutCandidate]:
         """The screen. Deterministic, and runs before any LLM sees anything."""
-        try:
-            tradable = {s.upper() for s in self.pairs() or ()}
-        except Exception:
-            # Failing OPEN here would screen 392 tickers against a broker that
-            # trades 58 of them, and most of the deliberations would be on
-            # names we cannot buy.
-            logger.exception("crypto pair list unavailable; screening nothing")
-            return []
+        # Failing closed: without a pair list we would screen 392 tickers
+        # against a broker that trades 58 of them, and most deliberations would
+        # be on names we cannot buy.
+        tradable = {s.upper() for s in self._pairs}
         if not tradable:
             return []
 
@@ -147,7 +157,8 @@ def _demo() -> None:
     assert _to_pair("AAPL") is None
     rows = [{"T": "X:BTCUSD", "c": 80000, "o": 78000, "v": 100_000, "n": 9},
             {"T": "X:DOGEUSD", "c": 0.4, "o": 0.3, "v": 1_000, "n": 3}]
-    s = CryptoScout(grouped=lambda d: rows, pairs=lambda: ["BTC-USD", "DOGE-USD"])
+    s = CryptoScout(grouped=lambda d: rows)
+    s.refresh_pairs(["BTC-USD", "DOGE-USD"])
     picked = s.scan()
     assert [c.symbol for c in picked] == ["BTC-USD"], picked
     print("crypto_discovery self-check passed")
