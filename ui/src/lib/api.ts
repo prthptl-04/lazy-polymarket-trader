@@ -80,6 +80,17 @@ export async function post(path: string) {
   try { return (await fetch(path, { method: "POST" })).ok; } catch { return false; }
 }
 
+/** POST that returns the body. `post` answers "did it work"; this answers
+ *  "what did it say", which the auth flow needs for the authorisation URL. */
+export async function postJSON<T>(path: string): Promise<T | null> {
+  try {
+    const r = await fetch(path, { method: "POST" });
+    return r.ok ? ((await r.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- shapes returned by the Python API ----
 
 export interface LlmStatus {

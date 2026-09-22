@@ -10,6 +10,7 @@ Read-only except for GO/STOP, which is delegated to the scheduler.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -1357,6 +1358,111 @@ class DashboardRuntime:
         self._catalysts[key] = {"fetched": now, "value": value}
         return value
 
+    # Below this the token is still usable but worth warning about: long
+    # enough to finish the session you are in, short enough to re-auth before
+    # it bites. Blocking GO on it would refuse cycles the fund can complete.
+    AUTH_WARN_SECONDS = 3600.0
+    _auth_flow: Any = None
+
+    def auth_status(self, venue: str = "robinhood",
+                    token_path: Optional[str] = None) -> dict:
+        """Can the fund reach the venue, and for how much longer?
+
+        Checked BEFORE the engine starts, because the alternative is what
+        happened: a token lapsed on a Monday morning, the daemon correctly
+        refused to open a browser, and the fund ran on with no venue quotes
+        until somebody looked at the logs that evening.
+        """
+        from trading.mcp_auth import SERVERS
+        from trading.mcp_client import FileTokenStorage
+
+        server_url = SERVERS.get(venue)
+        if server_url is None:
+            return {"venue": venue, "needs_auth": False, "expiring_soon": False,
+                    "reason": f"unknown venue {venue!r}", "authenticated": False}
+        try:
+            summary = FileTokenStorage(server_url, path=token_path).summary()
+        except Exception as e:
+            return {"venue": venue, "needs_auth": True, "expiring_soon": False,
+                    "authenticated": False,
+                    "reason": f"could not read the token store: {type(e).__name__}"}
+
+        remaining = summary.get("seconds_remaining")
+        if not summary.get("authenticated"):
+            reason, needs = "no stored authorisation for this venue", True
+        elif summary.get("expired"):
+            reason, needs = "the stored authorisation has expired", True
+        elif remaining is None:
+            # Unknown age. Usable — it may well be fine — but say so rather
+            # than claim a validity nobody measured.
+            reason, needs = "authorised; expiry unknown (issued before expiry was tracked)", False
+        else:
+            reason, needs = f"authorised for another {_human_seconds(remaining)}", False
+
+        return {
+            "venue": venue,
+            "authenticated": bool(summary.get("authenticated")),
+            "has_refresh_token": bool(summary.get("has_refresh_token")),
+            "seconds_remaining": remaining,
+            "expires_at": summary.get("expires_at"),
+            "needs_auth": needs,
+            "expiring_soon": bool(remaining is not None and 0 < remaining < self.AUTH_WARN_SECONDS),
+            "reason": reason,
+        }
+
+    async def probe_auth(self, venue: str = "robinhood",
+                         token_path: Optional[str] = None,
+                         probe_timeout: float = 12.0) -> dict:
+        """`auth_status`, then actually try the connection.
+
+        File inspection cannot tell a valid token from one the server has since
+        rejected — which is precisely the state the fund sat in: a well-formed
+        token file, and a server that would not accept it. Only connecting
+        settles it.
+
+        Bounded, because GO must answer. A venue that never replies is a venue
+        that needs attention, not a spinner.
+        """
+        status = dict(self.auth_status(venue, token_path=token_path))
+        status["probed"] = False
+        session = getattr(self.venues.get(venue), "session", None)
+        if session is None or not hasattr(session, "connect"):
+            return status          # nothing to probe; the file check stands
+        try:
+            ok = await asyncio.wait_for(session.connect(), timeout=probe_timeout)
+        except asyncio.TimeoutError:
+            status.update(needs_auth=True, probed=True,
+                          reason=f"{venue} did not respond within {probe_timeout:.0f}s")
+            return status
+        except Exception as e:
+            status.update(needs_auth=True, probed=True,
+                          reason=f"{venue} connection failed: {type(e).__name__}")
+            return status
+        status["probed"] = True
+        if not ok:
+            status.update(needs_auth=True,
+                          reason=f"{venue} rejected the stored authorisation")
+        else:
+            status["needs_auth"] = False
+            if not status.get("expiring_soon"):
+                status["reason"] = f"{venue} session is live"
+        return status
+
+    async def begin_auth(self, venue: str = "robinhood",
+                         token_path: Optional[str] = None) -> dict:
+        """Start an interactive authorisation and hand back the URL to open."""
+        from trading import mcp_auth
+        existing = self._auth_flow
+        if existing is not None and existing.summary()["in_progress"]:
+            # One at a time: the callback listener owns a fixed port, and a
+            # second flow would bind-fail or steal the first one's redirect.
+            return existing.summary()
+        self._auth_flow = await mcp_auth.begin(venue, token_path=token_path)
+        return self._auth_flow.summary()
+
+    def auth_flow_status(self) -> dict:
+        return self._auth_flow.summary() if self._auth_flow else {"in_progress": False}
+
     def evolution(self) -> dict:
         """The self-evolution loop as one object: forward, weights, loss, backward.
 
@@ -1573,6 +1679,14 @@ class DashboardRuntime:
                 "usable": fit.usable, "reason": fit.reason,
             },
         }
+
+
+def _human_seconds(seconds: float) -> str:
+    if seconds < 3600:
+        return f"{seconds / 60:.0f} minutes"
+    if seconds < 172800:
+        return f"{seconds / 3600:.0f} hours"
+    return f"{seconds / 86400:.1f} days"
 
 
 def build_runtime(

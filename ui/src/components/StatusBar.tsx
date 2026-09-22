@@ -4,6 +4,7 @@ import { post, usePoll, type FundStatus, type LlmStatus, LIVE, NEAR
 } from "../lib/api";
 import { useState } from "react";
 import { Confirm } from "./Confirm";
+import { AuthGateBanner, useAuthGate } from "./AuthGate";
 import { useDocumentSurface } from "../lib/useDynamicBackground";
 
 export type ViewKey = "overview" | "paper" | "polymarket" | "robinhood" | "evolution";
@@ -136,6 +137,10 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
   // The master switch. Both directions are confirmed: GO commits the machine to
   // trading, STOP takes the whole service down mid-cycle.
   const [ask, setAsk] = useState<null | "start" | "stop">(null);
+  // GO checks the venue session first. A token that has lapsed used to surface
+  // nine hours later as a dead engine; now it opens the consent page and starts
+  // the fund once the redirect lands.
+  const gate = useAuthGate(async () => { await post("/api/start"); void refresh(); });
   const equitiesOpen = !!fund?.equities_open;
 
   // The spec's mockup hardcodes "GPT-4o & Claude 3.5 Sonnet". The live stack is
@@ -223,6 +228,10 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
         </div>
       </div>
 
+      <div className="px-4 pb-2">
+        <AuthGateBanner phase={gate.phase} detail={gate.detail} onCancel={gate.cancel} />
+      </div>
+
       <Confirm
         open={ask === "start"}
         title="Start Project धन?"
@@ -234,7 +243,7 @@ export function StatusBar({ view, onView }: { view: ViewKey; onView: (v: ViewKey
           the rule-#13 checklist still has to allow.
         </>}
         onCancel={() => setAsk(null)}
-        onConfirm={async () => { setAsk(null); await post("/api/start"); void refresh(); }} />
+        onConfirm={async () => { setAsk(null); await gate.start("robinhood"); }} />
 
       <Confirm
         open={ask === "stop"}

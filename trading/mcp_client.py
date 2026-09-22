@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import stat
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -79,11 +80,22 @@ class FileTokenStorage:
         tokens = data.get("tokens") or {}
         if not isinstance(tokens, dict):
             tokens = getattr(tokens, "__dict__", {}) or {}
+        obtained_at = data.get("obtained_at")
+        expires_in = tokens.get("expires_in")
+        # Both halves or nothing. A lifetime with no start, or a start with no
+        # lifetime, is not an expiry — and reporting "not expired" for one is
+        # exactly the false reassurance this field exists to remove.
+        expires_at = (float(obtained_at) + float(expires_in)
+                      if obtained_at and expires_in else None)
+        remaining = expires_at - time.time() if expires_at else None
         return {
             "server_url": self.server_url,
             "authenticated": bool(tokens.get("access_token")),
             "has_refresh_token": bool(tokens.get("refresh_token")),
-            "expires_in": tokens.get("expires_in"),
+            "expires_in": expires_in,
+            "expires_at": expires_at,
+            "seconds_remaining": round(remaining) if remaining is not None else None,
+            "expired": (remaining <= 0) if remaining is not None else None,
             "scope": tokens.get("scope"),
             "path": str(self.path),
         }
@@ -110,6 +122,11 @@ class FileTokenStorage:
         payload = self._all()
         entry = payload.setdefault(self.server_url, {})
         entry[key] = _jsonable(value)
+        if key == "tokens":
+            # `expires_in` is a LIFETIME. Without the moment it started it
+            # cannot answer "is this still good?", which is why a token that
+            # lapsed on a Monday morning went unnoticed until that evening.
+            entry["obtained_at"] = time.time()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(payload, indent=2))
         # Bearer credentials for a brokerage account: owner-only.

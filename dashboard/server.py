@@ -238,6 +238,22 @@ def create_app(runtime: DashboardRuntime, *, enable_cors: bool = False) -> Any:
     async def api_catalysts(symbol: str, asset_class: str = "equity") -> dict:
         return await runtime.catalysts(symbol, asset_class)
 
+    @app.get("/api/auth/{venue}")
+    async def api_auth_status(venue: str, probe: bool = False) -> dict:
+        """`probe=true` actually opens the session — slower, and the only
+        answer that can tell a valid token from a rejected one."""
+        return (await runtime.probe_auth(venue)) if probe else runtime.auth_status(venue)
+
+    @app.post("/api/auth/{venue}/begin")
+    async def api_auth_begin(venue: str) -> dict:
+        """Start an interactive authorisation. Returns the URL for the browser
+        to open; the flow completes when the redirect arrives."""
+        return await runtime.begin_auth(venue)
+
+    @app.get("/api/auth-flow")
+    def api_auth_flow() -> dict:
+        return runtime.auth_flow_status()
+
     @app.get("/api/evolution")
     def api_evolution() -> dict:
         return runtime.evolution()
