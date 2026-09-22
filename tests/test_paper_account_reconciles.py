@@ -276,3 +276,36 @@ def test_booking_a_gap_does_not_make_new_trades_reconcile_wrongly():
     assert v.reconcile() is None
     v._positions.clear()                        # a NEW unexplained loss
     assert v.reconcile() is not None, "a fresh gap must still be caught"
+
+
+def test_the_state_restore_defers_to_the_venues_own_check():
+    """`fund_state._check_cash` used to reimplement the identity. It drifted
+    the moment the venue gained a suspense account: the venue reconciled, the
+    duplicate did not, and startup warned about a gap that had already been
+    booked and named."""
+    from trading import fund_state
+
+    v = _venue()
+    asyncio.run(_buy(v, notional=43.75))
+    v._positions.clear()
+    v.absorb_gap("investigated")
+    assert v.reconcile() is None
+    assert fund_state._check_cash(v) == [], \
+        "a booked gap must not be re-reported at every startup"
+
+    v._positions.clear()
+    asyncio.run(_buy(v, notional=10.0, cid="b9"))
+    v._positions.clear()                      # a NEW gap
+    assert fund_state._check_cash(v), "a fresh gap must still warn"
+
+
+def test_a_venue_without_reconcile_still_gets_checked():
+    """The fallback must survive: not every adapter is the paper venue."""
+    from trading import fund_state
+
+    class _Legacy:
+        starting_cash_usd = 500.0
+        cash_usd = 400.0
+        realized_pnl_usd = 0.0
+        _positions: dict = {}
+    assert fund_state._check_cash(_Legacy())

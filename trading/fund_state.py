@@ -187,6 +187,20 @@ def _check_cash(venue) -> list[str]:
     Never REPAIRS a mismatch. Adjusting cash to satisfy the identity converts a
     detectable inconsistency into an undetectable fabrication.
     """
+    # The venue states the identity itself when it can. This used to
+    # reimplement it here, and the two drifted the moment the venue gained a
+    # suspense account for an investigated gap: the venue reconciled, this
+    # check did not, and startup warned about $43.75 that had already been
+    # booked and named. Two reconcilers that disagree is the
+    # two-sources-of-truth failure this module exists to prevent.
+    own = getattr(venue, "reconcile", None)
+    if own is not None:
+        try:
+            gap = own()
+        except Exception:
+            return []
+        return [f"restored account does not reconcile: {gap}"] if gap else []
+
     try:
         positions = list(venue._positions.values())
         derived = (venue.starting_cash_usd

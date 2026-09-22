@@ -367,7 +367,13 @@ async def test_an_inconsistent_cash_balance_is_reported_and_never_repaired(tmp_p
     store.put("fund", "runtime_state", blob)
 
     _, book, venue, _, warnings = _reborn(db)
-    assert any("does not match" in w for w in warnings)
+    # Wording comes from the venue's own `reconcile` now — one statement of the
+    # identity rather than a duplicate here that drifts from it. What is pinned
+    # is that the gap is REPORTED and the cash is untouched.
+    assert any("reconcile" in w or "does not match" in w for w in warnings), warnings
+    assert any("10.0" in w or "10.00" in w for w in warnings), warnings
+    assert venue.cash_usd == pytest.approx(blob["cash_usd"]), \
+        "the cash must not be adjusted to hide the gap"
     assert book.open_symbols() == ["AAPL"], "still restored, not dropped"
 
 
