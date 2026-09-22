@@ -35,8 +35,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from cache.prompt_cache import cached_create
@@ -45,6 +47,11 @@ logger = logging.getLogger(__name__)
 
 # Fail over once less than this fraction of the window remains.
 FAILOVER_AT_REMAINING = 0.15
+# A spend cap whose reset date cannot be parsed. An hour, not minutes: asking
+# an exhausted account again every five minutes buys nothing and costs a failed
+# seat each time.
+USAGE_LIMIT_COOLDOWN_SECONDS = 3600.0
+
 # After a 429 with no usable reset header, assume this long.
 DEFAULT_COOLDOWN_SECONDS = 300.0
 
@@ -243,13 +250,57 @@ def _anthropic_model() -> str:
     return os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
 
+# A spend cap is delivered as a 400, not a 429. Measured 2026-09-22 11:35:
+#
+#   BadRequestError 400 invalid_request_error
+#   "You have reached your specified API usage limits.
+#    You will regain access on 2026-10-01 at 00:00 UTC."
+#
+# Every seat raised this, `_is_rate_limit` said no, the router re-raised, and
+# each seat recorded `failed=True`. The committee then "reached consensus" by
+# tallying seven dead seats — neutral, confidence 0.0 — for two and a half
+# hours, with the engine reporting `errors: 0` throughout.
+#
+# For ROUTING purposes this is a capacity condition wearing a 400. Matched on
+# the message rather than the status, because a generic 400 is a malformed
+# request and retrying THAT on Gemini would hide a real bug instead of a real
+# limit.
+_USAGE_LIMIT = re.compile(
+    r"reached your specified api usage limit|"
+    r"credit balance is too low|"
+    r"exceeded your (monthly |)(usage|spend) limit",
+    re.I)
+
+
+def _is_usage_limit(e: Exception) -> bool:
+    return bool(_USAGE_LIMIT.search(str(e)))
+
+
 def _is_rate_limit(e: Exception) -> bool:
     if type(e).__name__ in ("RateLimitError", "OverloadedError"):
+        return True
+    if _is_usage_limit(e):
         return True
     return getattr(e, "status_code", None) in (429, 529)
 
 
 def _retry_after(e: Exception, default: float) -> float:
+    # A spend cap resets on a DATE, not in seconds, and the message says which:
+    # "You will regain access on 2026-10-01 at 00:00 UTC." Backing off for the
+    # default few minutes would mean re-asking a dead endpoint every cycle for
+    # nine days and failing over only after each failure.
+    if _is_usage_limit(e):
+        match = re.search(r"regain access on (\d{4}-\d{2}-\d{2})", str(e))
+        if match:
+            try:
+                reset = datetime.strptime(match.group(1), "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc)
+                return max(default, (reset - datetime.now(timezone.utc))
+                           .total_seconds())
+            except ValueError:
+                pass
+        return max(default, USAGE_LIMIT_COOLDOWN_SECONDS)
+
     headers = getattr(getattr(e, "response", None), "headers", None)
     if headers and hasattr(headers, "get"):
         try:

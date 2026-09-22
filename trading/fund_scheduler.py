@@ -56,6 +56,24 @@ def is_operator_intent(exc: BaseException) -> bool:
 
 DEFAULT_CYCLE_SECONDS = 300.0       # 5 minutes — swing horizon, not HFT
 
+# A cycle that has not finished in this long is not slow, it is stuck.
+#
+# Measured 2026-09-22 10:08: a cycle started at 09:26 and was still running 42
+# minutes later. Its five deliberations had all COMPLETED — seven opinions
+# each, last model call 60 minutes earlier — so it was hung after the thinking,
+# awaiting network I/O that never returned. The event loop sat idle in
+# `select`, so nothing burned CPU and nothing looked wrong: `state` read
+# "running", `errors` read 0, and the engine slept through the 09:30 open.
+#
+# That is the same silent-death shape the BaseException handler below was
+# written for, arriving by a different route. A supervisor that only catches
+# exceptions cannot see a coroutine that never returns.
+#
+# Four cycle intervals: generous enough that a genuinely slow cycle is never
+# cut off — five deliberations is ~35 model calls and one took 7 minutes
+# overnight — and short enough that a hang costs one cycle, not a session.
+CYCLE_TIMEOUT_SECONDS = DEFAULT_CYCLE_SECONDS * 4
+
 
 @dataclass
 class SchedulerMetrics:
@@ -78,6 +96,7 @@ class FundScheduler:
     fund: Any                                  # FundLoop
     venue: Any                                 # VenueAdapter, for account + positions
     cycle_interval_seconds: float = DEFAULT_CYCLE_SECONDS
+    cycle_timeout_seconds: float = CYCLE_TIMEOUT_SECONDS
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc).astimezone(EASTERN)
     on_cycle: Optional[Callable[[CycleReport], None]] = None
     on_status: Optional[Callable[[dict], None]] = None
@@ -155,7 +174,19 @@ class FundScheduler:
         try:
             while not self._should_stop():
                 try:
-                    await self.run_once()
+                    # A hung cycle is cancelled, not waited on. `wait_for`
+                    # cancels the coroutine it is wrapping, so whatever await
+                    # never returned is torn down and the next cycle starts
+                    # from a clean read of the account.
+                    await asyncio.wait_for(self.run_once(),
+                                           timeout=self.cycle_timeout_seconds)
+                except asyncio.TimeoutError:
+                    self.metrics.errors += 1
+                    self.metrics.last_error = (
+                        f"cycle exceeded {self.cycle_timeout_seconds:.0f}s and "
+                        f"was cancelled — it was hung, not slow")
+                    logger.error("fund cycle timed out after %.0fs; cancelled",
+                                 self.cycle_timeout_seconds)
                 except NEVER_SWALLOW:
                     raise
                 except BaseException as e:

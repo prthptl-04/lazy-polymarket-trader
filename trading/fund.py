@@ -419,6 +419,25 @@ class FundLoop:
         thesis = await self.round_table.deliberate(built.candidate)
         report.deliberated.append(symbol)
 
+        # A committee where every seat failed is not a cautious committee, it
+        # is an absent one. `_fallback_consensus` correctly refuses to invent a
+        # view and returns neutral at confidence 0.0 — but that is
+        # indistinguishable downstream from seven seats that looked and
+        # declined, and the pipeline stops on "consensus is neutral" either way.
+        #
+        # Measured 2026-09-22: the Anthropic account hit its spend cap at 09:01
+        # and returned 400 to every seat for two and a half hours. The fund
+        # kept screening, kept "deliberating", kept reporting `errors: 0`, and
+        # produced neutral at confidence 0.0 on every name. Nothing in the
+        # system said the committee was dead.
+        failures = [o for o in thesis.opinions if getattr(o, "failed", False)]
+        if failures and len(failures) == len(thesis.opinions):
+            reason = next((str(o.error) for o in failures if getattr(o, "error", None)),
+                          "no reason recorded")
+            report.errors.append(
+                f"{symbol}: EVERY seat failed, so the neutral consensus is an "
+                f"absence of a view rather than a considered one — {reason[:200]}")
+
         holding = held.get(symbol)
         result = await self.pipeline.run(
             thesis, built.candidate, built.exit_plan, moment,
