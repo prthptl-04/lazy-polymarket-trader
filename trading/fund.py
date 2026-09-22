@@ -202,7 +202,25 @@ class FundLoop:
 
         # 1. Show the mark to the kill-switch BEFORE anything is decided.
         if self.kill_switch is not None and equity_usd is not None:
-            self.kill_switch.observe_equity(moment, equity_usd)
+            # TRADING equity. The daily loss limit exists to stop a strategy
+            # that is losing money today; an amount booked to a venue's
+            # suspense account is a known accounting artifact with a stated
+            # reason, and it is not a trade.
+            #
+            # Measured 2026-09-22 05:37: daily_pnl -$46.33 of a $50 limit, of
+            # which -$43.75 was the booked gap and only -$2.58 was trading. The
+            # Risk Manager was reading $3.67 of headroom and vetoing every
+            # equity entry on it — correctly, given what it was shown. 39 of 39
+            # opinions bearish, 28 of 29 theses neutral, nothing submitted for
+            # five cycles. A bookkeeping hole had switched the fund off.
+            #
+            # This narrows the INPUT to what the limit always claimed to
+            # measure. The $50 limit is unchanged, and an unbooked gap still
+            # counts in full: `absorb_gap` is never called automatically and
+            # requires a stated reason, so nothing is excluded until a human
+            # has looked at it and said what it was.
+            self.kill_switch.observe_equity(
+                moment, equity_usd - self._booked_suspense())
 
         # 2. Exits first, ALWAYS. A stop that has fired must be honoured before
         #    anything else happens — before the kill-switch check (which permits
@@ -596,6 +614,23 @@ class FundLoop:
             report.errors.append(
                 f"{symbol} filled but could not be booked; it is held at the "
                 f"venue with an unwatched stop")
+
+    def _booked_suspense(self) -> float:
+        """Total booked to venue suspense accounts. Negative for a shortfall.
+
+        NOT netted out of the bankroll the sizer uses: that cash genuinely is
+        not there, and sizing against money the account does not hold is how a
+        paper record stops predicting a live one. The asymmetry is deliberate —
+        conservative where it decides how much to risk, accurate where it
+        decides whether today has been a losing day.
+        """
+        total = 0.0
+        for adapter in getattr(getattr(self, "router", None), "adapters", []) or []:
+            try:
+                total += float(getattr(adapter, "unexplained_usd", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return total
 
     def _reconcile_cash(self, report: CycleReport) -> None:
         """Ask every venue that can prove its books to prove them.
