@@ -65,12 +65,21 @@ STATE_VERSION = 1
 CASH_TOLERANCE_RATIO = 1e-6
 
 
-def snapshot(*, book, venue, kill_switch=None, pdt=None, today=None) -> dict:
-    """Everything that must survive, in one blob."""
+def snapshot(*, book, venue, kill_switch=None, pdt=None, today=None,
+             pending_plans=None) -> dict:
+    """Everything that must survive, in one blob.
+
+    `pending_plans` is the exit plan each RESTING entry was sized against,
+    keyed by client_order_id. A resting order outlives the process, so its plan
+    has to as well — without it the fill arrives with no stop and no route back
+    into the book, and `_venue_rows` below then discards the position on the
+    restart after that while its cash stays spent.
+    """
     state: dict[str, Any] = {
         "version": STATE_VERSION,
         "saved_at": time.time(),
         "positions": book.snapshot() if book is not None else [],
+        "pending_plans": dict(pending_plans or {}),
     }
     if venue is not None and hasattr(venue, "snapshot"):
         # Only the venue's CASH fields. Its own `positions` are deliberately
@@ -133,6 +142,25 @@ def restore(memory, *, book, venue, router=None, kill_switch=None, pdt=None) -> 
         router.opened_at.update(
             {p.symbol: p.venue for p in book.positions.values() if p.venue})
     return warnings
+
+
+def restore_pending_plans(memory, fund) -> None:
+    """Hand a freshly built FundLoop the plans for orders already resting.
+
+    Separate from `restore` because the loop is constructed AFTER the book and
+    the venue — it needs the router they produce. Never raises: a fund that
+    refuses to start because one plan is odd is worse than one that starts and
+    reports the orders it can no longer place a stop behind.
+    """
+    if memory is None or fund is None:
+        return
+    try:
+        state = memory.get(STATE_AGENT, STATE_KEY, None) or {}
+        plans = state.get("pending_plans") if isinstance(state, dict) else None
+        fund._pending_plans = dict(plans) if isinstance(plans, dict) else {}
+    except Exception:
+        logger.exception("could not restore the pending exit plans")
+        fund._pending_plans = {}
 
 
 def save(memory, state: dict) -> None:

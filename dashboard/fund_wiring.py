@@ -247,9 +247,17 @@ def build_fund(
     # The book and the venue are restored from ONE set of position rows, so
     # they cannot come back disagreeing — a book holding what the venue does
     # not would reject every exit forever.
+    # The FundLoop does not exist yet — it is built below and holds the plans
+    # for orders still resting. A cell rather than a forward reference so the
+    # snapshot closure keeps working whether or not the loop gets built.
+    fund_cell: dict[str, Any] = {}
+
     def _snapshot() -> dict:
-        return fund_state.snapshot(book=position_book, venue=trading_venue,
-                                   kill_switch=kill_switch, pdt=pdt)
+        loop = fund_cell.get("loop")
+        return fund_state.snapshot(
+            book=position_book, venue=trading_venue,
+            kill_switch=kill_switch, pdt=pdt,
+            pending_plans=getattr(loop, "_pending_plans", None))
 
     position_book.state_provider = _snapshot
     for warning in fund_state.restore(memory, book=position_book,
@@ -333,6 +341,10 @@ def build_fund(
         max_candidates_per_cycle=cfg.max_candidates_per_cycle,
         resume_max_age_seconds=cfg.resume_max_age_seconds,
     )
+    fund_cell["loop"] = fund
+    # Restore the plans for orders that were already resting. The rest of the
+    # state was restored above, before the loop existed.
+    fund_state.restore_pending_plans(memory, fund)
 
     scheduler = FundScheduler(
         fund=fund,

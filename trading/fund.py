@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
+from finance.exits import ExitPlan
 from roundtable.knowledge import SourceRef
 from roundtable.postmortem import Postmortem, relevant_lesson_lines
 # One horizon, one definition. An order outlives its thesis at the moment
@@ -130,6 +131,10 @@ class FundLoop:
     crypto_watchlist: Sequence[str] = ()
     kill_switch: Any = None
     position_book: Any = None
+    # client_order_id -> the exit plan a RESTING entry was sized against, held
+    # until the order fills. Persisted with the rest of the fund's state: an
+    # order outlives the process, so its plan has to as well.
+    _pending_plans: dict = field(default_factory=dict)
     cost_ledger: Any = None                  # cache.cost_ledger.CostLedger
     corroborator: Any = None                 # roundtable.corroborator.Corroborator
     scout: Any = None
@@ -400,6 +405,34 @@ class FundLoop:
         # is never sized (`ThesisPipeline._close` skips the sizer), so requiring
         # it here would silently skip every close. That is the exact shape of
         # the bug this block was rewritten to fix.
+        # A RESTING entry has not traded, so there is nothing to book yet — but
+        # the plan it was sized against must survive the cycle, or the fill
+        # arrives later with no stop and no way back to the book. That is how a
+        # filled resting order became a position the book never knew about, and
+        # `fund_state._venue_rows` seeds the venue from the BOOK, so the next
+        # restart destroyed it while its cash stayed spent.
+        if (self.position_book is not None and result.submitted
+                and not result.filled and result.trade is not None
+                and result.trade.is_entry and result.size is not None
+                and result.ack is not None and result.ack.client_order_id):
+            self._pending_plans[str(result.ack.client_order_id)] = {
+                "symbol": symbol,
+                "asset_class": asset_class,
+                "plan": {"entry": built.exit_plan.entry,
+                         "stop": built.exit_plan.stop,
+                         "target": built.exit_plan.target,
+                         "direction": built.exit_plan.direction,
+                         "atr": built.exit_plan.atr},
+                "planned_entry": built.exit_plan.entry,
+                "spread_bps_at_entry": built.candidate.spread_bps,
+                "thesis_id": thesis.thesis_id,
+                "signal": thesis.consensus.signal if thesis.consensus else None,
+                "confidence": (thesis.consensus.confidence
+                               if thesis.consensus else None),
+                "venue": result.ack.venue,
+                "mode": self._venue_mode(result.ack),
+            }
+
         if booked and result.trade.is_entry and result.size is not None:
             entry_fill = self._fill_price(result.ack)
             filled_qty = self._filled_quantity(result.ack)
@@ -502,10 +535,67 @@ class FundLoop:
                     report.notes.append(
                         f"RESTING FILL {ack.raw.get('symbol', '?')}: an order "
                         f"placed on an earlier cycle filled at "
-                        f"{ack.raw.get('fill_price')}. It is held at the venue."
+                        f"{ack.raw.get('fill_price')}."
                     )
+                    self._book_resting_fill(ack, report)
             except Exception:
                 logger.exception("could not reconcile resting orders")
+
+    def _book_resting_fill(self, ack: Any, report: CycleReport) -> None:
+        """Register a resting fill in the book, with the plan it was sized on.
+
+        Two things go wrong without this, and the second is worse than the
+        first. The position is not persisted — `fund_state._venue_rows` seeds
+        the venue from the BOOK, so a position the book never learned about is
+        destroyed on the next restart while the cash that bought it is not.
+        And nothing watches its stop: `_process_exits` walks the book, so an
+        unbooked position rides straight through the level the thesis chose.
+
+        A fill whose plan is gone is NOT booked with an invented stop. A
+        fabricated exit level is worse than a missing one, because it looks
+        like a decision somebody made. It is reported as a real error instead.
+        """
+        if self.position_book is None or ack is None:
+            return
+        raw = getattr(ack, "raw", None) or {}
+        symbol = raw.get("symbol")
+        quantity = raw.get("quantity")
+        price = raw.get("fill_price")
+        pending = self._pending_plans.pop(str(getattr(ack, "client_order_id", "")), None)
+        if pending is None:
+            report.errors.append(
+                f"{symbol} filled from a resting order with no stored exit "
+                f"plan, so it is held at the venue but NOT in the book: its "
+                f"stop is unwatched and a restart would discard it while the "
+                f"cash stays spent. Close it by hand or restore its plan."
+            )
+            return
+        if not symbol or not quantity or not price:
+            report.errors.append(
+                f"a resting fill arrived without symbol, quantity or price "
+                f"({raw!r}); it cannot be booked")
+            return
+        try:
+            self.position_book.open(
+                symbol=symbol,
+                asset_class=pending.get("asset_class", "crypto"),
+                quantity=float(quantity),
+                entry_price=float(price),
+                plan=ExitPlan(**pending["plan"]),
+                thesis_id=pending.get("thesis_id"),
+                signal=pending.get("signal"),
+                confidence=pending.get("confidence"),
+                venue=pending.get("venue"),
+                mode=pending.get("mode"),
+                planned_entry=pending.get("planned_entry"),
+                entry_fill_source="venue",
+                spread_bps_at_entry=pending.get("spread_bps_at_entry"),
+            )
+        except Exception:
+            logger.exception("could not book the resting fill for %s", symbol)
+            report.errors.append(
+                f"{symbol} filled but could not be booked; it is held at the "
+                f"venue with an unwatched stop")
 
     def _reconcile_cash(self, report: CycleReport) -> None:
         """Ask every venue that can prove its books to prove them.
