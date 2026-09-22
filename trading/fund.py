@@ -752,20 +752,63 @@ class FundLoop:
         fills or is cancelled the name is tradable again.
         """
         working = self._resting_symbols()
-        if not working:
+        full = self._at_position_cap()
+        if not working and not full:
             return list(names), []
         kept, skipped = [], []
         for name in names:
-            if str(name).upper() in working:
+            upper = str(name).upper()
+            if upper in working:
                 skipped.append({
                     "symbol": name,
                     "reason": "an order is already resting on this symbol; a "
                               "second would fill alongside the first rather "
                               "than instead of it",
                 })
+            elif upper in full:
+                skipped.append({"symbol": name, "reason": full[upper]})
             else:
                 kept.append(name)
         return kept, skipped
+
+    def _at_position_cap(self) -> dict[str, str]:
+        """Symbols already holding a full position. symbol -> reason.
+
+        A name at its cap cannot be added to, so debating it buys nothing and
+        costs a full seven-seat deliberation. Measured 2026-09-22 08:37: the
+        screen returned the same ten names every cycle, the same five were
+        deliberated, and FOUR of those five were already held — ARM at $139.62
+        of a $150 cap, META at $115.16. Thirty-five model calls an hour to
+        re-decide positions the sizer could not have changed, while the other
+        five names in the universe never got a slot.
+
+        This is `_drop_working`'s sibling and the reasoning is the same: not
+        untidiness, a name that cannot be acted on is not an opportunity. It is
+        also not a cooldown — the moment the position is closed or trimmed the
+        name is tradable again.
+
+        The test is EXACT: room at the cap, not a fraction of it. A threshold
+        for "nearly full" would be a number nobody chose, and the sizer already
+        refuses what it cannot fund.
+        """
+        book = getattr(self, "position_book", None)
+        positions = getattr(book, "positions", None) or {}
+        cap = getattr(getattr(getattr(self, "pipeline", None), "criteria", None),
+                      "max_position_usd", None)
+        if not positions or not cap:
+            return {}
+        out: dict[str, str] = {}
+        for symbol, position in positions.items():
+            try:
+                held = float(position.quantity) * float(position.entry_price)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if held >= float(cap):
+                out[str(symbol).upper()] = (
+                    f"already holding ${held:,.2f} of a ${float(cap):,.2f} "
+                    f"position cap — nothing the committee decides could "
+                    f"change the size")
+        return out
 
     def _not_cooling_off(self, names: list[str], moment: datetime) -> list[str]:
         """Drop names this session already closed.
