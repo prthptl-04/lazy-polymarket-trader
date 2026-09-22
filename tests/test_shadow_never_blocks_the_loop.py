@@ -150,3 +150,61 @@ def test_a_slow_quote_does_not_stall_the_loop():
     asyncio.run(main())
     assert len(loop_ran) == 10, "the loop kept running while the quote was out"
     assert len(store.written) == 1
+
+
+# ---------- a legacy row's price is fetched under a name the venue knows ----------
+
+def test_a_bare_crypto_base_is_quoted_as_a_pair():
+    """Ten deliberations sat due and unscored for 30 hours because they were
+    recorded as `BTC` and `ETH` — the bare form the config override uses. The
+    venue spells every pair `BASE-USD` and cannot quote a bare base, so the
+    price came back empty every cycle and the row was skipped exactly as a
+    provider blip is. They would have aged out silently, taking ten samples out
+    of a calibration set that needs thirty to switch on."""
+    from roundtable.shadow import quote_symbol
+
+    assert quote_symbol({"symbol": "BTC", "asset_class": "crypto"}) == "BTC-USD"
+    assert quote_symbol({"symbol": "eth", "asset_class": "crypto"}) == "ETH-USD"
+
+
+def test_a_pair_that_is_already_spelled_out_is_untouched():
+    from roundtable.shadow import quote_symbol
+    assert quote_symbol({"symbol": "BTC-USD", "asset_class": "crypto"}) == "BTC-USD"
+
+
+def test_an_equity_ticker_never_gains_a_quote_currency():
+    """No US ticker contains a hyphen, and appending one would invent an
+    instrument."""
+    from roundtable.shadow import quote_symbol
+    assert quote_symbol({"symbol": "AAPL", "asset_class": "equity"}) == "AAPL"
+    assert quote_symbol({"symbol": "SMH", "asset_class": None}) == "SMH"
+
+
+def test_an_empty_symbol_is_not_a_pair():
+    from roundtable.shadow import quote_symbol
+    assert quote_symbol({"symbol": "", "asset_class": "crypto"}) is None
+    assert quote_symbol({}) is None
+
+
+def test_the_legacy_row_is_asked_for_and_scored_under_one_name():
+    """The failure mode if these drifted: the cycle fetches BTC-USD and the
+    resolver looks up BTC, so every sample is skipped forever."""
+    store = _Store([_row("t1", "BTC", age_hours=30)])
+    store.rows[0]["asset_class"] = "crypto"
+    r = ShadowResolver(memory=store)
+
+    assert r.due_symbols() == ("BTC-USD",)
+    assert r.resolve_due(prices={"BTC-USD": 110.0}) == 1, \
+        "the price must be found under the name that was asked for"
+    assert store.written, "and the outcome recorded"
+
+
+def test_the_outcome_keeps_the_symbol_it_was_recorded_under():
+    """Only the QUOTE lookup is normalised. Rewriting the stored symbol would
+    split one instrument's history across two names."""
+    store = _Store([_row("t1", "BTC", age_hours=30)])
+    store.rows[0]["asset_class"] = "crypto"
+    ShadowResolver(memory=store).resolve_due(prices={"BTC-USD": 110.0})
+    args, kwargs = store.written[0]
+    assert "BTC" in args, args
+    assert "BTC-USD" not in args, "the record keeps the original spelling"

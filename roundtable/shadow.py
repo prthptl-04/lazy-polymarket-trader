@@ -100,6 +100,34 @@ def _price_from_evidence(payload: dict) -> Optional[float]:
     return value if value > 0 else None
 
 
+def quote_symbol(row: dict) -> Optional[str]:
+    """The symbol a QUOTE can actually be fetched for.
+
+    Ten deliberations sat due and unscored for 30 hours because they were
+    recorded as `BTC` and `ETH` — the bare form the config override uses
+    (`FUND_CRYPTO_WATCHLIST=BTC,ETH`). The venue spells every crypto pair
+    `BASE-USD` and cannot quote a bare base, so the price came back empty every
+    cycle, the row was skipped exactly as a provider blip is, and it would have
+    aged past `MAX_AGE_HOURS` and been dropped without anyone noticing. Ten
+    samples out of a calibration set that needs thirty to switch on.
+
+    The mapping is the documented convention read backwards, not a guess:
+    `trading.fund.classify_asset_class` calls a symbol crypto BECAUSE it ends
+    `-USD`, and says in as many words that the watchlist override uses bare
+    symbols with no suffix. The stored `asset_class` says which of the two this
+    row is, so nothing has to be inferred from the string alone.
+
+    Equity tickers are returned untouched: no US ticker contains a hyphen, and
+    appending a quote currency to one would invent an instrument.
+    """
+    symbol = str(row.get("symbol") or "").strip().upper()
+    if not symbol:
+        return None
+    if row.get("asset_class") == "crypto" and "-" not in symbol:
+        return f"{symbol}-USD"
+    return symbol
+
+
 def is_shadow(outcome: dict) -> bool:
     return str((outcome or {}).get("notes") or "").startswith("shadow:")
 
@@ -140,7 +168,7 @@ class ShadowResolver:
             logger.exception("could not read deliberations to score")
             return ()
         return tuple(dict.fromkeys(
-            str(r.get("symbol")) for r in rows if r.get("symbol")))
+            q for q in (quote_symbol(r) for r in rows) if q))
 
     def _due_rows(self) -> tuple[list, set]:
         """Completed deliberations past the horizon and not yet scored."""
@@ -185,7 +213,9 @@ class ShadowResolver:
                 continue
 
             if prices is not None:
-                later = prices.get(symbol)
+                # The same key `due_symbols` asked for, or a legacy row's price
+                # would be fetched under one name and looked up under another.
+                later = prices.get(quote_symbol(row) or symbol)
             elif self.quote is not None:
                 try:
                     later = self.quote(symbol)
