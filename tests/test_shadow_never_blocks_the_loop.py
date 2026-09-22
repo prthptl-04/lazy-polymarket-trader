@@ -208,3 +208,24 @@ def test_the_outcome_keeps_the_symbol_it_was_recorded_under():
     args, kwargs = store.written[0]
     assert "BTC" in args, args
     assert "BTC-USD" not in args, "the record keeps the original spelling"
+
+
+def test_a_row_with_no_entry_price_is_unscoreable_not_due():
+    """Ten rows written before deliberations stored `price` or `evidence` have
+    nothing to measure a move against. Treating them as due made the cycle
+    fetch a quote for them every five minutes forever, for work that could
+    never happen. Inventing the entry is the one thing worse: a fabricated
+    sample in the set the seats are calibrated on."""
+    store = _Store([_row("t1", "BTC-USD", age_hours=30)])
+    store.rows[0]["payload"] = {"consensus": {"signal": "bullish"}}   # no price
+    r = ShadowResolver(memory=store)
+    assert r.due_symbols() == ()
+    assert r.resolve_due(prices={"BTC-USD": 110.0}) == 0
+    assert store.written == []
+
+
+def test_a_row_with_an_entry_price_is_still_due():
+    store = _Store([_row("t1", "BTC-USD", age_hours=30, price=100.0)])
+    r = ShadowResolver(memory=store)
+    assert r.due_symbols() == ("BTC-USD",)
+    assert r.resolve_due(prices={"BTC-USD": 110.0}) == 1

@@ -182,8 +182,23 @@ class ShadowResolver:
             if not tid or tid in already or row.get("status") != "complete":
                 continue
             age_h = (now - float(row.get("created") or now)) / 3600.0
-            if self.horizon_hours <= age_h <= self.max_age_hours:
-                due.append(row)
+            if not (self.horizon_hours <= age_h <= self.max_age_hours):
+                continue
+            # A row with no recorded entry price can NEVER be scored — there is
+            # nothing to measure the move against, and inventing one would put
+            # a fabricated sample into the set the seats are calibrated on. It
+            # is not "due", it is unscoreable, and the difference matters:
+            # calling it due made the cycle fetch a quote for it every five
+            # minutes forever, and made `due_symbols` report work that was
+            # never going to happen.
+            #
+            # Ten such rows exist, written before the build that stored
+            # `price` or `evidence` on a deliberation. They age out quietly,
+            # which is the right end for them.
+            payload = row.get("payload") or {}
+            if not (payload.get("price") or _price_from_evidence(payload)):
+                continue
+            due.append(row)
         return due, already
 
     def resolve_due(self, prices: Optional[Mapping[str, float]] = None) -> int:
