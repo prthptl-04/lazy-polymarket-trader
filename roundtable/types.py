@@ -267,6 +267,19 @@ class Thesis:
     # it is present the deliberation is a self-contained artifact rather than a
     # verdict whose inputs are gone.
     candidate: Optional[Candidate] = None
+    # Which model backend served this deliberation: "anthropic", "gemini", or
+    # "mixed:..." when the router failed over partway through.
+    #
+    # A confidence of 60 from Opus and a confidence of 60 from gemini-flash are
+    # not the same claim. `fit_confidence_shrink` maps stated confidence onto
+    # realised hit rate, so fitting one curve across two models describes
+    # neither committee. Two Gemini-backed deliberations were already sitting
+    # in the record, unmarked, from overnight failovers — and the router now
+    # fails over on a spend cap, so the next outage mixes the set wholesale.
+    #
+    # None on a row written before this existed, and on a deliberation where
+    # every seat failed and no backend was ever reached.
+    backend: Optional[str] = None
 
     @property
     def signal(self) -> Optional[Signal]:
@@ -361,5 +374,7 @@ class Thesis:
             "status": self.status,
             "opinions": [o.as_dict() for o in self.opinions],
             "consensus": self.consensus.as_dict() if self.consensus else None,
+            # Which committee this actually was. See `Thesis.backend`.
+            "backend": self.backend,
             "tally": self.tally(),
         }

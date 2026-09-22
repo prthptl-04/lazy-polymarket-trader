@@ -216,7 +216,16 @@ def build_fund(
     # Fitted ONCE at build, not per trade: a shrink that moves mid-run makes two
     # trades in the same cycle size differently for reasons unrelated to either
     # thesis. The clamp in fit_confidence_shrink still bounds it.
-    shrink = _fit_shrink(memory)
+    # Fitted for the committee that is ABOUT TO RUN, not for the union of every
+    # committee that ever ran. Ask the router which backend it will serve the
+    # next deliberation from, and calibrate on that one's record.
+    try:
+        use_gemini, _ = llm_router.should_use_gemini()
+        next_backend = "gemini" if use_gemini else "anthropic"
+    except Exception:
+        logger.exception("could not determine the next backend; fitting on all")
+        next_backend = None
+    shrink = _fit_shrink(memory, backend=next_backend)
     pipeline = ThesisPipeline(
         router=router,
         grader=OutcomeGrader(criteria),
@@ -360,19 +369,59 @@ def build_fund(
     return scheduler
 
 
-def _fit_shrink(memory: Any):
+def _fit_shrink(memory: Any, backend: Optional[str] = None):
     """Fit the confidence→probability shrink from resolved outcomes.
 
     Refuses by default: any failure, or too few rows, returns an unusable fit
     and the pessimistic constant stands. Sizing must never be loosened by an
     exception.
+
+    ONE BACKEND AT A TIME. The shrink maps stated confidence onto realised hit
+    rate, so it is a statement about a particular committee. A confidence of 60
+    from Opus and a confidence of 60 from gemini-flash are not the same claim,
+    and one curve fitted across both describes neither. Two Gemini-backed
+    deliberations were already in the record, unmarked, from overnight
+    failovers — and now that the router fails over on a spend cap as well as a
+    429, the next outage would mix the set wholesale.
+
+    `backend=None` keeps every outcome, which is what a caller with no router
+    wants and what every pre-existing row gets.
     """
     from roundtable.calibration import ShrinkFit, fit_confidence_shrink
     try:
-        return fit_confidence_shrink(memory.resolved_outcomes(limit=1000))
+        outcomes = memory.resolved_outcomes(limit=1000)
+        if backend is not None:
+            outcomes, dropped = _same_backend(memory, outcomes, backend)
+            if dropped:
+                logger.info(
+                    "calibration: %d outcome(s) produced by a different model "
+                    "backend excluded; fitting %d from %s",
+                    dropped, len(outcomes), backend)
+        return fit_confidence_shrink(outcomes)
     except Exception:
         logger.exception("could not fit the confidence shrink; keeping the constant")
         return ShrinkFit(None, 0, None, None, "fit failed; pessimistic constant stands")
+
+
+def _same_backend(memory: Any, outcomes: list, backend: str) -> tuple[list, int]:
+    """Keep outcomes whose deliberation ran on `backend`. Returns (kept, dropped).
+
+    A row with NO recorded backend is kept. Those pre-date the field, and
+    discarding real history over a missing label would throw away most of the
+    calibration set to guard against a contamination that had not happened yet.
+    A row explicitly marked "mixed:..." is dropped — that deliberation was half
+    one model and half another, so it is not evidence about either.
+    """
+    try:
+        rows = memory.recent_deliberations(limit=1000)
+    except Exception:
+        logger.exception("could not read deliberations for the backend filter")
+        return list(outcomes), 0
+    known = {r.get("thesis_id"): (r.get("payload") or {}).get("backend")
+             for r in rows}
+    kept = [o for o in outcomes
+            if known.get(o.get("thesis_id"), None) in (None, backend)]
+    return kept, len(outcomes) - len(kept)
 
 
 def _robinhood_quotes(memory: Any) -> tuple[Optional[Any], Optional[Any]]:

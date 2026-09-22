@@ -100,6 +100,11 @@ class RoundTable:
     on_opinion: Any = None                   # callback(SeatOpinion) for live UI
     on_thesis: Any = None                    # callback(Thesis) when complete
     _last_provider: Optional[str] = None
+    # Every backend that answered during the CURRENT deliberation. A set, not a
+    # last-one-wins string: a failover partway through produces a committee
+    # that is half one model and half another, and that has to be visible
+    # rather than attributed to whichever seat happened to go last.
+    _providers_used: set = field(default_factory=set)
 
     # ---------- public API ----------
 
@@ -108,6 +113,9 @@ class RoundTable:
         # self-contained artifact: the verdict AND what produced it.
         thesis = Thesis(symbol=candidate.symbol, asset_class=candidate.asset_class,
                         candidate=candidate)
+        # Fresh per sitting. Without the reset every later deliberation would
+        # inherit the whole process's history and read as permanently mixed.
+        self._providers_used = set()
         self._persist(thesis, "in_progress")
         # Announce the sitting so a watcher can clear the previous debate
         # before the first seat answers, rather than showing the last symbol's
@@ -147,6 +155,7 @@ class RoundTable:
         # Chair — synthesis.
         thesis.consensus = await self._synthesize(candidate, thesis)
         thesis.status = "complete"
+        thesis.backend = self._backend_used()
         self._persist(thesis, "complete")
 
         if self.on_thesis is not None:
@@ -377,6 +386,26 @@ class RoundTable:
 
     # ---------- plumbing ----------
 
+    def _backend_used(self) -> Optional[str]:
+        """Which committee this actually was.
+
+        None when nothing answered — every seat failed and no backend was ever
+        reached, so there is no model to attribute the verdict to. That is
+        NOT the same as "anthropic", and recording it as such would put a
+        confidence of 0.0 from a dead committee into the calibration set for a
+        live one.
+
+        Sorted so the mixed label is stable: "mixed:anthropic+gemini" reads the
+        same whichever seat failed over first, and a calibration filter can
+        match on it.
+        """
+        used = sorted(self._providers_used)
+        if not used:
+            return None
+        if len(used) == 1:
+            return used[0]
+        return "mixed:" + "+".join(used)
+
     def _call(self, system: str, content: str, max_tokens: int) -> str:
         """One model call, through the mandated cache wrapper (rule #2).
 
@@ -395,6 +424,8 @@ class RoundTable:
         if self.router is not None:
             text, provider = self.router.create(**kwargs)
             self._last_provider = provider
+            if provider:
+                self._providers_used.add(str(provider))
             return text
         response = cached_create(self.client, **kwargs)
         return _extract_text(response)
