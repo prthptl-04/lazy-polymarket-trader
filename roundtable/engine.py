@@ -383,8 +383,7 @@ class RoundTable:
         response = cached_create(self.client, **kwargs)
         return _extract_text(response)
 
-    @staticmethod
-    def _tally_block(opinions: Sequence[SeatOpinion]) -> str:
+    def _tally_block(self, opinions: Sequence[SeatOpinion]) -> str:
         """The balance of opinion as a count, not as five paragraphs to read.
 
         The chair was inferring the balance from prose and getting one fact
@@ -425,8 +424,51 @@ class RoundTable:
                 "caution rather than a confirmation — it usually means one "
                 "framing was shared rather than independently reached.")
 
+        weighted = self._weighted_line(live)
         return ("--- BALANCE OF OPINION ---\n" + line
+                + ("\n" + weighted if weighted else "")
                 + ("\n" + " ".join(notes) if notes else "") + "\n\n")
+
+    def _weighted_line(self, live: Sequence[SeatOpinion]) -> str:
+        """The same vote, scaled by what each seat's record has earned.
+
+        Closes a gap open since seat weighting was built: `seat_weights` grades
+        every seat on its Brier score and `weighted_tally` applied the result in
+        exactly one place — `_fallback_consensus`, which runs only after the
+        chair has already failed. On the normal path the weight reached the
+        chair as a sentence beside each opinion and the model was left to do the
+        arithmetic in prose.
+
+        Shown BESIDE the raw count, never instead of it. The raw count is the
+        transcript of who said what, and a transcript that silently re-weights
+        itself is not one. The weighted line is the decision-relevant number.
+
+        Suppressed while every seat sits at 1.00x — the state with nothing
+        resolved — because a weighted line identical to the raw one is noise in
+        a prompt paid for by the token, and it would imply an adaptation that
+        has not happened.
+
+        An unknown seat counts as 1.0: untested is not discredited, the same
+        stance `seat_weights` takes.
+        """
+        weights = self.seat_weights or {}
+        if not any(abs(float(w) - 1.0) > 0.01 for w in weights.values()):
+            return ""
+
+        counts = {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0}
+        for o in live:
+            counts[o.signal] = counts.get(o.signal, 0.0) + float(
+                weights.get(o.seat_id, 1.0))
+
+        moved = [
+            f"{o.seat_name} {float(weights[o.seat_id]):.2f}x"
+            for o in live
+            if o.seat_id in weights and abs(float(weights[o.seat_id]) - 1.0) > 0.01
+        ]
+        detail = (" Adjusted by record: " + ", ".join(moved) + "." if moved else "")
+        return (f"Weighted by each seat's measured record: "
+                f"{counts['bullish']:.2f} bullish / {counts['bearish']:.2f} bearish "
+                f"/ {counts['neutral']:.2f} no view.{detail}")
 
     def _render_opinions(self, opinions: Sequence[SeatOpinion]) -> str:
         """The seat positions, each annotated with that seat's own record.
