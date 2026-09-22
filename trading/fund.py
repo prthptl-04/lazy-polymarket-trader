@@ -215,7 +215,7 @@ class FundLoop:
         # event loop is what silently emptied the crypto universe.
         await self._refresh_crypto_pairs()
 
-        self._score_past_calls(report)
+        await self._score_past_calls(report)
 
         universe = self._universe_for(session, moment)
         # A name with an order already working is not a new opportunity.
@@ -1095,13 +1095,26 @@ class FundLoop:
             return
         self.crypto_scout.refresh_pairs(pairs or [])
 
-    def _score_past_calls(self, report: CycleReport) -> None:
+    async def _score_past_calls(self, report: CycleReport) -> None:
         """Resolve due deliberations against the tape. Never raises — a failure
-        to learn must not become a failure to trade."""
+        to learn must not become a failure to trade.
+
+        ASYNC, and the prices are fetched here rather than inside the resolver.
+        The resolver is sync, and the sync quote callable it used to be given
+        reached an async venue — so it ran that coroutine on a worker thread's
+        own loop and blocked THIS loop waiting for it. The venue's MCP session
+        belongs to this loop, so it never finished: no cycles and no dashboard
+        until the process was killed. `_refresh_crypto_pairs` above learned the
+        same lesson; awaiting on the loop that owns the session is the fix in
+        both places."""
         if self.shadow is None:
             return
         try:
-            scored = self.shadow.resolve_due()
+            symbols = self.shadow.due_symbols()
+            quotes = await self._quotes(symbols) if symbols else {}
+            prices = {s: q.mid for s, q in quotes.items()
+                      if getattr(q, "mid", None)}
+            scored = self.shadow.resolve_due(prices=prices)
         except Exception:
             logger.exception("scoring past calls failed")
             return

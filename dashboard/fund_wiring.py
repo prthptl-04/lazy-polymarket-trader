@@ -91,16 +91,6 @@ def build_data_provider(config: FundConfig, venue: Any) -> Optional[Any]:
     return VenueQuoteProvider(adapter=venue)
 
 
-def _sync_quote(provider: Any, symbol: str) -> Optional[float]:
-    """Last price for a symbol, sync. Used only by the shadow resolver, which
-    runs at the top of a cycle and never on the hot path."""
-    try:
-        quote = _run_sync(provider.get_quote(symbol))
-    except Exception:
-        return None
-    return getattr(quote, "mid", None) or getattr(quote, "last", None)
-
-
 def build_crypto_scout(data_provider: Any) -> Optional[Any]:
     """Wire the crypto scout to Massive's grouped aggregate and Robinhood's
     tradable pair list.
@@ -123,21 +113,6 @@ def build_crypto_scout(data_provider: Any) -> Optional[Any]:
 
     # The pair list arrives via `refresh_pairs` from the cycle's own loop.
     return CryptoScout(grouped=grouped)
-
-
-def _run_sync(coro: Any) -> Any:
-    """The scout is sync (it runs in the deterministic screen, off the hot
-    path) while the venue is async. One place, clearly marked."""
-    import asyncio
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # Already inside the loop: hand it to a worker so the screen can stay sync
-    # without blocking the cycle it runs in.
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
 
 
 def build_fund(
@@ -345,9 +320,9 @@ def build_fund(
         social=SocialSentimentFeed(),
         # Scores past deliberations against the tape, so the seats calibrate
         # from every call rather than only from positions that closed.
-        shadow=ShadowResolver(
-            memory=memory,
-            quote=lambda sym: _sync_quote(data_provider, sym)),
+        # No `quote` callable. Prices are fetched by the cycle on its own
+        # loop and handed to `resolve_due` — see FundLoop._score_past_calls.
+        shadow=ShadowResolver(memory=memory),
         catalysts=CatalystFeed(
             earnings_source=getattr(trading_venue, "earnings_calendar", None),
             filing_source=getattr(trading_venue, "sec_filings", None),

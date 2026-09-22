@@ -36,7 +36,7 @@ import logging
 import time
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -109,34 +109,73 @@ class ShadowResolver:
     """Turns due deliberations into scored outcomes."""
 
     memory: Any
-    # symbol -> current price. Sync; called off the hot path.
-    quote: Callable[[str], Optional[float]]
+    # symbol -> current price. A LAST RESORT, and None in the fund.
+    #
+    # It used to be how prices arrived, and it wedged the whole process: the
+    # callable the fund supplied reached an async venue, so it ran the
+    # coroutine on a worker thread's own loop and blocked the cycle's loop on
+    # the result. The venue's MCP session is pinned to the cycle's loop, so
+    # that coroutine never finished and the block was permanent — no cycles, no
+    # HTTP, nothing, until the process was killed.
+    #
+    # Prices now arrive as `prices` from the caller, fetched on the caller's
+    # own loop (`FundLoop._score_past_calls`), the same way the crypto pair
+    # list arrives via `refresh_pairs`. This hook stays for tests and for a
+    # genuinely sync provider.
+    quote: Optional[Callable[[str], Optional[float]]] = None
     horizon_hours: float = DEFAULT_HORIZON_HOURS
     max_age_hours: float = MAX_AGE_HOURS
     limit: int = 200
 
-    def resolve_due(self) -> int:
-        """Score every completed deliberation past its horizon. Returns the
-        count. Never raises — this runs inside a cycle, and a failure to learn
-        must not become a failure to trade."""
+    def due_symbols(self) -> tuple[str, ...]:
+        """The symbols `resolve_due` would need a price for, right now.
+
+        Split out so an async caller can fetch those prices on its OWN loop and
+        hand them in. The filter is `_due_rows`, shared with `resolve_due`, so
+        the two cannot drift into asking for one set and scoring another.
+        """
         try:
-            rows = self.memory.recent_deliberations(limit=self.limit)
-            already = {o["thesis_id"] for o in
-                       self.memory.resolved_outcomes(limit=self.limit * 2)}
+            rows, _ = self._due_rows()
         except Exception:
             logger.exception("could not read deliberations to score")
-            return 0
+            return ()
+        return tuple(dict.fromkeys(
+            str(r.get("symbol")) for r in rows if r.get("symbol")))
 
+    def _due_rows(self) -> tuple[list, set]:
+        """Completed deliberations past the horizon and not yet scored."""
+        rows = self.memory.recent_deliberations(limit=self.limit)
+        already = {o["thesis_id"] for o in
+                   self.memory.resolved_outcomes(limit=self.limit * 2)}
         now = time.time()
-        scored = 0
+        due = []
         for row in rows:
             tid = row.get("thesis_id")
             if not tid or tid in already or row.get("status") != "complete":
                 continue
             age_h = (now - float(row.get("created") or now)) / 3600.0
-            if age_h < self.horizon_hours or age_h > self.max_age_hours:
-                continue
+            if self.horizon_hours <= age_h <= self.max_age_hours:
+                due.append(row)
+        return due, already
 
+    def resolve_due(self, prices: Optional[Mapping[str, float]] = None) -> int:
+        """Score every completed deliberation past its horizon. Returns the
+        count. Never raises — this runs inside a cycle, and a failure to learn
+        must not become a failure to trade.
+
+        `prices` is symbol -> last price, fetched by the caller on its own
+        loop. A symbol missing from it is skipped, exactly as a failed quote
+        is: a sample scored against a price we never saw is worse than no
+        sample."""
+        try:
+            rows, _ = self._due_rows()
+        except Exception:
+            logger.exception("could not read deliberations to score")
+            return 0
+
+        scored = 0
+        for row in rows:
+            tid = row.get("thesis_id")
             payload = row.get("payload") or {}
             entry = payload.get("price") or _price_from_evidence(payload)
             consensus = payload.get("consensus") or {}
@@ -145,11 +184,17 @@ class ShadowResolver:
             if not symbol or not entry:
                 continue
 
-            try:
-                later = self.quote(symbol)
-            except Exception:
-                logger.debug("no quote for %s while scoring", symbol, exc_info=True)
-                continue
+            if prices is not None:
+                later = prices.get(symbol)
+            elif self.quote is not None:
+                try:
+                    later = self.quote(symbol)
+                except Exception:
+                    logger.debug("no quote for %s while scoring", symbol,
+                                 exc_info=True)
+                    continue
+            else:
+                later = None
             if later is None:
                 # A delisted pair or a provider blip. Leave it for next time
                 # rather than burning the sample on a price we never saw.

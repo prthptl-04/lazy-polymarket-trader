@@ -28,7 +28,29 @@ from trading.fund_config import load_config
 from memory.store import MemoryStore
 
 
+def _arm_stack_dump() -> None:
+    """`kill -USR1 <pid>` prints every thread's Python stack to stderr.
+
+    Written after a wedged process cost half an hour of guessing. The event
+    loop was blocked inside a coroutine and every endpoint — including
+    /api/health — timed out, so nothing the process serves could say why.
+    macOS `sample` gave C frames only, and py-spy needs root, which a
+    non-interactive session does not have.
+
+    Two lines, no cost while idle, and the next wedge names its own line
+    number. It only ever prints: a diagnostic that could kill the process
+    would be worse than the wedge.
+    """
+    import faulthandler
+    import signal
+    try:
+        faulthandler.register(signal.SIGUSR1, all_threads=True, chain=True)
+    except Exception:  # pragma: no cover - platform without SIGUSR1
+        pass
+
+
 def main() -> None:
+    _arm_stack_dump()
     host = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
     port = int(os.environ.get("DASHBOARD_PORT", "8765"))
 
