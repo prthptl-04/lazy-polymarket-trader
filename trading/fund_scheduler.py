@@ -74,6 +74,11 @@ DEFAULT_CYCLE_SECONDS = 300.0       # 5 minutes — swing horizon, not HFT
 # overnight — and short enough that a hang costs one cycle, not a session.
 CYCLE_TIMEOUT_SECONDS = DEFAULT_CYCLE_SECONDS * 4
 
+# How far a wait may overshoot before it is read as a machine suspend rather
+# than a busy loop. A loaded machine overshoots by seconds; only a suspend
+# overshoots by minutes.
+SUSPEND_SLACK_SECONDS = 120.0
+
 
 @dataclass
 class SchedulerMetrics:
@@ -386,10 +391,45 @@ class FundScheduler:
         return self._stop_event is not None and self._stop_event.is_set()
 
     async def _sleep(self, seconds: float) -> None:
+        """Wait between cycles, and SAY SO when the machine slept through it.
+
+        `asyncio.sleep` runs on the monotonic clock, which macOS pauses while
+        the machine is asleep. A 300-second wait therefore lasts 300 seconds of
+        AWAKE time, however long the lid was shut — so from the outside the
+        engine looks frozen, `last_cycle_at` ages in wall-clock terms, and the
+        cycle timeout does not fire either because it reads the same clock.
+
+        This cost two investigations. 2026-09-23:
+
+            15:00:03  last cycle
+            15:02:27  Entering Sleep state due to 'Clamshell Sleep' (battery)
+            15:47:25  DarkWake
+
+        48 wall-clock minutes with ~3 minutes of awake time in them. Nothing
+        was wrong, and nothing in the process could say so. `caffeinate -ims`
+        does not help: its `-s` only inhibits sleep on AC power.
+
+        Recorded as a NOTE, not an error. A laptop closing its lid is not a
+        fault, and filing it as one would put the error counter back where the
+        rest of this session's work took it from.
+        """
+        started = time.time()
         if self._stop_event is None:
             await asyncio.sleep(seconds)
-            return
-        try:
-            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
-        except asyncio.TimeoutError:
-            pass
+        else:
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+            except asyncio.TimeoutError:
+                pass
+
+        # Generous slack: a loaded machine can overshoot a sleep by seconds,
+        # and only a suspend overshoots it by minutes.
+        elapsed = time.time() - started
+        if elapsed > seconds + SUSPEND_SLACK_SECONDS:
+            lost = elapsed - seconds
+            self.metrics.notes += 1
+            self.metrics.last_note = (
+                f"the machine was suspended for about {lost / 60:.0f} minutes "
+                f"during a {seconds:.0f}s wait — cycles resume on wake, and "
+                f"the gap in `last_cycle_at` is wall-clock, not a stall")
+            logger.info("suspended ~%.0f minutes mid-wait; resuming", lost / 60)
