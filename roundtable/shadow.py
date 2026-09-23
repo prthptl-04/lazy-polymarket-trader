@@ -100,6 +100,42 @@ def _price_from_evidence(payload: dict) -> Optional[float]:
     return value if value > 0 else None
 
 
+def _is_quorate(payload: dict) -> bool:
+    """Did enough of the table actually speak for this to be a committee call?
+
+    `ThesisPipeline` already refuses to TRADE a thesis carried by fewer than
+    `MIN_RESPONDING_SEATS`, and says why in as many words: "a thesis carried by
+    one surviving seat is not a committee decision." Scoring applied no such
+    test, so a deliberation the pipeline would never act on still entered the
+    record the seats are calibrated from.
+
+    Measured 2026-09-23 04:37, with both providers rate-limited: three
+    deliberations completed with ONE live seat of seven. TSM came back
+    "bullish, confidence 50" on the Sentiment Analyst alone; STX came back
+    "bullish, confidence 50" on the Risk Manager alone. Which seat survived was
+    decided by whichever won the rate-limit race, and calling that the
+    committee's view — then grading every seat against it 24 hours later — puts
+    a number in the calibration set that no committee ever expressed.
+
+    The same constant the pipeline uses, imported rather than restated. A
+    deliberation the pipeline would refuse to trade is not a prediction the
+    committee made.
+
+    Imported locally: `trading.pipeline` reaches back into `roundtable`, and a
+    module-level import here would close the cycle.
+    """
+    from trading.pipeline import MIN_RESPONDING_SEATS
+
+    opinions = payload.get("opinions")
+    if not opinions:
+        # Nothing recorded. Old rows pre-date the field, and refusing them all
+        # would discard real history to guard against a contamination that has
+        # not happened in them.
+        return True
+    live = sum(1 for o in opinions if not o.get("failed"))
+    return live >= MIN_RESPONDING_SEATS
+
+
 def quote_symbol(row: dict) -> Optional[str]:
     """The symbol a QUOTE can actually be fetched for.
 
@@ -197,6 +233,8 @@ class ShadowResolver:
             # which is the right end for them.
             payload = row.get("payload") or {}
             if not (payload.get("price") or _price_from_evidence(payload)):
+                continue
+            if not _is_quorate(payload):
                 continue
             due.append(row)
         return due, already

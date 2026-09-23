@@ -229,3 +229,65 @@ def test_a_row_with_an_entry_price_is_still_due():
     r = ShadowResolver(memory=store)
     assert r.due_symbols() == ("BTC-USD",)
     assert r.resolve_due(prices={"BTC-USD": 110.0}) == 1
+
+
+# ---------- a non-quorate table is not a committee prediction ----------
+
+def _seats(live, total=7):
+    return [{"failed": i >= live} for i in range(total)]
+
+
+def test_a_one_seat_deliberation_is_not_scored():
+    """Measured 2026-09-23 with both providers rate-limited: three
+    deliberations completed with ONE live seat of seven. TSM came back
+    "bullish, confidence 50" on the Sentiment Analyst alone; STX the same on
+    the Risk Manager alone. Which seat survived was decided by whichever won
+    the rate-limit race.
+
+    `ThesisPipeline` already refuses to TRADE those — "a thesis carried by one
+    surviving seat is not a committee decision" — and it is right. Scoring
+    applied no such test, so every seat would have been graded 24 hours later
+    against a call one seat made."""
+    store = _Store([_row("t1", "TSM", age_hours=30, price=100.0)])
+    store.rows[0]["payload"]["opinions"] = _seats(live=1)
+    r = ShadowResolver(memory=store)
+    assert r.due_symbols() == ()
+    assert r.resolve_due(prices={"TSM": 110.0}) == 0
+    assert store.written == []
+
+
+def test_a_quorate_deliberation_is_still_scored():
+    from trading.pipeline import MIN_RESPONDING_SEATS
+
+    store = _Store([_row("t1", "TSM", age_hours=30, price=100.0)])
+    store.rows[0]["payload"]["opinions"] = _seats(live=MIN_RESPONDING_SEATS)
+    r = ShadowResolver(memory=store)
+    assert r.due_symbols() == ("TSM",)
+    assert r.resolve_due(prices={"TSM": 110.0}) == 1
+
+
+def test_the_quorum_is_the_pipelines_own_constant():
+    """One definition. A scoring quorum that drifted from the trading quorum
+    would grade the committee on calls it was never allowed to act on, or
+    refuse to grade calls it did act on."""
+    import inspect
+
+    from roundtable import shadow
+    from trading.pipeline import MIN_RESPONDING_SEATS
+
+    src = inspect.getsource(shadow._is_quorate)
+    assert "from trading.pipeline import MIN_RESPONDING_SEATS" in src
+    assert "live >= MIN_RESPONDING_SEATS" in src, "compared, not re-stated"
+
+    # And it moves with the pipeline's number rather than a copy of it.
+    store = _Store([_row("t1", "TSM", age_hours=30, price=100.0)])
+    store.rows[0]["payload"]["opinions"] = _seats(live=MIN_RESPONDING_SEATS - 1)
+    assert ShadowResolver(memory=store).due_symbols() == ()
+
+
+def test_a_row_with_no_opinions_recorded_is_still_scored():
+    """Old rows pre-date the field. Refusing them all would discard real
+    history to guard against a contamination that never happened in them."""
+    store = _Store([_row("t1", "BTC-USD", age_hours=30, price=100.0)])
+    store.rows[0]["payload"].pop("opinions", None)
+    assert ShadowResolver(memory=store).resolve_due(prices={"BTC-USD": 110.0}) == 1

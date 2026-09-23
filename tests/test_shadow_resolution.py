@@ -49,8 +49,14 @@ def _debate(store, tid, symbol="NEAR-USD", signal="bullish", price=3.20,
             age_hours=30.0, status="complete"):
     store.save_deliberation(
         tid, symbol, "crypto", status,
-        {"opinions": [{"seat_id": "quant", "seat_name": "Quant",
-                       "signal": signal, "confidence": 60.0, "failed": False}],
+        # A QUORATE table. This used to be a single seat, which the real
+        # committee never is: `ThesisPipeline` refuses to trade a thesis
+        # carried by fewer than MIN_RESPONDING_SEATS, and scoring now applies
+        # the same floor, so a one-seat stub was testing a deliberation the
+        # fund would never have acted on.
+        {"opinions": [{"seat_id": sid, "seat_name": sid.title(),
+                       "signal": signal, "confidence": 60.0, "failed": False}
+                      for sid in ("quant", "risk", "sentiment")],
          "consensus": {"signal": signal, "confidence": 60.0},
          "tally": {signal: 1}, "price": price},
         signal=signal, confidence=60.0)
@@ -189,8 +195,9 @@ def test_a_historical_debate_is_recovered_from_its_evidence_block(store):
     switches calibration on."""
     store.save_deliberation(
         "old", "NEAR-USD", "crypto", "complete",
-        {"opinions": [{"seat_id": "quant", "seat_name": "Quant",
-                       "signal": "bullish", "confidence": 60.0, "failed": False}],
+        {"opinions": [{"seat_id": sid, "seat_name": sid.title(),
+                       "signal": "bullish", "confidence": 60.0, "failed": False}
+                      for sid in ("quant", "risk", "sentiment")],
          "consensus": {"signal": "bullish", "confidence": 60.0},
          "evidence": "INSTRUMENT: NEAR-USD (crypto)\nSession: crypto_only\n"
                      "Last price: 3.20\nSpread: 40 bps"},
