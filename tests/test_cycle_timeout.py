@@ -114,6 +114,67 @@ def test_the_loop_survives_the_timeout_and_runs_the_next_cycle():
     assert sched.failed_reason is None, "a hang is not a dead loop"
 
 
+def test_a_cycle_that_refuses_to_die_does_not_hang_the_supervisor():
+    """The regression, and the reason `wait_for` was not enough.
+
+    On 2026-09-22 DNS dropped, the MCP session's anyio task group was torn
+    down from the wrong task, and cancelling the cycle raised "Attempted to
+    exit cancel scope in a different task than it was entered in" from inside
+    the unwind. The task never finished dying. `asyncio.wait_for` asks for
+    cancellation and then BLOCKS until the task completes, so it never
+    returned and the handler that logs the timeout never ran — 54 minutes past
+    a 20-minute budget, no timeout recorded anywhere, `errors` reading 3.
+
+    Here the cycle swallows cancellation and keeps running, exactly as a
+    broken cancel scope does. The supervisor must still get out.
+    """
+    refusals = {"n": 0}
+
+    async def undying():
+        # Swallows cancellation the way a broken anyio unwind does. Bounded so
+        # the loop can still shut down at the end of the test — the real one
+        # was unbounded, which is why it had to be abandoned rather than
+        # awaited.
+        for _ in range(40):
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                refusals["n"] += 1
+                continue
+
+    sched = _scheduler(timeout=0.05)
+    sched.run_once = undying
+    stops = iter([False, True])
+    sched._should_stop = lambda: next(stops, True)
+
+    async def _sleep(_): return None
+    sched._sleep = _sleep
+
+    async def main():
+        # The whole assertion: this returns at all.
+        await asyncio.wait_for(FundScheduler._run(sched), timeout=5.0)
+
+    asyncio.run(main())
+
+    assert refusals["n"] >= 1, "the cycle must actually have refused to die"
+    assert sched.metrics.errors == 1
+    assert "abandoned" in sched.metrics.last_error
+    assert sched.failed_reason is None, "an abandoned cycle is not a dead loop"
+
+
+def test_the_supervisor_does_not_await_the_abandoned_task():
+    """Stated as code, because the difference between `wait_for` and this is
+    one await and the entire failure."""
+    import inspect
+
+    src = inspect.getsource(FundScheduler._run)
+    assert "asyncio.wait(" in src
+    assert "asyncio.wait_for(" not in src, \
+        "wait_for blocks on a task that will not finish dying"
+    after_cancel = src.split("task.cancel()")[1]
+    assert "await task" not in after_cancel
+
+
 def test_a_normal_cycle_is_untouched():
     ran = []
 

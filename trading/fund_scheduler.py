@@ -173,20 +173,40 @@ class FundScheduler:
         """
         try:
             while not self._should_stop():
+                task = asyncio.ensure_future(self.run_once())
+                done, _ = await asyncio.wait(
+                    {task}, timeout=self.cycle_timeout_seconds)
                 try:
-                    # A hung cycle is cancelled, not waited on. `wait_for`
-                    # cancels the coroutine it is wrapping, so whatever await
-                    # never returned is torn down and the next cycle starts
-                    # from a clean read of the account.
-                    await asyncio.wait_for(self.run_once(),
-                                           timeout=self.cycle_timeout_seconds)
-                except asyncio.TimeoutError:
-                    self.metrics.errors += 1
-                    self.metrics.last_error = (
-                        f"cycle exceeded {self.cycle_timeout_seconds:.0f}s and "
-                        f"was cancelled — it was hung, not slow")
-                    logger.error("fund cycle timed out after %.0fs; cancelled",
-                                 self.cycle_timeout_seconds)
+                    if task not in done:
+                        # ABANDONED, not awaited. `asyncio.wait_for` would ask
+                        # for cancellation and then block until the task
+                        # finished dying — and on 2026-09-22 it did exactly
+                        # that. DNS dropped, the MCP session's anyio task group
+                        # was torn down from the wrong task, and cancelling it
+                        # raised "Attempted to exit cancel scope in a different
+                        # task than it was entered in" from inside the unwind.
+                        # The task never completed, so `wait_for` never
+                        # returned, so the `except TimeoutError` that logs this
+                        # never ran. The supervisor hung on the thing it was
+                        # supervising: 54 minutes past a 20-minute budget with
+                        # `errors` reading 3 and no timeout recorded anywhere.
+                        #
+                        # ponytail: the abandoned task may leak its sockets
+                        # until the process restarts. That is the price, and it
+                        # is the right way round — a leaked connection is an
+                        # inconvenience, a supervisor that cannot supervise is
+                        # the whole engine.
+                        task.cancel()
+                        self.metrics.errors += 1
+                        self.metrics.last_error = (
+                            f"cycle exceeded {self.cycle_timeout_seconds:.0f}s "
+                            f"and was abandoned — it was hung, not slow")
+                        logger.error(
+                            "fund cycle timed out after %.0fs; cancelled and "
+                            "abandoned without waiting for it to unwind",
+                            self.cycle_timeout_seconds)
+                    else:
+                        task.result()
                 except NEVER_SWALLOW:
                     raise
                 except BaseException as e:
