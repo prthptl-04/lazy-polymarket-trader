@@ -8,6 +8,7 @@ have a wallet configured (everything stays in paper mode).
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import uvicorn
@@ -46,6 +47,39 @@ def _arm_stack_dump() -> None:
     try:
         faulthandler.register(signal.SIGUSR1, all_threads=True, chain=True)
     except Exception:  # pragma: no cover - platform without SIGUSR1
+        pass
+
+    # And the asyncio tasks, which faulthandler cannot see.
+    #
+    # Thread stacks show the event loop sitting in `select`, which is what a
+    # HEALTHY idle loop looks like and what a loop with one stuck coroutine
+    # also looks like. Twice in this session a cycle stopped advancing while
+    # every thread stack said "fine", and both times the next step was
+    # guesswork against the log. The pending coroutine is the answer, and
+    # `asyncio.all_tasks()` has it.
+    def _dump_tasks(_sig, _frame) -> None:
+        import traceback
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            print("[tasks] no running loop", flush=True)
+            return
+        tasks = asyncio.all_tasks(loop)
+        print(f"\n[tasks] {len(tasks)} pending", flush=True)
+        for task in tasks:
+            print(f"\n[task] {task.get_name()} done={task.done()} "
+                  f"coro={task.get_coro()!r}", flush=True)
+            try:
+                for frame in task.get_stack(limit=12):
+                    for line in traceback.format_stack(frame, limit=1):
+                        print("  " + line.rstrip(), flush=True)
+            except Exception as e:
+                print(f"  <no stack: {e}>", flush=True)
+
+    try:
+        # SIGUSR2, so the two dumps can be taken independently.
+        signal.signal(signal.SIGUSR2, _dump_tasks)
+    except Exception:  # pragma: no cover - platform without SIGUSR2
         pass
 
 
