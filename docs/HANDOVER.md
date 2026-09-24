@@ -31,8 +31,9 @@ and it is why the fund can be trusted to run unattended.
 - **Mode: paper only.** `PAPER_TRADING=true`. Flipping to live is a
   multi-condition checklist (rule #13 + #21), not a flag.
 - **Bankroll: $500 notional**, $50 daily loss limit.
-- **Language/toolchain:** Python 3.13, `uv` (there is no `requirements.txt`),
-  React + Vite for the dashboard UI.
+- **Language/toolchain:** Python 3.13, dependencies in `pyproject.toml`
+  managed by **`uv`** — there is **no `requirements.txt`**, and the README
+  briefly claimed otherwise before it was corrected. React + Vite for the UI.
 
 Entry point: `python -m dashboard` → `http://127.0.0.1:8765`.
 
@@ -71,6 +72,73 @@ most often:
    not trading, find the cause. `monitoring/paper_report.py` pre-registers this
    as the failure mode by which a strategy gets talked into paying for its own
    activity.
+
+---
+
+## 2b. Configuration — what to set before anything runs
+
+Two layers. **`config/fund.toml` holds the defaults; env wins**, so
+deployment-specific numbers need not be committed
+(`trading/fund_config.py` resolves the precedence).
+
+### `config/fund.toml`
+
+```toml
+[fund]
+bankroll_usd            = 500.0    # what sizing works against
+cycle_interval_seconds  = 300.0    # swing horizon, not an HFT loop
+max_daily_loss_usd      = 50.0     # 10% — the kill switch
+max_candidates_per_cycle= 5        # THE main lever on token spend
+lookback_bars           = 60       # ATR, CVaR, Amihud
+account_equity_usd      = 500.0    # PDT threshold check
+resume_max_age_seconds  = 3600.0   # abandon stale interrupted deliberations
+
+[watchlist]
+equity = []    # EMPTY ON PURPOSE
+crypto = []    # set FUND_CRYPTO_WATCHLIST in .env instead
+
+[data]
+provider = "massive"   # none | static | massive
+```
+
+**The watchlists ship empty deliberately.** A default watchlist would mean
+anyone who runs this without reading the config starts trading names they never
+chose. Empty trades nothing, which is the correct behaviour for a file nobody
+has looked at yet — and with `equity = []` the scout screens the whole US tape
+(~12,500 tickers) and ranks by liquidity and momentum instead. Setting it
+**overrides discovery entirely.**
+
+`max_candidates_per_cycle` is the spend dial: each candidate costs ~8 model
+calls. The pre-registered `committee_costs_more_than_it_makes` trigger
+prescribes lowering *this*, never the grader.
+
+### Environment — `.env` (gitignored; `.env.example` is tracked)
+
+| Required for | Variable |
+|---|---|
+| The committee to think at all | `ANTHROPIC_API_KEY` |
+| Failover when Anthropic 429s | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) |
+| Bars, crypto bars, news | `MASSIVE_API_KEY` |
+| Altman Z / Piotroski F | `SEC_USER_AGENT` — **SEC 403s any caller that does not identify itself**; format `"App Name email"` |
+| Paper vs live | `PAPER_TRADING=true` |
+| Storage | `MEMORY_DB_PATH` |
+
+**Currently unset, each disabling a real source** (open item #6):
+
+- `FMP_API_KEY` — **one key unlocks three** gated sources: earnings calendar,
+  economic calendar, and disclosed STOCK Act trades (§4a-bis C).
+- `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` — Reddit's public JSON now 403s,
+  so social sentiment needs a registered OAuth client (§4a-bis D).
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — notifier off without them (§4d).
+
+Seven further optional overrides (`ANTHROPIC_MODEL`, `DASHBOARD_HOST/PORT`,
+`FUND_CONFIG_PATH`, `MCP_TOKEN_PATH`, `VULN_LLM_PHASE`) all have working
+defaults and are listed at the foot of `.env.example` so they are discoverable
+without grepping.
+
+**`.env.example` still contains the Polymarket key block.** It is fenced as
+`RETIRED — nothing below this line is read by the running system`, kept rather
+than deleted per rule #23. Do not fill it in expecting it to do anything.
 
 ---
 
@@ -727,6 +795,77 @@ whose confidence is calibrated against realised outcomes and whose every
 proposal must clear a deterministic cost-and-risk gauntlet, will decline most
 trades and take the few that survive.* Whether that claim is true is exactly
 what §7b and §9 say has **not yet been demonstrated**.
+
+---
+
+## 4g. Dead code you will find, and why it is still here
+
+Two packages are **imported by nothing that runs**. Confirmed by grep: the only
+references are in `vulnerability_detector/static_scanner.py`'s module list.
+
+| Package | Was | Status |
+|---|---|---|
+| `live_market/` | Polymarket CLOB WebSocket → `OrderBookCache` (rule #14) | Dead. The venue is retired. |
+| `decision_tree/` | µs-scale `Predictor` off that cache, re-fit off the hot path | Dead. Nothing calls it. |
+
+They are kept for the same reason `trading/venues/retired.py` keeps Polymarket:
+**a venue that silently vanishes reads as a bug six months later, and the
+decision stops being reversible.** Rules #14 and #17 describe this path and are
+explicitly marked HISTORICAL.
+
+**The transferable part is not the code, it is the placement rule** (#16): the
+LLM is never in the per-tick path, and anything that could exceed 100 µs goes
+to a thread pool. That still governs the live system.
+
+Also present and worth knowing: `.claude/skills/` vendors persona-only
+adaptations of BMAD-METHOD (MIT) plus project-native skills
+(`system-architect`, `web-scraper`, `ponytail`, `code-graph`,
+`vulnerability-detector`). The full BMAD `_bmad/` framework is **not**
+installed — rule #15 says so, so nobody goes looking for it.
+
+---
+
+## 4h. How tests are written here
+
+145 test files, 1,979 tests. The convention is unusual and worth keeping,
+because it is what made this session's debugging fast.
+
+**A test's docstring records the measured failure, not the intent.** Compare a
+normal docstring to what this repo does:
+
+```python
+"""A resting order that fills is a position. The book has to learn about it.
+
+`fund_state._venue_rows` seeds the paper venue from the BOOK on restore...
+The consequence nobody had followed through: a position the BOOK does not know
+about is destroyed on the next restart, while the cash that bought it is
+restored verbatim.
+
+Caught live: PEPE-USD filled at 5.1671278e-06 for $29.17 and sat outside the
+book, one restart away from vanishing exactly as its predecessor had.
+"""
+```
+
+Four properties this buys, all of which paid off in §8:
+
+1. **The number is in the file.** Six months on, nobody has to re-derive why
+   `MIN_RESPONDING_SEATS` is 3 or why the improvement fraction cannot reach.
+2. **It pins the SHAPE of the bug, not the value.** The screen-breadth test
+   asserts *"the constant is used twice and no bare `* 2` is left behind"* —
+   because my first attempt asserted a literal string was present and **passed
+   while confirming nothing** (§9).
+3. **Test against the real object, not a convenient stub.** The portfolio-risk
+   bug survived because the fixture was shaped like the snapshot *dict*, which
+   has a `stop` key, rather than `ManagedPosition`, which does not. The
+   replacement builds a real one and asserts the class has no `.stop`, so the
+   test says something if that ever changes.
+4. **Assert the direction that matters too.** Every tightening added here also
+   has a test that a *real* fault still fires — a risk control that can only be
+   proven to allow things has not been proven at all.
+
+Run: `pytest -q`. Full gate: `./scripts/verify.sh` (tests → module self-checks
+→ UI build → vulnerability scan). Many modules also carry a `_demo()`
+`__main__` self-check for the non-trivial pure functions.
 
 ---
 
