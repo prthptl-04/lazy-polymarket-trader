@@ -4,120 +4,129 @@
 > unresolved, or deliberately left undone lives here. Update it in the same
 > commit that changes its status — a stale notes file is worse than none.
 >
-> Last updated: 2026-09-12 (session 2)
+> Last updated: 2026-09-23 (overnight autonomous session)
+
+> **Rewritten 2026-09-23.** The previous revision was dated 2026-09-12 and had
+> gone eleven days and ~180 commits without an update, in a file whose own
+> header says not to let that happen. It asserted five things that were no
+> longer true: that the Robinhood adapter was not in `build_fund`, that
+> Polymarket was merely "deferred", that Massive crypto bars were unsolved,
+> that `MASSIVE_API_KEY` was still needed from the user, and that
+> `max_position_usd` was $10. Each was checked against the source before being
+> removed rather than assumed stale.
 
 ---
 
 ## 🔴 Blockers — must be solved before the fund can trade live
 
-### 1. Robinhood adapter is wired but NOT yet in build_fund
-`trading/venues/robinhood.py` is verified against the live server and read
-paths work end to end (agentic account ••••9722, $500 equity, live AAPL and
-BTC quotes). What remains is construction: `dashboard/fund_wiring.build_fund`
-still creates a `PaperVenue` and never a `RobinhoodVenue`, and nothing opens
-the long-lived MCP session for the daemon.
+### 1. The committee cannot think — both providers are capped
+Anthropic hit its **monthly spend cap**; Gemini's free tier allows 5 req/min.
+Every deliberation currently fails all seats and says so — one error per
+deliberation, which is the system reporting honestly, not malfunctioning.
 
-That is deliberate for now — wiring it means the fund can place real orders,
-and that should be its own reviewed commit alongside the rule-#13 checklist.
+Nothing in the fund can progress past this: no deliberations means no outcomes,
+no outcomes means the calibration gate never opens.
+**Operator action:** raise the Anthropic cap, or add Gemini billing.
 
-**No order has ever been placed by this code.** Only reads have been exercised.
+### 2. The machine sleeps on battery
+Measured 2026-09-23: **~2–3 minutes of awake time per wall-clock hour** with
+the lid shut. `asyncio.sleep` runs on the monotonic clock, which macOS pauses
+during suspend, so a perfectly healthy engine looks frozen from outside and its
+own cycle timeout does not fire either — it reads the same paused clock.
+
+`caffeinate -ims` does **not** fix this: `-s` inhibits sleep only on AC power.
+**Operator action:** AC power, or disable clamshell/battery sleep. No code can
+make a suspended process run.
+
+### 3. Only 6 usable calibration outcomes of the 30 needed
+Seat weights, the confidence shrink and post-mortem lesson injection are all
+gated on 30. Downstream of blockers 1 and 2.
 
 ---
 
 ## 🟡 Deferred — decided, not yet built
-
-### Polymarket US — adapter done, wallet unfunded
-`trading/venues/polymarket_us.py` implements `VenueAdapter` and is **verified
-live** (2026-09-12: auth works, balance $0.247, no positions). Parsers were
-corrected against real response shapes.
-
-Still open:
-- **Wallet is $0.247** — below any tradable size (`max_position_usd` is $10,
-  Kelly sizes to ~0). Fund it before expecting activity.
-- `markets.bbo` shape unverified — needs a live market slug to test against.
-- CLOB path **deleted** (`54b568b`) at the user's direction.
-
-### Market data — DONE for bars, fundamentals still open
-User subscribed to **Massive $29/mo stocks**. MCP server registered
-(`massive` → https://mcp.massive.com/, project scope) and awaiting the same
-post-restart authentication as robinhood-trading.
-
-**Done:** `trading/massive_provider.py` verified live — equity and crypto bars
-both work (AAPL 30 bars, BTC 30 bars).
-
-**Fundamentals solved free:** `trading/sec_edgar.py` pulls XBRL company facts
-from `data.sec.gov` (allowlisted, gated). Verified live on AAPL — Altman
-Z=12.46 safe, Piotroski F=8/9, matching the Robinhood MCP numbers.
-`MassiveProvider(financials=SecEdgarFundamentals())` wires it in.
-**Requires `SEC_USER_AGENT` in `.env`** — SEC 403s undeclared callers.
-
-**Two channels, do not confuse them:** the MCP connection belongs to the
-Claude Code session and is for discovery. The fund runs as its own process and
-cannot reach it — `MassiveProvider` needs a plain `MASSIVE_API_KEY` in `.env`.
-Still needed from the user.
-
-**Crypto bars remain unsolved** — Massive's stocks plan does not cover them.
-Check Robinhood's surface for crypto history before buying anything else.
 
 ### The fitted shrink is not fed back automatically
 `fit_confidence_shrink` returns a number; `ThesisPipeline` still uses the
 constant. Wiring it should be deliberate — an automatic feedback loop that
 re-sizes positions from its own recent results can chase noise.
 
+### The committee is long-biased by role, and it has never gone bearish
+Measured over 260 real deliberations (2026-09-24): the Devil's Advocate has
+argued bearish **zero** times in 123 directional calls, the Quant zero in 129,
+and the consensus has been bearish **zero times ever**. The Risk Manager is the
+mirror at 3:105.
+
+Two consequences, neither yet acted on:
+- The bearish-consensus **close path has never executed in practice.** It is
+  tested in unit tests and untested in life.
+- Either the prompts elicit a direction the role implies rather than the
+  evidence supports, or the screen only ever surfaces longs. **Measure which
+  before changing either.**
+
+### The Catalyst Analyst is effectively mute
+2 directional calls in 182 — exactly where the Corroborator sat before it was
+made `votes=False`. Making it advisory is the obvious move and is a change to
+the committee's composition, so it is the operator's call, not an agent's.
+
+### Confidence carries almost no information
+Consensus confidence: median 50, p10 42, p90 58. Since sizing runs on
+calibrated confidence, a signal that never varies makes that input nearly
+decorative. Expect the eventual fit to say so; that is a legitimate result.
+
+### Robinhood crypto may not be tradable under our own geometry
+~190bps quoted spread against a 1.35 net reward:risk floor permits only
+12–40bps of price improvement against a ~95bps half-spread. Crossing needs
+ATR ≥ 14.9% of price; the most volatile name observed was ~10.5%.
+**Raising `IMPROVEMENT_FRACTION` cannot reach this** — even at 1.0 a BTC order
+still sits ~75bps short. Either accept a lower net R:R on crypto or stop
+trading it. Operator decision; not to be resolved by moving a threshold.
+
+### B29 — size varies only with chair confidence
+The spread of opinion across seats does not enter sizing at all.
+
 ### Fund is long-only
 A bearish consensus on an unheld name is skipped, not shorted. Shorting needs
 margin and borrow, and Robinhood's agentic surface is unverified for it.
 
 ### Fresh interrupted theses are surfaced but never re-run
-Stale ones are now abandoned automatically (older than
-`resume_max_age_seconds`, default 1h). Fresh ones are reported on GO but
-nothing re-runs them — that remains a deliberate caller decision.
-
-### Polymarket watchlist still hardcoded
-The FUND watchlist now lives in `config/fund.toml`. The Polymarket-era
-`watched: list[WatchedMarket] = []` in `dashboard/__main__.py` is still a
-literal; with it empty, `attach_live_feeds` subscribes to zero tokens.
-
-### HTTP/2 keepalive on the CLOB client
-Each `post_order` opens a new HTTPS connection; persistent connection would cut
-~30% off a 50–150 ms RTT.
-
-### Robinhood balance cannot reach the dashboard process
-The header shows `RH n/a` because MCP is session-bound. Resolving blocker #3
-(daemon auth) fixes this for free. Until then the pill stays honest rather
-than showing a cached number the user might size against.
-
-### Scraper stack: Playwright adopted; two dead paths remain
-**Decided:** agents use Playwright. `Corroborator(browser=PlaywrightFetcher(...),
-scrape_urls=(...))` renders narrative context; a 4xx/5xx body is discarded
-rather than passed off as research.
-
-Still to clean up (not urgent, but they are lies in pyproject):
-Checked all four (2026-09-12):
-- **Agent Reach** — zero backends installed, rule #20 refuses `--env=auto`.
-  Fetches nothing. Drop the wrapper + rule #20, or install backends by hand.
-- **Scrapling** — `import scrapling` fails on a missing `curl_cffi`. Either
-  add the dep or remove it from pyproject.
+Stale ones are abandoned automatically (`resume_max_age_seconds`, 1h). Fresh
+ones are reported on GO but nothing re-runs them — a deliberate caller decision.
 
 ### Macro / geopolitical signals not wired
-The Sentiment seat now gets per-ticker news with publisher sentiment. What is
-NOT wired is macro: Massive exposes `/fed/v1/inflation` and other Economy
-endpoints, and nothing reads them. Geopolitical/war signals have no source at
-all — the honest options are a news-category filter over the existing feed, or
-a dedicated provider. Not attempted rather than half-built.
+Massive exposes `/fed/v1/inflation` and other Economy endpoints and nothing
+reads them. Geopolitical signals have no source at all. Not attempted rather
+than half-built.
 
 ### Dashboard token auth
-Binds to 127.0.0.1 only. Needs a shared-secret header before any wider exposure.
+Binds to 127.0.0.1 only. Needs a shared-secret header before any wider
+exposure (rule #18).
+
+---
+
+## 🔑 Unset keys, each disabling a real source
+
+| Key | Unlocks | Status |
+|---|---|---|
+| `FMP_API_KEY` | earnings calendar, economic calendar, **STOCK Act politician trades** | unset — three sources for one free key |
+| `REDDIT_CLIENT_ID` / `_SECRET` | social sentiment (public JSON now 403s) | unset |
+| `TELEGRAM_BOT_TOKEN` / `_CHAT_ID` | fill notifications | unset (notifier simply off) |
 
 ---
 
 ## 🟢 Known limitations — accepted, documented, not bugs
 
+### The $43.75 suspense line
+An unexplained cash gap, investigated and not explained, booked to
+`unexplained_usd` with its reason rather than erased. The fills that would have
+explained it were not persisted at the time; they are now. **Leave it** — it is
+the only evidence, and the identity reconciles around it.
+
 ### Backtester does not model
 Survivorship bias (feed it delisted names too), partial fills, queue position,
 borrow cost on shorts, dividends. Fills cross the spread and pay slippage;
-commission defaults to zero, which is right for Robinhood equities and wrong
-almost everywhere else.
+commission defaults to zero — right for Robinhood equities, wrong almost
+everywhere else.
 
 ### Paper venue fill model
 Pessimistic on price, optimistic on timing — no queue, no partials, no latency.
@@ -126,68 +135,63 @@ A paper track record reads better on *timing* than reality will.
 ### Quality screens are filters, not verdicts
 Altman Z was fitted on 1960s manufacturers and misreads asset-light software
 and banks. Piotroski F was designed to sort *within* a high book-to-market
-universe, not across the whole market.
+universe, not across the whole market. The seat prompts say so.
 
 ### Closes must be sized in quantity, not notional
 A $100 buy at the offer acquires fewer units than a $100 sell at the bid
 disposes of, so a notional close overshoots and is rejected. Pinned by
 `test_notional_close_undershoots_once_the_price_moves`.
 
+### Ten deliberations can never be scored
+Written before deliberations stored `price` or `evidence`, so there is nothing
+to measure a move against. They are excluded from "due" rather than retried
+forever. Nothing to recover.
+
 ---
 
 ## 📋 Housekeeping
 
-- **AGPL clone at `/tmp/aihf`** — `tbdavid2019/ai-hedge-fund-API`, cloned for
-  analysis. Nothing was copied from it (see the AGPL reimplementation policy).
-  Sandbox declined the `rm -rf`; delete manually when done browsing.
-- **Branch `phase-d-and-skills`** holds everything since `e5dc6fe`. Not merged
-  to `main` yet.
-- **`uvx google-agents-cli setup` not run** — it mutates the global
-  environment. agents-cli is cloned and gated; only its patterns and eval
-  methodology are in scope, no ADK, no Google Cloud.
+- **Branch `phase-d-and-skills`** is **179 commits ahead of `main`** and has
+  never been merged. That is a lot of unreviewed history on one branch.
+- **`live_market/` and `decision_tree/`** are imported by nothing that runs —
+  the retired Polymarket HFT path. Kept per rule #23; see `docs/HANDOVER.md`
+  §4g.
+- **`.env.example`** still carries the Polymarket key block, fenced as RETIRED.
+  Kept, not deleted, for the same reason.
 - **`PHASE_2_ROADMAP.md` is superseded** by `HEDGE_FUND_ARCHITECTURE.md` for
-  direction, but still holds the Polymarket-era history.
+  direction, but still holds Polymarket-era history.
+- **`docs/HANDOVER.md`** is the full cold-start document for a successor agent.
 
 ---
 
-## ✅ Recently closed
+## ✅ Closed in the 2026-09-22/23 overnight session
 
-| Item | Closed |
+| Item | Commit |
 |---|---|
-| Live feed wiring (market + user WebSockets) | Phase D, `6fcce81` |
-| Trust-allowlist persistence across processes | `131ca3d` |
-| Vendored-clone false positives blocking publish | `c401f7b` |
-| Session calendar + PDT gate | Phase 1, `c401f7b` |
-| Venue abstraction + router gates | Phase 2, `7a51fa2` |
-| Exit logic (was: fund had none at all) | `31b1684` |
-| Backtester (was: no backtesting existed) | `64324d5` |
-| Grader could not grade an equity trade | `ba157aa` |
-| Daily kill-switch declared but never enforced | `ffab32b` |
-| Round-table seats + transcript persistence | `238501f` |
-| Thesis → order pipeline + candidate builder | `551fec0` |
-| Fund loop + market-data abstraction | `f3815c3` |
-| Round-table monitoring UI | `f3bbe26` |
-| Kill-switch unfed in the live path | `0f30a1b` |
-| Dashboard wiring for the fund engine | `8f1a281` |
-| Fund config + entrypoint wiring + stale-thesis policy | `116b73c` |
-| Seat scoring + confidence calibration | `b48bf6e` |
-| Stops were never enforced after entry | `66da561` |
-| Nothing resolved theses (scorecard always empty) | `66da561` |
-| Robinhood + Massive MCP enumerated; data architecture verified | `decc705` |
-| Polymarket US venue adapter (API-key auth, no funder address) | `9823f1a` |
-| Polymarket parsers corrected against live API | `2c94471` |
-| Dashboard header balance pills | `769725c` |
-| Polymarket on-chain CLOB path removed (~4,400 lines) | `54b568b` |
-| MassiveProvider — equity + crypto bars, verified live | `e32ebe9` |
-| Corroborator seat + deterministic fact cross-check | `e32ebe9` |
-| SEC EDGAR fundamentals (free, replaces unentitled feed) | this commit |
-| Playwright headed fetcher, trust-gated | this commit |
-| Authenticator 403'd on UA-requiring hosts | this commit |
-| PositionBook wired into build_fund — stops now enforced | this commit |
-| Agents use Playwright for narrative scraping | this commit |
-| Per-venue trading sessions (independent start/stop) | `b56025a` |
-| Post-mortem: a lesson written on every loss | `ddb8ade` |
-| News + publisher sentiment into the Sentiment seat | this commit |
-| Daemon could not hold an MCP session (own OAuth client) | `5dbb643` |
-| Robinhood OAuth completed; refresh token issued | `fdbf796` |
-| Robinhood adapter verified against the live tool surface | this commit |
+| Resting orders matched against the quote that missed them | `8045a36` |
+| Working orders did not survive a restart | `818e7ad` |
+| Limit price destroyed on sub-cent instruments | `4d9b940` |
+| Chair retyped the seat positions (27% of deliberation output) | `fcf4890` |
+| **Shadow resolver hung the entire process** (sync/async bridge) | `e955673` |
+| Orders outlived the thesis that justified them | `a1e9d79` |
+| Planned declines counted as errors | `5b4b665` |
+| Paper account could not prove its own cash | `de6ee78` |
+| Investigated gap booked to suspense rather than erased | `68566d8` |
+| **Resting fills never reached the book — and had no watched stop** | `d5ba77c` |
+| Two cash identities that drifted apart | `ae6be91` |
+| Kill switch counted bookkeeping as a trading loss | `e8b7d67` |
+| Calibration samples stuck on a symbol spelling | `493bd3d` |
+| Unscoreable rows treated as perpetually "due" | `44399f8` |
+| `max_position_usd` capped each order, not the position | `6c79c75` |
+| No portfolio risk budget across correlated positions | `dd2992d` |
+| **Portfolio risk budget silently returned 0.00** | `5b1c660` |
+| Capped names consumed deliberation slots | `cb8a140` |
+| Screen breadth had two definitions; the wrong one was raised | `1179233` |
+| Spend cap hit and nothing said so | `6891a05` |
+| Calibration mixed two models into one committee | `9fdb606` |
+| MCP supervisor hung on the thing it supervised | `53e2c33` |
+| A one-seat table scored as a committee | `fd9ddfb` |
+| Task dump for stuck coroutines (`kill -USR2`) | `6a7cc63` |
+| Suspend misread as a stall | `1f6522f` |
+| Scorecard could not find its own outcomes | `582553e` |
+| `.env.example` advertising a retired venue | `3290725` |

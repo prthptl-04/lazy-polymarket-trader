@@ -1,9 +1,17 @@
 """Entry point: `python -m dashboard` boots the FastAPI app on 127.0.0.1:8765.
 
-For the production wire-up, edit the runtime construction below to point at
-your real PolymarketClient + Predictor + watched markets. The default below
-runs with a stub client so the dashboard renders end-to-end even before you
-have a wallet configured (everything stays in paper mode).
+The fund is assembled by `dashboard.fund_wiring.build_fund`, which reads
+`config/fund.toml` and `.env` — there is nothing to edit here to go from a
+demo to the real thing. It attaches a Robinhood session for quotes and data
+when one is authenticated, routes orders to `PaperVenue`, and returns None
+(dashboard renders, fund does not run) when a prerequisite is missing, saying
+which.
+
+This docstring used to describe wiring up "your real PolymarketClient +
+Predictor + watched markets". That was the retired Polymarket CLOB path
+(CLAUDE.md #23); following it would have pointed a reader at
+`live_market/` and `decision_tree/`, neither of which is imported by anything
+that runs.
 """
 
 from __future__ import annotations
