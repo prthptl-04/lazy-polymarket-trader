@@ -78,7 +78,7 @@ most often:
 
 ```
 branch          phase-d-and-skills   (clean, pushed — HEAD 1f6522f)
-tests           1973 passing, 145 test files
+tests           1979 passing, 146 test files
 modules         trading 24 · roundtable 13 · finance 7 · dashboard 10 · cache 5
 deliberations   985 recorded
 ```
@@ -319,7 +319,108 @@ BTC       bullish  +4.77%  right     (shadow)
 
 ---
 
-## 8. Session log — 27 commits, 2026-09-22 → 23
+## 7b. Agent evaluation — the machinery, and the current numbers
+
+### 7b.1 How agents are evaluated
+
+Five layers, all deterministic, none of them an LLM judging an LLM:
+
+| Layer | Where | What it scores |
+|---|---|---|
+| **Outcome grader** | `verification/outcome_grader.py` + `criteria.py` | Every *proposed* trade, before it exists. Reward:risk ≥ 1.5 gross and ≥ 1.35 net, stop required, stop ≤ 15% of price, spread ≤ 50bps (100 extended), edge ≥ 20bps, depth ≥ $500. A failing grade blocks the trade; it is not advisory. |
+| **Seat scorecard** | `roundtable/calibration.py::score_seats` | Every *seat*, per resolved thesis: hit rate, **Brier score**, mean confidence, **overconfidence** (stated − realised), abstentions, `beats_coin_flip`, `calibrated`. Needs 30 samples before a verdict is published. |
+| **Confidence shrink fit** | `calibration.py::fit_confidence_shrink` | The *committee's* stated confidence against realised hit rate. Position-outcomes only — shadow returns are excluded because a position is bounded by its stop and a raw forward return is not. |
+| **Pre-registered triggers** | `monitoring/paper_report.py` | Eight failure modes, each with a threshold **written before the results**, so it is a commitment rather than a metric to be reinterpreted when inconvenient. |
+| **Tool / infra eval** | `tool_evaluation/`, `observability/` | The deterministic helpers and the process itself. No LLM dependency. |
+
+Run the report: `python -m monitoring.paper_report`.
+
+### 7b.2 Per-seat behaviour — 260 real deliberations
+
+**Measured 2026-09-24**, excluding 708 provider-capped deliberations in which
+every seat failed. Those are not evidence about seats and must never be counted
+as such.
+
+```
+seat                    eq dir%  cr dir%  bull  bear  neut  fail%  medconf
+Catalyst Analyst             1%       0%     2     0   180     2%       45
+Corroborator                 0%       0%     0     0   254     2%       42
+Devil's Advocate            54%      37%   123     0   129     3%       50
+Fundamental Analyst         23%       0%    37     1   143     3%       30
+Quantitative Analyst        38%      76%   129     0   125     2%       55
+Risk Manager                61%       6%     3   105   146     2%       55
+Sentiment Analyst           35%      52%   102     2   151     2%       50
+```
+
+Three findings a successor must not miss:
+
+**1. The committee is structurally long-biased, by role rather than by
+evidence.** The Devil's Advocate has argued bearish **zero** times in 123
+directional calls. So has the Quant, in 129. Sentiment is 102:2, Fundamental
+37:1. The Risk Manager is the mirror image at 3:105. This is not seven
+independent readings of the tape — it is six bulls and one bear whose direction
+is largely determined by their job title. Consensus over the same 260
+deliberations: **202 neutral, 58 bullish, 0 bearish.** The committee has never
+once produced a bearish consensus.
+
+**2. The Catalyst Analyst is effectively mute** — 2 directional calls in 182,
+and it is equity-only so those 182 are all deliberations it was eligible for.
+This is exactly the pathology the Corroborator had before it was made advisory
+(`votes=False`). The Corroborator's 0/254 is now correct by design; the
+Catalyst's 1% is not yet accounted for. Treating it the same way is the obvious
+next move, but it is a change to the committee's composition and should be the
+operator's call.
+
+**3. Confidence carries almost no information.** Consensus confidence: median
+50, p10 42, p90 58. A ±8 band around a coin flip. Since sizing runs
+`calibrated_win_probability(stated × participation, shrink)`, a confidence that
+never varies makes the confidence input to Kelly nearly decorative — position
+size is being set by the other caps, not by conviction.
+
+**Seat independence survives on the larger sample.** Cohen's κ across 21 seat
+pairs: **mean −0.045** (n ≈ 250 per pair), i.e. seats disagree slightly *more*
+than chance. Most negative: Devil's Advocate / Quant −0.466. Most positive:
+Quant / Sentiment +0.319. Independence is what makes a committee worth paying
+for, and it is still there — the long bias above is a *level* effect, not a
+correlation effect.
+
+### 7b.3 Current scorecard — 23 resolved, none scored
+
+```
+                     samples  hit    brier  meanconf  overconf
+Committee                  6  0.333  0.224     47.5     +14.2
+Quantitative Analyst      16  0.125  0.294     55.7     +43.2
+Sentiment Analyst         10  0.200  0.267     52.9     +32.9
+Risk Manager               6  0.333  0.308     61.0     +27.7
+Devil's Advocate           5  0.000  0.269     51.8     +51.8
+Fundamental Analyst        2  0.000  0.283     53.0     +53.0
+Catalyst Analyst           0    —      —         —         —
+Corroborator               0    —      —         —         —
+```
+
+**Every one of these is below the 30-sample bar and none is a verdict.** The
+`scored` flag is `False` on all of them and the weights are all 1.00×. Quoting
+"the Quant hits 12.5%" as a fact would be reading noise. What the table is
+*for* right now is shape: every seat is materially overconfident, the Brier
+scores cluster near 0.27 (a coin flip at these confidences is ~0.25), and the
+committee is not yet beating one.
+
+### 7b.4 A bug found while compiling this section
+
+`DashboardRuntime.scorecard()` reported **`resolved: 0`** with 23 outcomes in
+the table. It joined from the deliberations side over a recent-500 window, and
+the 708 provider-capped rows had pushed every scored thesis out of it.
+`monitoring.paper_report` printed that as "Resolved theses: 0 / 30" — progress
+toward the gate that unlocks seat weights, the shrink and lesson injection.
+
+A learning counter that reads zero while the data exists does not delay the
+unlock, it hides it. Fixed to join from the outcomes side, which cannot have
+this failure mode: there are at most as many deliberations to fetch as there
+are outcomes, and each is by definition the row its outcome points at.
+
+---
+
+## 8. Session log — 28 commits, 2026-09-22 → 24
 
 Every one was root-caused, fixed with a test, run through `./scripts/verify.sh`,
 committed and published. The full reasoning is in the commit messages, which
@@ -418,6 +519,15 @@ confidence shrink has never been fitted. Every claim in this repo about agents
 "learning and evolving" is, as of this date, **architecture rather than
 evidence**.
 
+**And §7b says something sharper than "not enough data".** On 260 real
+deliberations the committee has produced **zero bearish consensuses**, two of
+its seats have argued bearish exactly zero times across 252 directional calls
+between them, and consensus confidence sits in a ±8 band around 50. So even
+once the sample arrives, what will be measured is a long-biased committee whose
+conviction signal barely varies. Be prepared for the calibration to conclude
+that confidence is not worth sizing on — that is a legitimate result, not a
+failure of the fit.
+
 **Three times in this session I asserted an effect without checking it landed:**
 
 1. Claimed half the universe was "never looked at" — it was, and rejected on
@@ -498,12 +608,20 @@ Ordered by value, from `docs/OPEN_NOTES.md` and this session:
 1. **Get 30 usable calibration outcomes.** Nothing else in the learning loop
    can be evaluated until the shrink is fitted from data. This needs the
    providers uncapped and the machine awake.
-2. **Decide the Robinhood-crypto question** (§6). Either accept a lower net
+2. **Decide what to do about the long bias** (§7b.2). Two seats have never
+   argued bearish; the committee has never produced a bearish consensus. Either
+   the prompts elicit a direction the role implies rather than the evidence
+   supports, or the universe screen only ever surfaces longs. Measure which
+   before changing either.
+3. **The Catalyst Analyst is 1% directional** and is where the Corroborator was
+   before it was made advisory. Making it `votes=False` is the obvious move and
+   is a committee-composition change, so it is the operator's call.
+4. **Decide the Robinhood-crypto question** (§6). Either accept a lower net
    R:R on crypto, or stop trading it. Operator call.
-3. **B29** — size varies only with chair confidence; the other seats' spread
+5. **B29** — size varies only with chair confidence; the other seats' spread
    does not enter sizing.
-4. **FMP API key** would unlock political-trade data and the economic calendar.
-5. The `$43.75` suspense line stays until something explains it. Do not erase
+6. **FMP API key** would unlock political-trade data and the economic calendar.
+7. The `$43.75` suspense line stays until something explains it. Do not erase
    it to tidy the books.
 
 ---

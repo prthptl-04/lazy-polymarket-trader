@@ -1695,8 +1695,21 @@ class DashboardRuntime:
     def scorecard(self) -> dict:
         from roundtable.calibration import fit_confidence_shrink, score_seats
         try:
-            delibs = self.memory.recent_deliberations(limit=500)
             outcomes = self.memory.resolved_outcomes(limit=500)
+            # Fetch the deliberations the OUTCOMES point at, rather than a
+            # recent window and hoping they overlap.
+            #
+            # This used to read `recent_deliberations(limit=500)`. Measured
+            # 2026-09-24: 985 deliberations existed, 708 of them provider-capped
+            # with every seat failed and therefore no outcome. They had pushed
+            # every scored thesis out of the 500-row window, so the scorecard
+            # reported `resolved: 0` with 23 outcomes sitting in the table — and
+            # `monitoring.paper_report` printed "Resolved theses: 0 / 30" as
+            # progress toward the gate that unlocks seat weights and the
+            # confidence shrink. A learning counter that reads zero while the
+            # data exists does not delay the unlock, it hides it.
+            delibs = [d for d in (self.memory.get_deliberation(o["thesis_id"])
+                                  for o in outcomes) if d]
         except Exception:
             return {"resolved": 0, "committee": None, "seats": [], "fit": None}
         card = score_seats(delibs, {o["thesis_id"]: o for o in outcomes})
