@@ -210,6 +210,192 @@ specialists), `dashboard/` (FastAPI + React UI), `backtest/`, `code_graph/`,
 
 ---
 
+## 4a-bis. Data acquisition — every source, what it costs, how it fails
+
+This is the largest surface in the repo and the one most likely to be broken by
+a well-meaning change. **Five governing rules first**, then each source.
+
+### The five rules every source obeys
+
+1. **Computed before any seat is consulted.** `candidate_builder` and the
+   `summarise_*` helpers do the arithmetic ONCE. Handing six seats twenty raw
+   Form 4 rows makes each of them do it independently, badly, and differently.
+2. **Absence is stated, never silent.** A missing source renders as
+   `NOT AVAILABLE` with a reason. A seat reading an empty news block as a quiet
+   tape would be drawing a conclusion from our inability to fetch.
+3. **Narrative never becomes a number.** Headlines are context. Article bodies
+   are dropped entirely — thousands of tokens per candidate, and exactly where
+   a seat finds a figure nobody verified. `roundtable.corroboration` takes the
+   same stance toward scraped values.
+4. **Every figure carries a `SourceRef`** (`kind`, `source`, `as_of`,
+   `derived`). `STALE_AFTER_SECONDS = 3600`; **undated counts as stale**;
+   derived figures are exempt. The Provenance UI panel renders this.
+5. **Never on the hot path** (rules #14/#16). Blocking network I/O runs in a
+   thread with a timeout (`DEFAULT_TIMEOUT_SECONDS = 12`). A cycle must not end
+   because a news endpoint was down.
+
+### A. Massive REST — `trading/massive_provider.py`
+
+The daemon's price source. `BASE_URL = https://api.massive.com`, stdlib
+`urllib` (a handful of calls per cycle, not a stream — no new dependency).
+Key `MASSIVE_API_KEY`. The `massive` **MCP server is a separate, session-bound
+channel** for interactive exploration only; the fund process does not use it.
+
+| Call | Endpoint | Notes |
+|---|---|---|
+| `get_history` | `/v2/aggs/ticker/{t}/range/1/day/{from}/{to}` | Lookback padded ×1.6 + 10 calendar days so `lookback` *trading* bars actually return, not ~5/7ths |
+| `get_quote` | `/v2/aggs/ticker/{t}/prev` | Previous close. **15-min delayed on the $29 plan — a reference price, not a tradable one.** Returns `bid=None, ask=None`; the venue's own quote is what an order prices against |
+| `get_news` | `/v2/reference/news` | Per-**ticker** `insights` with sentiment + one-line reasoning |
+| `get_financials` | `/stocks/financials/v1/*` | **NOT_ENTITLED on this plan** → returns `None` → Altman/Piotroski report NOT AVAILABLE |
+| grouped crypto | `/v2/aggs/grouped/locale/global/market/crypto/{day}` | Feeds `CryptoScout` |
+
+**Verified live 2026-09-12 on the $29 stocks plan.** Crypto bars *are*
+entitled; financial statements are not. That NOT_ENTITLED is the honest
+degradation the seats are built to handle — it is not a bug to be worked
+around.
+
+**The `_ticker()` trap:** crypto must become `X:{BASE}USD`. It once hardcoded a
+10-name `_CRYPTO_BASES` list, so ZEC/SUI/NEAR/PEPE were sent as *equity*
+tickers and silently returned nothing. It now keys off the `-USD` suffix.
+Per-ticker news sentiment matters because an article about the whole sector is
+not evidence about our symbol — and **the sentiment is the publisher's, not
+ours**, and reaches the seats labelled that way.
+
+### B. Catalysts — `trading/catalysts.py` (538 lines, six summarisers)
+
+Named for what it *produces*, not where it fetches from — it was
+`openbb_provider.py` until the earnings calendar, filing index and implied move
+started arriving off the fund's own Robinhood session. **OpenBB is not imported
+at module load and is not required.**
+
+| Summariser | Source | What it computes |
+|---|---|---|
+| `summarise_news` | OpenBB / Massive | Headlines only, **`clean_external()` applied** (§4/sanitize) |
+| `summarise_insiders` | OpenBB Form 4 | 90-day net insider $ flow; **10b5-1 plans flagged** — a scheduled sale is not a signal |
+| `summarise_earnings` | Robinhood calendar | Days until the event; a report inside the horizon is a different trade |
+| `summarise_filings` | Robinhood SEC index | 8-K/10-Q within `FILING_RECENT_DAYS = 21` |
+| `summarise_depth` | Robinhood price book | Order-book walls at `WALL_MULTIPLE = 5.0`× the surrounding levels |
+| `summarise_implied_move` | Robinhood options | Options-implied move over `IMPLIED_MOVE_WINDOW_DAYS = 10` vs the realised move |
+
+`MAX_HEADLINES = 8`, `INSIDER_LOOKBACK_DAYS = 90`. Every fetch goes through
+`_safe()` — label, symbol, timeout, and on any failure a note saying which
+source was unavailable.
+
+### C. Politician trades — `trading/political_trades.py`
+
+**These are STOCK Act filings — public records the government publishes
+precisely so anyone can read them.** Reading them is legal and ordinary;
+several commercial products do nothing else. It is the *opposite* of insider
+information, which by definition is material and non-public.
+
+Tracked (the operator's list): Nancy Pelosi, Ro Khanna, Josh Gottheimer,
+Richard Blumenthal, Michael McCaul, Cleo Fields, Donald Trump.
+`UNAVAILABLE_FILERS` names Leopold Aschenbrenner explicitly — a private fund
+with no disclosure obligation, so **the absence is recorded rather than looking
+like a fetch that failed**, and any circulating "portfolio" is inference, not a
+record.
+
+Two refusals that are the point of the module:
+
+- **The lag is never hidden.** A Periodic Transaction Report is due within 45
+  days (`DISCLOSURE_DEADLINE_DAYS`), `MAX_TRADE_AGE_DAYS = 75`. Every line
+  carries the age, because *"Pelosi bought NVDA"* and *"Pelosi bought NVDA six
+  weeks ago"* are different claims and only the second is true.
+- **No weight is applied.** Everything else here earns weight by measurement —
+  seat weights need 30 scored calls, the shrink needs 30 outcomes. A hardcoded
+  multiplier on "a politician bought it" would be the one unmeasured edge in
+  the system and the one nobody could falsify. It goes to the **Catalyst seat
+  as evidence** (that seat already owns insider flow; a congressional filing is
+  the same kind of fact) and the committee decides what it is worth.
+  `CLUSTER_FILERS = 3` marks when several filers cluster on one name.
+
+Source: OpenBB `equity.ownership.government_trades`, **needs an FMP key (free
+tier)** — currently absent, so this degrades to a stated reason. Getting that
+key is open item #6.
+
+### D. Social / Reddit — `trading/social_sentiment.py`
+
+Logic adapted from six sentiment bots the operator pointed at
+(CyberPunkMetalHead, Sam120204, indiser, coooins, dylankilkenny, varunpillai).
+**No upstream code** — the shared pipeline is what transfers: fetch, score,
+aggregate per ticker. Two measured departures:
+
+**1. Stock VADER cannot read trading vernacular.** Measured before any change:
+
+```
++0.000   "NVDA to the moon, loading up calls"
++0.000   "this is going to zero, total rug"
+```
+
+Both exactly neutral. Every one of those projects scores with stock VADER or
+TextBlob, so **on the vocabulary their own data is written in, they are reading
+noise.** `TRADING_LEXICON` extends it to +0.670 / −0.648 *while a genuinely
+neutral sentence stays at zero* — otherwise the extension has not added
+vocabulary, it has added a thumb on the scale.
+
+**2. Attention leads, polarity follows.** Unusual mention *volume* is the half
+with real literature behind it; retail polarity is near a coin flip. So the
+note leads with `mention_velocity()` — how loud a name is against **its own**
+baseline (`LOUD_VELOCITY = 3.0`) — and reports mood second. Same reasoning the
+fund applies to price: volume confirms participation, a move alone does not.
+
+Guards: `MIN_POSTS_FOR_MOOD = 8` (below that a mean is one person in a good
+mood), `CROWDED_SCORE = 0.6` + `CROWDED_POSTS = 100` flag a crowded trade.
+**Reddit's public JSON now returns 403** — the API needs a free OAuth client;
+without credentials this degrades to a stated reason.
+
+### E. Robinhood MCP reads — `trading/venues/robinhood.py`
+
+The venue is also a data source, over an authenticated MCP session:
+`earnings_calendar`, `sec_filings`, `price_book`, `implied_move_pct`,
+`currency_pairs`, `get_quote`, `positions`, `account`, `realized_stats`.
+**Read-only to the agent** (§2). OAuth is a browser flow with a 900s timeout
+(`trading/mcp_auth.py`); the token lives at
+`~/.config/lazy-fund/mcp-tokens.json` and expires — a silent expiry once looked
+exactly like an engine failure.
+
+### F. SEC EDGAR — `trading/sec_edgar.py`
+
+Fills the gap Massive's NOT_ENTITLED leaves: two years of statement lines for
+Altman Z and Piotroski F. Needs `SEC_USER_AGENT` (EDGAR requires a real
+identifying UA), rate-limits itself via `_last_call`, caches CIK lookups, and
+**routes through `OrchestrationManager` for the rule-#8 gate.**
+
+### G. Scraping — `research_agent/` + `web_scraper/`
+
+`PlaywrightFetcher` is the **only** sanctioned scraper. Agent Reach and
+Scrapling were both removed: one needed a dozen CLIs that never passed the
+trust gate, the other's import failed on a missing dependency — *two scraping
+stacks that scrape nothing are worse than one that works.*
+
+- Every URL routes through `request_scrape` **before a browser launches**, so a
+  blocked target costs no browser at all.
+- Two layers: `trust_policy.py` (owner/domain allowlist) then
+  `authenticator.py` (live GitHub API check — public, not archived/disabled,
+  owner matches, licence declared, HEAD commit GPG-verified best-effort).
+- **Headed by default.** The reason to use a browser rather than an HTTP client
+  is pages that behave differently for automation.
+- **A rendered 4xx/5xx body is not content** — `PageResult.ok` requires 2xx, so
+  an error page cannot reach a seat as research.
+- Every request, approved **and rejected**, lands in `scrape_audit` (48 rows).
+  A rejection also becomes a lesson so the same untrusted target is not
+  requested twice.
+
+### H. Derived, not fetched — `candidate_builder.py`
+
+ATR, CVaR, Amihud illiquidity, 20-bar range position, distance from mean,
+spread in bps, and `_execution_note` (which quotes the real round-trip cost).
+`_prescreen` rejects on Altman Z distress, liquidity and spread **before any
+model call** — five of ten names were dropped this way in a measured cycle,
+which is the cheapest filtering in the system.
+
+**A note on cost.** A full deliberation is ~8 model calls; the screens cost
+microseconds and the table costs dollars. The pre-registered trigger
+`committee_costs_more_than_it_makes` watches exactly this, and its prescribed
+fix is to raise the pre-screen bar — never to lower the grader.
+
+---
+
 ## 4b. The "neural network" layer — what it is and what it is not
 
 The framing is borrowed from **agents 2.0 (`aiwaves-cn/agents`, Apache-2.0)**:
