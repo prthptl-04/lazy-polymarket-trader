@@ -1324,6 +1324,114 @@ Ordered by value, from `docs/OPEN_NOTES.md` and this session:
 
 ---
 
+## 13. End-to-end flow, with the async/sync boundary drawn
+
+Every label below was read off the `def` / `async def` in the source, not
+inferred. **One event loop, one thread** (rule #16) — so everything marked
+`sync` runs *on that loop* and blocks it for its duration. That is correct for
+µs-scale CPU work and catastrophic for I/O, which is the whole point of the
+boundary.
+
+```mermaid
+flowchart TD
+    subgraph LOOP["THE ONE EVENT LOOP — trading/fund_scheduler.py"]
+        A["_run<br/>async"] --> B["run_once<br/>async"]
+        B --> C["_read_account<br/>async · venue I/O"]
+        C --> D["run_cycle<br/>async"]
+    end
+
+    subgraph RECON["1. Reconcile what happened while we were away"]
+        D --> E["_reconcile_resting<br/>async · refreshes quotes FIRST"]
+        E --> E2["match_resting<br/>SYNC · pure compare"]
+        E2 --> E3["_book_resting_fill<br/>SYNC · plan from _pending_plans"]
+        E3 --> F["_reconcile_cash<br/>SYNC · reconcile the identity"]
+    end
+
+    subgraph RISK["2. Risk before ideas"]
+        F --> G["kill_switch.observe_equity<br/>SYNC · trading equity only"]
+        G --> H["_process_exits<br/>async · stops honoured first"]
+        H --> I["_flatten_crypto<br/>async · weekend handoff"]
+    end
+
+    subgraph LEARN["3. Score the past before speaking again"]
+        I --> J["due_symbols<br/>SYNC"]
+        J --> K["_quotes<br/>async · on THIS loop"]
+        K --> L["resolve_due prices=...<br/>SYNC"]
+        L --> M["_expire_stale_orders<br/>async · cancel only"]
+    end
+
+    subgraph SCREEN["4. Cheap filters — microseconds, no model"]
+        M --> N["_universe_for → scout.scan<br/>SYNC"]
+        N --> O["_drop_working / _at_position_cap<br/>SYNC"]
+        O --> P["build_candidate + _prescreen<br/>SYNC · ATR CVaR Amihud spread"]
+    end
+
+    subgraph THINK["5. The only place a model appears"]
+        P --> Q["RoundTable.deliberate<br/>async"]
+        Q --> R["_ask_seat ×6 — asyncio.gather<br/>async · round 1 PARALLEL"]
+        R --> S["Devil's Advocate<br/>async · round 2, sees round 1"]
+        S --> T["Chair<br/>async · synthesis"]
+        Q -.->|"blocking SDK call"| TH["asyncio.to_thread<br/>OFF the loop"]
+    end
+
+    subgraph DECIDE["6. Deterministic gauntlet — no model"]
+        T --> U["quorum ≥ MIN_RESPONDING_SEATS<br/>SYNC"]
+        U --> V["effective_confidence × shrink<br/>SYNC"]
+        V --> W["size_position<br/>SYNC · min of every cap"]
+        W --> X["OutcomeGrader.evaluate<br/>SYNC · R:R 1.5 / net 1.35"]
+        X --> Y["LiveTradingGate.evaluate<br/>SYNC · refuses by default"]
+    end
+
+    subgraph EXEC["7. The only network I/O on the decision path"]
+        Y --> Z["VenueRouter.place<br/>async"]
+        Z --> AA["adapter.place_order<br/>async · cross or rest"]
+        AA --> AB["position_book.open<br/>SYNC · stop now watched"]
+        AB --> AC["notifier.notify<br/>SYNC call → threading.Thread<br/>fire-and-forget"]
+    end
+
+    AC --> AD["save_state → SQLite<br/>SYNC · single writer"]
+    AD --> A
+```
+
+### Why each boundary is where it is
+
+| Work | Mode | Reason |
+|---|---|---|
+| Venue / quote / MCP calls | **async** | Network I/O. The only things the loop should ever await. |
+| `match_resting`, `reconcile`, sizing, grader, gates | **sync** | µs-scale pure CPU. `async` overhead would dominate the work. |
+| Round-1 seats | **async + `gather`** | Six independent network calls; serialising them would make a cycle six times longer for no benefit. |
+| The Anthropic SDK call itself | **`asyncio.to_thread`** | The client is blocking. Left inline it would stall the loop for the length of a model call. |
+| OpenBB / catalysts / political / social | **`asyncio.to_thread`** | Blocking third-party I/O, bounded by a 12s timeout. |
+| Telegram | **`threading.Thread`** | Fire-and-forget. A trading loop must never wait on a chat API. |
+| SQLite writes | **sync** | Fast at this scale; an async wrapper adds overhead without benefit (rule #16). |
+
+### The two failures this boundary has already produced
+
+Both are in §8, and both are the *same mistake* in different clothes — **work
+that crossed the boundary in the wrong direction**:
+
+1. **A sync callable reaching an async venue** (`e955673`). `_run_sync` did
+   `pool.submit(asyncio.run, coro).result()` — coroutine on a worker thread's
+   *new* loop, this loop blocked on the future with **no timeout**. The MCP
+   session is pinned to the cycle's loop, so it could never complete. Total
+   process hang; `/api/health` timed out; CPU 0%.
+2. **An async session used from the wrong loop** — the crypto pair refresh,
+   same shape, fixed by moving it onto the cycle's own loop
+   (`_refresh_crypto_pairs`).
+
+**The rule that prevents both:** a coroutine touching a loop-pinned session
+must be awaited *on the loop that owns it*. If a sync caller needs that data,
+**the async caller fetches it and hands it in** — which is exactly why
+`resolve_due` takes `prices=` and why `_pending_plans` exists.
+
+**Diagnosing a suspected hang:** `kill -USR2 <pid>` dumps every pending
+asyncio task and where it is parked; `kill -USR1 <pid>` dumps thread stacks.
+Thread stacks cannot see a stuck coroutine, which is why both exist. And check
+`pmset -g log` first — on battery, a suspended laptop looks exactly like a
+wedged loop (§10.4).
+
+---
+
 *Further reading in `docs/`: `HEDGE_FUND_ARCHITECTURE.md`,
 `LOW_LEVEL_DESIGN.md`, `ROBINHOOD_CHECKLIST.md`, `KALSHI_BTC_15M.md`,
 `PHASE_2_ROADMAP.md`, `OPEN_NOTES.md`. The root `README.md` covers every
