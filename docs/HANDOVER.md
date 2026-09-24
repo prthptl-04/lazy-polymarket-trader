@@ -555,6 +555,181 @@ exists.
 
 ---
 
+## 4f. The agents in detail, and the strategy each one runs
+
+**There are two entirely separate agent populations in this repo and confusing
+them is the fastest way to break something.**
+
+- **The committee** (`roundtable/seats.py`) — seven *seats* that deliberate on
+  instruments at runtime. These are what "the agents" means in trading context.
+- **The build specialists** (`agents/`) — three agents that write and verify
+  the code itself. They never see a market.
+
+### 4f.1 Why seats are functional, not famous
+
+Each seat is defined by **the job it does and the evidence it owns**, so *"what
+is this seat for?"* always has an answer. A Buffett-shaped seat sounds better
+in a transcript and tells you less about why it voted. This is a deliberate
+rejection of the persona-investor pattern most multi-agent trading demos use.
+
+**Round structure is the independence mechanism:**
+
+- **Round 1** — Analyst, Sentiment, Quant, Risk, Corroborator, Catalyst run
+  **in parallel, each seeing only the candidate.** No seat is anchored on
+  another's conclusion. That is what makes the measured κ ≈ −0.045 independence
+  (§7b.2) real rather than asserted.
+- **Round 2** — the Devil's Advocate sees round 1 and is *required to attack
+  the emerging majority*. Independence is useless if nobody is tasked with
+  breaking consensus, and **an LLM asked to "give a balanced view" will agree
+  with itself all day.**
+
+Every system prompt is **static**, deliberately: `cached_create` cache-tags the
+system block (rule #2), so the expensive part of each call is paid once and
+reused across every candidate.
+
+### 4f.2 The rules every seat is bound by (`SHARED_RULES`)
+
+Verbatim constraints in every seat's prompt:
+
+- Reason **ONLY** from the evidence block. Every number in it was computed
+  deterministically before the seat was consulted.
+- **May not invent figures.** No made-up P/E, revenue, price target, or news.
+  Absent → say it is absent and *lower confidence*.
+- **`NOT AVAILABLE` means unknown, not neutral and not fine.** This is the
+  single most important line in the file — it is what stops a missing source
+  being read as a clean bill of health.
+- Confidence is an estimate, not enthusiasm. **>80 reserved for strong *and*
+  complete evidence; missing evidence caps at 60.**
+- Output is strict JSON — `signal`, `confidence`, `reasoning`, `key_points`,
+  **`concerns` ("what would make you wrong")**. It feeds a deterministic
+  pipeline and "will not be read as prose before it is parsed."
+
+### 4f.3 The seven seats
+
+| Seat | Mandate | Owns (evidence) | Class | Votes | Rnd |
+|---|---|---|---|---|---|
+| **Fundamental Analyst** | Business quality and financial health | Altman Z, Piotroski F, portfolio notes | equity | ✓ | 1 |
+| **Sentiment Analyst** | Narrative, news flow, positioning | SENTIMENT block + CATALYSTS headlines, read for *mood* | both | ✓ | 1 |
+| **Quantitative Analyst** | Price structure, volatility, liquidity | ATR, CVaR, spread bps, Amihud, technicals | both | ✓ | 1 |
+| **Risk Manager** | Exposure, sizing, the exit plan | entry/stop/target, R:R, CVaR, day-trade budget, loss headroom | both | ✓ | 1 |
+| **Corroborator** | Verification of facts, not reasoning | CORROBORATION block — what a 2nd provider confirmed | both | **✗** | 1 |
+| **Catalyst Analyst** | Scheduled events, filings, insider + official flow | CATALYSTS block, Form 4, political trades | equity | ✓ | 1 |
+| **Devil's Advocate** | **Mandated dissent** | everything round 1 said | both | ✓ | **2** |
+
+Details that carry real weight:
+
+- **Fundamental Analyst** is told the *limits* of its own tools: Altman Z
+  "below 1.81 distress, above 2.99 safe" **and** that it "was fitted on 1960s
+  manufacturers, so it misreads" asset-light modern businesses. A seat that
+  knows its metric's provenance discounts it correctly.
+- **Sentiment vs Catalyst read the same headlines differently** — Sentiment for
+  mood and positioning, Catalyst for *dated events*. This overlap is
+  deliberate, and the prompts say so explicitly so neither assumes the other
+  covered it.
+- **Risk Manager owns survival, not returns.** "Is there a stop at all? An
+  entry without one is unbounded downside on a book that holds overnight and
+  cannot day-trade out. **That alone is a bearish vote.**" This is why it is
+  structurally the only bear (§7b.2) — the role, not the evidence.
+- **Corroborator is the check on the source, not the thesis.** "Every other
+  seat reasons from one evidence block built from one data source. You are the
+  check on that source." A price mismatch between two providers is serious.
+  It is `votes=False` — see 4f.4.
+- **Catalyst owns timing and nobody else does.** "A technically perfect setup
+  into an earnings print in two days is a different trade."
+- **Devil's Advocate** must "identify the single load-bearing assumption the
+  majority rests on", and "point out where seats agreed with each other without
+  independent evidence." Not balance — *break*.
+
+### 4f.4 Eligibility vs voting — two measured failures
+
+Both of these were fixed because of measurement, not theory, and a successor
+who "tidies" them will re-create the bug:
+
+**`asset_classes` → eligibility.** Over twelve live crypto deliberations the
+committee returned neutral twelve times and submitted nothing. Four of seven
+seats had never once expressed a direction — **correctly**, because on an
+instrument with no issuer they have nothing to reason from. A seat outside its
+mandate now **does not attend**. Analyst and Catalyst are `("equity",)`, so
+crypto tables seat five, not seven.
+
+**`votes` → advisory.** The Corroborator was directional 0 times in 54
+deliberations. Counting a permanent abstention as a vote *overstates how thin a
+directional case is* — "which is exactly how one bullish seat against four
+neutrals came to read as a stand-aside." It now speaks and is read but casts no
+vote. `eligible_seats()` / `voting_seats()` / `excluded_seats()`, and the
+excluded ones are **named out loud** in the transcript.
+
+### 4f.5 The Chair
+
+Synthesises; does **not** add an eighth opinion. Its rules:
+
+- **Weight by argument quality, not vote count.** "Four confident seats resting
+  on one shared assumption are weaker than one seat with a specific
+  disqualifying fact."
+- **A Risk Manager objection about position structure outranks enthusiasm from
+  every other seat. Survival first.**
+- If the Devil's Advocate landed a hit nobody answered, **say so rather than
+  averaging it away.**
+- **Unanimity is a caution flag** — note it explicitly and *lower* confidence
+  rather than raising it.
+- Invent nothing; only what the seats said.
+- **Do not reproduce the seat positions** — the UI renders them from what the
+  seats actually wrote (§8, `fcf4890`).
+
+### 4f.6 The build specialists — `agents/`
+
+Three agents that write the system, under `OrchestrationManager`, which
+prepends each one's toolset and its recorded lessons to every invocation
+(rule #7):
+
+| Agent | Role | Owns | Reads |
+|---|---|---|---|
+| **Product Agent** | System Gap Analysis | `product/` | `monitoring/`, `verification/criteria.py` |
+| **Software Architect** | "Experience Coder" | `trading/`, `cache/` | `product/`, `monitoring/` |
+| **Forward Deployment** | "The Executioner" | `verification/`, `monitoring/`, `tests/` | everything |
+
+Lane ownership (rule #1) exists to prevent merge conflicts: an agent that
+thinks it needs to edit outside its lane **must emit a request to the
+orchestrator and stop.** The manager itself edits no code, gates every scrape
+(rule #8), and requires user approval before a discovered tool is promoted into
+`tool_registry`.
+
+Also vendored as personas: **Winston** (bmad-architect), **Amelia**
+(bmad-developer, test-first), and a **QA tester** — persona-only adaptations of
+BMAD-METHOD (MIT). The full `_bmad/` framework is *not* installed; this is
+noted in rule #15 so nobody goes looking for it.
+
+### 4f.7 The strategy, stated as the committee runs it
+
+1. **Universe** — session decides the asset class (rule #23). Scout screens
+   `SCREEN_BREADTH × max_candidates` names.
+2. **Cheap filters first** — Altman Z distress, liquidity, spread, names
+   already held or with an order resting. Microseconds, before any model call.
+3. **Deliberate** the survivors: 5–7 seats, two rounds, ~8 model calls.
+4. **Long-only.** A bearish consensus *closes* a held position; with nothing
+   held it stops at `"the fund is long-only until shorting is verified on the
+   venue"`. Note §7b.2: the committee has never produced a bearish consensus,
+   so this path is untested in practice.
+5. **Fixed geometry** — stop 2×ATR, target 3×ATR, so gross R:R is 1.5 *by
+   construction* and therefore cannot discriminate. The **net** 1.35 floor is
+   the one that does the work (§6).
+6. **Execution follows the spread**: cross when it is cheap (equities, 3–4bps),
+   rest passively when it is not (crypto, ~190bps).
+7. **Size by half-Kelly**, then take the **minimum** of every cap, and report
+   which one bound.
+8. **Exit** on stop, target, a bearish reversal, or the weekend→weekday
+   handoff.
+9. **Score everything**, traded or not, 24h later.
+
+**The strategy's real edge claim** is not "LLMs pick stocks." It is: *a
+committee of independent, mandate-bounded readers of pre-computed evidence,
+whose confidence is calibrated against realised outcomes and whose every
+proposal must clear a deterministic cost-and-risk gauntlet, will decline most
+trades and take the few that survive.* Whether that claim is true is exactly
+what §7b and §9 say has **not yet been demonstrated**.
+
+---
+
 ## 5. One trade, end to end
 
 ```
