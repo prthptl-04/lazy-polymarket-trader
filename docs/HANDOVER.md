@@ -210,6 +210,165 @@ specialists), `dashboard/` (FastAPI + React UI), `backtest/`, `code_graph/`,
 
 ---
 
+## 4b. The "neural network" layer — what it is and what it is not
+
+The framing is borrowed from **agents 2.0 (`aiwaves-cn/agents`, Apache-2.0)**:
+an agent pipeline *is* a computational graph. A node is a layer, its prompts
+and tools are that layer's weights, and textual reflections back-propagate as
+**language gradients**. **No upstream code is used** — the analogy is the
+useful part, and it was adopted only because it already described what this
+fund does.
+
+The mapping is literal, not decorative:
+
+| NN concept | Here | Read from |
+|---|---|---|
+| **forward pass** | evidence → seats → chair → grader → router → outcome | the real pipeline stages |
+| **weights** | per-seat `vote_weight`; the `confidence_shrink` that sizes | `calibration.seat_weights`, `pipeline.confidence_shrink` |
+| **loss** | realised return, per-seat Brier, overconfidence | `calibration.score_seats` |
+| **backward pass** | post-mortem lessons injected into the NEXT deliberation | `postmortem.relevant_lesson_lines` |
+
+**The backward pass is not a metaphor.** `relevant_lesson_lines()` puts a
+textual reflection derived from a realised loss into the *evidence block* of
+every later debate, scoped by asset class and symbol. That is a gradient
+reaching a prompt.
+
+Two design decisions a successor must preserve:
+
+1. **Lessons go in as evidence, never as a system-prompt edit.** The system
+   blocks are cache-tagged (rule #2); mutating them would discard the prompt
+   cache every time the fund learns something. The saving is real — cache reads
+   run ~456 tokens a call.
+2. **Nothing self-modifies its own prompt.** A self-rewriting Evolution Agent
+   was considered and **declined**: an agent that edits its own instructions
+   has no fixed point you can audit, and there is no way to attribute a later
+   loss to the edit that caused it.
+
+**Assembly:** `DashboardRuntime.evolution()` builds the whole loop as one
+object so the page makes one request instead of six *and* the loop is described
+in exactly one place — the picture cannot drift from the behaviour. Every field
+is read from the component that acts on it.
+
+**Current honest state of this layer: the forward pass runs, the loss is
+computed, and the backward pass is gated shut.** 0 post-mortem lessons
+recorded, all weights at 1.00×, shrink at the unfitted constant. The Evolution
+page deliberately dims the backward edges while the gate holds and animates
+current only while a debate is actually in progress — *"the one thing this page
+must never do is animate a loop that is not turning."*
+
+---
+
+## 4c. Storage — SQLite, one file, twelve tables
+
+`memory/state.db`, reached **only** through `memory.store.MemoryStore`
+(rule #22 — no ad-hoc files). Path overridable via `MEMORY_DB_PATH`.
+Records are scoped by `agent_id` where they belong to an agent.
+
+```
+table              rows    what it holds
+-----------------------------------------------------------------------
+deliberations       985    thesis_id PK · symbol · asset_class · status ·
+                           signal · confidence · payload(JSON: evidence,
+                           opinions[], consensus, tally, sources)
+llm_costs         1,964    provider · model · mode · thesis_id · tokens ·
+                           cache_read/write  → the burn ledger
+audit_log         1,366    actor · action · target · details
+trade_log            54    agent_id · market_id · side · size · price ·
+                           paper · grade_pass · grade_reason · venue
+scrape_audit         48    every scrape request, approved AND rejected (#8)
+agent_lessons        26    the backward pass's store
+thesis_outcomes      23    realized_return · correct · notes
+                           (notes prefix marks shadow:/replay: synthetics)
+agent_state           8    runtime_state, venue_sessions, licence overrides,
+                           publish approvals — key/value JSON
+closed_trades         4    the full post-trade record incl. plan and fills
+strategic_plans       0    orchestrator plans
+discovered_tools      0    candidates pending approval (#7)
+```
+
+~30 MB. **Journal mode is `delete`, not WAL** — single writer, and the fund is
+the only writer. Writes are synchronous by design (rule #16: SQLite is fast at
+this scale and an async wrapper adds overhead without benefit).
+
+**The one blob that matters:** `agent_state.runtime_state` is the fund's entire
+recoverable state — cash, positions, resting orders, fills, pending exit plans,
+kill-switch day, PDT counters, and the `unexplained_usd` suspense line. It is
+versioned (`STATE_VERSION = 1`) and an unreadable blob starts the fund **flat
+and says so**, rather than guessing at its shape. §8.2 and §8.3 in this
+document are both failures of this blob; read them before changing its schema.
+
+---
+
+## 4d. Telegram bot — `monitoring/telegram.py`
+
+Fire-and-forget fill notifications. Idea borrowed from HOODRADAR's notification
+bridge; none of its code. Configured by `TELEGRAM_BOT_TOKEN` +
+`TELEGRAM_CHAT_ID`; **absent configuration means simply off**, not an error.
+Wired in `fund_wiring` with `background=True`, passed to `FundLoop(notifier=…)`.
+
+Three rules, each of which is a way a notifier turns into a liability:
+
+1. **It must never block a cycle.** A trading loop that waits on a chat API has
+   made Telegram a dependency of execution. Every send is fire-and-forget off
+   the hot path; a dead network loses a message, not a trade.
+2. **It must never leak the token.** The token is a bearer credential — anyone
+   holding it can post as the bot. Read from env, never logged, redacted in
+   `__repr__`. Note `_send_quietly` uses `logger.warning`, **not**
+   `logger.exception`, deliberately: the URL carries the token and a traceback
+   would write a bearer credential into the log file.
+3. **It must never claim more than it knows.** A notification reports what the
+   venue said. `format_fill` shouts the mode — `📝 PAPER` vs `💰 LIVE` — because
+   a paper fill read as a real one is the worst thing this can do and is exactly
+   the mistake a glance at a phone makes easy. **No P&L on an entry**; inventing
+   one is how a notification starts lying before the position has done anything.
+
+It is a *notifier*, not a command bot: there is no inbound path, no way to
+trade from chat. Adding one would put an unauthenticated channel in front of
+the execution path — if you ever do, it goes behind the same gates as the
+dashboard, which is read-only except GO/STOP (rule #18).
+
+---
+
+## 4e. The UI — React + Vite, five views
+
+`ui/` → built into the FastAPI app, served at `http://127.0.0.1:8765`.
+Stack: React 18, TypeScript, Vite, Tailwind, **framer-motion** (animation),
+**recharts** (charts), **lucide-react** (icons), **@dicebear** (seat avatars).
+
+**Views** (`ui/src/views/`):
+
+| View | Shows |
+|---|---|
+| `Overview` | Both strategies side by side — equities and crypto reported **separately** per rule #23, because a blended Robinhood number hides which of the two is working. |
+| `PaperTrading` | The paper book, orders, fills, the scorecard. |
+| `VenueView` | Robinhood: balances, sessions, live gate checklist, auth. |
+| `RetiredVenue` | Polymarket, rendered as retired **with the reason**. The tab stays so the decision stays visible (rule #23: do not delete a retired venue's code). |
+| `Evolution` | The computational-graph view described in §4b. |
+
+**Notable components** (29 in `ui/src/components/`): `AgentRoundTable`,
+`LiveDebate`, `RoundTableThread`/`Feed` (the debate as it happens),
+`AgentScorecard` (§7b.3's numbers), `Provenance` (every figure's `SourceRef`
+and staleness), `Catalysts`, `Universe`, `Balance`, `CostMatrix` (the burn),
+`Preflight`/`AuthGate` (MCP OAuth), `PriceChart`, `TradeHistory`,
+`LiquidGlassProvider`/`GlassCard` (the visual system).
+
+**Rules the UI obeys:**
+
+- **Read-only except GO/STOP** (rule #18). No manual trade buttons, no
+  edit-position UI. Intervene through code, not through a button.
+- **Binds 127.0.0.1 only.** Token auth before any external exposure.
+- Weekend/weekday panel differences are deliberate — the crypto rotation has
+  fewer eligible seats (5, not 7), and the UI reflects that rather than drawing
+  empty chairs.
+
+A known trap, found the hard way: **a component imported by nothing is
+tree-shaken away silently.** `Balance` was once wired only into
+`AgentDialogue.tsx`, which nothing imports, so it never rendered and nothing
+failed. Check the import chain reaches `main.tsx`, not just that the file
+exists.
+
+---
+
 ## 5. One trade, end to end
 
 ```
@@ -644,6 +803,24 @@ Ordered by value, from `docs/OPEN_NOTES.md` and this session:
   four modules instead of a venue adapter, a signing path, a paper engine, a
   persistence schema, a dashboard API and a themed UI built on an edge nobody
   had measured.
+
+---
+
+### Appendix — HTTP surface
+
+~40 JSON endpoints under `/api/`. The ones worth knowing:
+
+```
+/api/fund          scheduler state, metrics, kill switch, last cycle
+/api/status        runtime + venue summary        /api/pnl      equity curve
+/api/positions     open book                      /api/orders   working orders
+/api/deliberations the debate record              /api/scorecard §7b.3
+/api/evolution     the whole §4b loop, one object /api/costs    the burn
+/api/provenance    every figure's SourceRef       /api/catalysts
+/api/balances      venue cash                     /api/venue-sessions
+/api/start /api/stop                              GO / STOP (rule #18)
+/api/auth/{venue}/begin   MCP OAuth — opens a browser, 900s timeout
+```
 
 ---
 
